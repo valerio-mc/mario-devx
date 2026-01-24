@@ -4,7 +4,7 @@ Ralph-style, file-based agent loops for shipping software.
 
 Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
 
-Mario DevX is a "skill" + a small set of templates and scripts that let you run any AI coding CLI in a deterministic loop:
+Mario DevX is a project harness (templates + prompts + scripts) that lets you run any AI coding CLI in a deterministic loop:
 
 - PRD interview -> `.mario/PRD.md`
 - Split into specs -> `.mario/specs/*.md`
@@ -29,15 +29,35 @@ Mario DevX adds two things that agents actually respect:
 1. Backpressure (commands that must pass)
 2. A loop (keep going until it does)
 
+## What gets installed
+
+Core artifacts live in `.mario/` (in the target project):
+
+- `.mario/PRD.md`: project intent, scope, constraints
+- `.mario/specs/*.md`: one topic-of-concern per file (one sentence without "and")
+- `.mario/IMPLEMENTATION_PLAN.md`: ordered plan items (one item per loop iteration)
+- `.mario/AGENTS.md`: operational knobs (agent command + backpressure)
+- `.mario/state/feedback.md`: verifier output injected into the next iteration
+- `.mario/progress.md`: append-only loop log
+- `.mario/runs/*`: per-iteration artifacts (prompt, outputs, diffs, logs)
+
+Executable entrypoints (in the target project):
+
+- `scripts/mario`: wrapper CLI (`init|prd|plan|build|doctor`)
+- `scripts/mario-loop.sh`: loop runner
+- `scripts/verify.sh`: deterministic backpressure
+- `scripts/verify-llm.sh`: LLM judge backpressure
+- `scripts/verify-all.sh`: combined gate
+
 ## Quick start
 
 Prereqs:
 
 - A git repo (the loop uses git as memory)
 - One AI coding CLI (pick at least one):
-  - OpenCode
   - Claude Code
   - Codex
+  - OpenCode (works, but not required)
 
 ### 1) Install into your project (agent-agnostic)
 
@@ -78,15 +98,7 @@ scripts/mario plan
 scripts/mario build
 ```
 
-### Optional: OpenCode command install
-
-If you use OpenCode and want a command you can run from OpenCode:
-
-```bash
-bash scripts/install-opencode-commands.sh
-```
-
-This installs `mario-init` into your OpenCode commands dir; it bootstraps `.mario/`.
+This repo is a project harness. It doesn’t require any specific TUI.
 
 ## The workflow (3 phases, 2 modes, 1 loop)
 
@@ -95,6 +107,12 @@ This mirrors the "Three Phases, Two Prompts, One Loop" mental model described in
 1. Define requirements (PRD)
 2. Plan (gap analysis)
 3. Build (one task, verify, commit)
+
+PRD definition is iterative:
+
+- PRD mode is an interview in small rounds (3-5 questions/round).
+- It updates `.mario/PRD.md` incrementally.
+- You stop when it’s good enough and switch to planning/building.
 
 ## File layout
 
@@ -114,11 +132,10 @@ In your project (default):
 In this repo:
 
 ```text
-commands/mario-init.md
 prompts/                   # prompt templates copied into .mario/prompts/
 scripts/                   # loop + verification scripts
 templates/                 # project templates copied into .mario/
-SKILL.md                   # skill contract
+install.sh                 # curlable installer
 ```
 
 ## Configuration (.mario/AGENTS.md)
@@ -209,7 +226,7 @@ You are running an agent in a loop. It will do what you told it to do, not what 
 
 ## Manual install
 
-If you do not want to use OpenCode commands, copy these into your project:
+If you do not want to use the installer, copy these into your project:
 
 - `templates/*` -> `.mario/*`
 - `prompts/*` -> `.mario/prompts/*`
