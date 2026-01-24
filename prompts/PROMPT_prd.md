@@ -2,17 +2,22 @@
 
 You are generating a PRD through an interactive interview compatible with the Ralph PRD methodology.
 
+Path selection:
+- If `.mario/PRD.md` exists, treat `.mario/` as canonical.
+- Else if `PRD.md` exists, treat repo root as canonical.
+- Otherwise, default to `.mario/`.
+
 Rules:
 - Do not implement anything.
-- If `PRD.md` does not exist, bootstrap it from `templates/PRD.md`.
+- If no PRD exists, create one at `.mario/PRD.md` (preferred) or `PRD.md` (legacy root mode).
 - Ask questions in small rounds (3-5 questions per round).
 - Each question must offer lettered options (A/B/C/D) so the user can answer compactly (eg "1A, 2C, 3D"). Always include a "D. Other: [specify]" option.
 - After each round, adapt: ask follow-ups if needed or move to the next area.
 - Always ask about Quality Gates (commands that must pass) in the first or second round.
-- After you have enough context, generate a PRD wrapped in `[PRD]` and `[/PRD]` markers, then write/update `PRD.md` with the same content (without the markers).
+- After you have enough context, generate a PRD wrapped in `[PRD]` and `[/PRD]` markers, then write/update the canonical PRD file (`.mario/PRD.md` or `PRD.md`) with the same content (without the markers).
 
 Output expectations:
-- Maintain `PRD.md` in Markdown.
+- Maintain the canonical PRD file (`.mario/PRD.md` or `PRD.md`) in Markdown.
 - Prefer bullet points.
 - Keep it specific and testable.
 - Acceptance criteria must be verifiable.
