@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT_DIR"
+
+usage() {
+  cat <<'EOF'
+Mario DevX
+
+Usage:
+  scripts/mario init [--force]
+  scripts/mario prd
+  scripts/mario plan
+  scripts/mario build
+  scripts/mario doctor
+
+Notes:
+  - Configure the agent + backpressure in .mario/AGENTS.md
+  - State lives in .mario/
+EOF
+}
+
+doctor() {
+  local ok=1
+
+  if [[ ! -d ".mario" ]]; then
+    echo "FAIL: missing .mario/ (run install.sh)" >&2
+    ok=0
+  fi
+
+  if [[ ! -f ".mario/AGENTS.md" ]]; then
+    echo "FAIL: missing .mario/AGENTS.md" >&2
+    ok=0
+  fi
+
+  if [[ ! -f "scripts/mario-loop.sh" ]]; then
+    echo "FAIL: missing scripts/mario-loop.sh" >&2
+    ok=0
+  fi
+
+  if [[ "$ok" == "0" ]]; then
+    return 1
+  fi
+
+  echo "OK: basic files present" >&2
+}
+
+cmd_init() {
+  if [[ -f "./install.sh" ]]; then
+    bash ./install.sh "$@"
+    return 0
+  fi
+
+  echo "No ./install.sh found in this repo." >&2
+  echo "Run the remote installer from your project root:" >&2
+  echo "  curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash" >&2
+  return 2
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  init)
+    shift || true
+    cmd_init "$@"
+    ;;
+  prd|plan|build)
+    shift || true
+    exec bash "scripts/mario-loop.sh" "$cmd" "$@"
+    ;;
+  doctor)
+    doctor
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage
+    exit 2
+    ;;
+esac
