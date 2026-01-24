@@ -11,4 +11,4 @@ Rules:
 
 If `AGENTS.md` has AUTO_COMMIT=1, commit the changes for this brick. If AUTO_PUSH=1 and a remote exists, push.
 
-If any core files are missing (`AGENTS.md`, `IMPLEMENTATION_PLAN.md`, `state/feedback.md`), create them using the Bootstrap templates in `mario-devx.skill`.
+If any core files are missing (`AGENTS.md`, `IMPLEMENTATION_PLAN.md`, `state/feedback.md`), bootstrap them from `templates/`.
