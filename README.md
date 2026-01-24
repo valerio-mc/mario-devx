@@ -39,48 +39,54 @@ Prereqs:
   - Claude Code
   - Codex
 
-### 1) Install the OpenCode command (optional)
+### 1) Install into your project (agent-agnostic)
 
-If you use OpenCode, install the `mario-init` command into your OpenCode commands directory:
+From your project root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash
+```
+
+Pin a version/tag (recommended for teams):
+
+```bash
+MARIO_DEVX_REF=v0.0.0 \
+  curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/v0.0.0/install.sh | bash
+```
+
+This installs:
+
+- `.mario/*` (state + prompts)
+- `scripts/*` (loop + verifier)
+- `scripts/mario` (wrapper CLI)
+
+### 2) Configure
+
+Edit `.mario/AGENTS.md` to select your agent and backpressure commands.
+
+### 3) Run
+
+```bash
+# PRD interview
+scripts/mario prd
+
+
+# Plan only (no code changes)
+scripts/mario plan
+
+# Implement one plan item per iteration
+scripts/mario build
+```
+
+### Optional: OpenCode command install
+
+If you use OpenCode and want a command you can run from OpenCode:
 
 ```bash
 bash scripts/install-opencode-commands.sh
 ```
 
-### 2) Bootstrap mario-devx files in your target project
-
-From your project root:
-
-- OpenCode: run `mario-init`
-- Or manually copy templates/scripts (see "Manual install")
-
-`mario-init` creates the `.mario/` directory and copies templates/prompts.
-
-Expected outputs (in your project):
-
-```text
-.mario/
-  PRD.md
-  AGENTS.md
-  IMPLEMENTATION_PLAN.md
-  prompts/
-  specs/
-  state/feedback.md
-  progress.md
-```
-
-### 3) Run the loop
-
-```bash
-# PRD interview
-bash scripts/mario-loop.sh prd
-
-# Plan only (no code changes)
-bash scripts/mario-loop.sh plan
-
-# Implement one plan item per iteration
-bash scripts/mario-loop.sh build
-```
+This installs `mario-init` into your OpenCode commands dir; it bootstraps `.mario/`.
 
 ## The workflow (3 phases, 2 modes, 1 loop)
 
@@ -208,6 +214,8 @@ If you do not want to use OpenCode commands, copy these into your project:
 - `templates/*` -> `.mario/*`
 - `prompts/*` -> `.mario/prompts/*`
 - `scripts/*` -> `scripts/*`
+
+Or: `curl` the installer (preferred) and let it do the copying.
 
 Then edit `.mario/AGENTS.md` and run the loop.
 

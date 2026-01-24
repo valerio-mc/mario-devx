@@ -5,6 +5,9 @@ description: Ralph-style methodology for AI coding CLIs: interactive PRD intervi
 
 Persist state on disk (and in git), not in chat context.
 
+This repo is intentionally usable as an agent-agnostic *project harness*.
+The "skill" portion is optional (mostly: templates + prompts packaging); the primary install path is the project installer: `install.sh`.
+
 Core artifacts (default: in `.mario/` inside the target project)
 - `.mario/PRD.md`: project intent, scope, constraints.
 - `.mario/specs/*.md`: one topic-of-concern per file, derived from PRD.
@@ -67,9 +70,9 @@ If neither exists, create the files using the content in `templates/*` from this
 Loop runner (non-interactive)
 
 Run in a target project:
-- `bash scripts/mario-loop.sh prd`
-- `bash scripts/mario-loop.sh plan`
-- `bash scripts/mario-loop.sh build`
+- `scripts/mario prd`
+- `scripts/mario plan`
+- `scripts/mario build`
 
 OpenCode UI is not used here. The loop executes `AGENT_CMD` (configured in `.mario/AGENTS.md`).
 Supported out of the box: OpenCode, Claude Code, Codex.
