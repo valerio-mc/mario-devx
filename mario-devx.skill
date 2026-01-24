@@ -1,0 +1,53 @@
+---
+name: mario-devx
+description: Interactive PRD interview + Ralph-style plan/build loop for OpenCode. Use when you have a project idea and want durable on-disk specs, a brick-by-brick implementation plan, and an `opencode run` loop with deterministic backpressure plus LLM/human verifier feedback injection.
+---
+
+Operate as a product-minded engineer running an iterative loop.
+
+Persist state on disk (and in git), not in chat context.
+
+Core artifacts (project root):
+- `PRD.md`: single source of truth for the project intent and constraints.
+- `specs/*.md`: one topic-of-concern per file, derived from PRD.
+- `IMPLEMENTATION_PLAN.md`: ordered list of bricks (one brick per loop iteration).
+- `AGENTS.md`: operational commands + toggles (build/tests/lint + AUTO_COMMIT/AUTO_PUSH).
+- `state/feedback.md`: verifier output injected into the next loop.
+
+Folder conventions (in this skill bundle):
+- `prompts/`: prompt templates consumed by the loop runner.
+- `scripts/`: loop runner + verifier scripts.
+- `templates/`: starter versions of the core artifacts.
+
+Workflow
+
+Phase 1 - Interview -> PRD
+- Ask one question at a time.
+- Confirm assumptions explicitly.
+- Write/update `PRD.md` (use `templates/PRD.md` as a base).
+- Capture: target users, JTBD, non-goals, scope boundaries, risks, acceptance criteria, repo details.
+
+Phase 2 - Split -> specs
+- Derive `specs/*.md` from `PRD.md`.
+- Each spec must be describable in one sentence without using "and".
+- Each spec must include acceptance criteria that can be verified.
+
+Phase 3 - Planning loop -> IMPLEMENTATION_PLAN
+- Create/update `IMPLEMENTATION_PLAN.md` by comparing `specs/*` vs the existing codebase.
+- Plan only. Do not implement.
+- Every plan item must be a single brick with an explicit "Done when" including required verification (tests/lint/typecheck).
+
+Phase 4 - Building loop -> one brick
+- Implement exactly one brick.
+- Search the codebase first; do not assume missing.
+- Apply deterministic backpressure (commands from `AGENTS.md`).
+- If needed, request human verification by writing `state/feedback.md` with a checklist.
+- If configured, auto-commit (and optionally push).
+
+Phase 5 - Verification feedback injection
+- Use `scripts/verify.sh` to produce `state/feedback.md`.
+- Optionally run `scripts/verify-llm.sh` to produce feedback using an LLM verifier prompt.
+- Next loop iteration must read `state/feedback.md` and address it first.
+
+To run the loop outside of OpenCode, use `scripts/mario-loop.sh`.
+To bootstrap a repo with the core files, copy `templates/*` into the project root.
