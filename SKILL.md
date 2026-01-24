@@ -1,16 +1,21 @@
 ---
 name: mario-devx
-description: Italian Ralph-style methodology for OpenCode: interactive PRD interview -> specs -> plan-item-by-plan-item implementation plan -> build loop with deterministic backpressure plus LLM/human verifier feedback injection.
+description: Ralph-style methodology for AI coding CLIs: interactive PRD interview -> specs -> plan-item-by-plan-item implementation plan -> build loop with deterministic backpressure plus LLM/human verifier feedback injection.
 ---
 
 Persist state on disk (and in git), not in chat context.
 
-Core artifacts (in the target project root)
-- `PRD.md`: project intent, scope, constraints.
-- `specs/*.md`: one topic-of-concern per file, derived from PRD.
-- `IMPLEMENTATION_PLAN.md`: ordered list of plan items (one item per iteration).
-- `AGENTS.md`: operational commands + toggles (backpressure + AUTO_COMMIT/AUTO_PUSH).
-- `state/feedback.md`: verifier output injected into the next loop.
+Core artifacts (default: in `.mario/` inside the target project)
+- `.mario/PRD.md`: project intent, scope, constraints.
+- `.mario/specs/*.md`: one topic-of-concern per file, derived from PRD.
+- `.mario/IMPLEMENTATION_PLAN.md`: ordered list of plan items (one item per iteration).
+- `.mario/AGENTS.md`: operational commands + toggles (backpressure + AUTO_COMMIT/AUTO_PUSH).
+- `.mario/state/feedback.md`: verifier output injected into the next loop.
+- `.mario/progress.md`: append-only loop progress log.
+- `.mario/runs/*`: per-iteration run artifacts (prompts, outputs, diffs, verifier logs).
+
+Legacy root-mode (optional)
+- Set `MARIO_ROOT_MODE=1` in `.mario/AGENTS.md` to keep PRD/specs/plan at repo root.
 
 Resources shipped with this skill
 - `prompts/`: prompt templates (PRD/plan/build/LLM-verify)
@@ -43,7 +48,7 @@ Phase 4 - Building loop -> one plan item
 - Implement exactly one plan item.
 - Search first; do not assume missing.
 - Apply deterministic backpressure (commands from `AGENTS.md`).
-- Optionally run LLM verifier to generate `state/feedback.md`.
+- Run deterministic backpressure plus an LLM verifier (unless disabled) to generate `state/feedback.md`.
 - If configured, auto-commit and optionally push.
 
 Phase 5 - Feedback injection
@@ -66,4 +71,5 @@ Run in a target project:
 - `bash scripts/mario-loop.sh plan`
 - `bash scripts/mario-loop.sh build`
 
-OpenCode UI is not used here. The loop uses `opencode run` (non-interactive).
+OpenCode UI is not used here. The loop executes `AGENT_CMD` (configured in `.mario/AGENTS.md`).
+Supported out of the box: OpenCode, Claude Code, Codex.

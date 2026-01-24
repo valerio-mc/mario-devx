@@ -15,4 +15,5 @@ Key requirements we intentionally mirror:
 Differences (intentional):
 
 - mario-devx stores the PRD in `PRD.md` (instead of defaulting to `tasks/prd.md`).
+- mario-devx now defaults to storing core artifacts under `.mario/` (PRD in `.mario/PRD.md`).
 - mario-devx uses an additional plan file (`IMPLEMENTATION_PLAN.md`) and loop scripts.
