@@ -1,6 +1,7 @@
 ---
 name: mario-devx
-description: Ralph-style methodology for AI coding CLIs: interactive PRD interview -> specs -> plan-item-by-plan-item implementation plan -> build loop with deterministic backpressure plus LLM/human verifier feedback injection.
+description: >-
+  Ralph-style methodology for AI coding CLIs: interactive PRD interview -> specs -> plan-item-by-plan-item implementation plan -> build loop with deterministic backpressure plus LLM/human verifier feedback injection.
 ---
 
 Persist state on disk (and in git), not in chat context.
