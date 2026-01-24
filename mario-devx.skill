@@ -51,3 +51,78 @@ Phase 5 - Verification feedback injection
 
 To run the loop outside of OpenCode, use `scripts/mario-loop.sh`.
 To bootstrap a repo with the core files, copy `templates/*` into the project root.
+
+Bootstrap (in any target project)
+
+If the current project does not have mario-devx artifacts yet, create them with exactly these contents.
+
+Create `PRD.md`:
+
+```markdown
+# PRD
+
+## Pitch
+
+## Target Users
+
+## JTBD
+
+## Scope
+
+## Non-goals
+
+## Core Flows
+
+## Edge Cases
+
+## Acceptance Criteria
+
+## Constraints
+
+## Repo & Workflow
+- Branch strategy:
+- AUTO_COMMIT: 1
+- AUTO_PUSH: 0
+- Human-in-the-loop checkpoints:
+```
+
+Create `AGENTS.md`:
+
+```text
+# AGENTS
+
+# Controls
+AUTO_COMMIT=1
+AUTO_PUSH=0
+HITL_REQUIRED=0
+
+# Backpressure commands (optional)
+# Set these to project-specific commands.
+CMD_LINT=
+CMD_TYPECHECK=
+CMD_TEST=
+CMD_BUILD=
+
+# Notes
+# Keep this file operational. Planning belongs in IMPLEMENTATION_PLAN.md.
+```
+
+Create `IMPLEMENTATION_PLAN.md`:
+
+```markdown
+# IMPLEMENTATION PLAN
+
+Rules:
+- One brick per loop iteration.
+- Each brick must include "Done when" with explicit verification.
+
+## Bricks
+```
+
+Create directories and feedback file:
+- Ensure directories: `specs/`, `state/`
+- Create `state/feedback.md` with:
+
+```text
+Status: NONE
+```

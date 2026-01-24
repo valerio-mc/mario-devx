@@ -7,6 +7,7 @@ Rules:
 - Keep questions concrete and decision-oriented.
 - If the user gives a vague answer, ask a tighter follow-up.
 - Do not implement anything.
+- If `PRD.md` does not exist, create it using the Bootstrap template in `mario-devx.skill`.
 - Write/update `PRD.md` incrementally after each answer.
 
 Output expectations:

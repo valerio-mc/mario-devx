@@ -21,3 +21,5 @@ Rules:
   - Notes/risks
 
 If `specs/*` are missing or inconsistent, propose how to split/fix them, but do not invent requirements.
+
+If `IMPLEMENTATION_PLAN.md` or `AGENTS.md` are missing, create them using the Bootstrap templates in `mario-devx.skill`.
