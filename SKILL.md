@@ -21,9 +21,13 @@ Resources shipped with this skill
 Workflow
 
 Phase 1 - Interview -> PRD
-- Ask exactly one question at a time.
+- Ask questions in short rounds (3-5 per round) with lettered options so users can answer compactly (eg "1A, 2C").
 - Write/update `PRD.md` incrementally.
 - Capture workflow toggles during interview (AUTO_COMMIT/AUTO_PUSH/HITL_REQUIRED + commands).
+
+PRD format requirements
+- Include a dedicated "Quality Gates" section listing commands that must pass for every user story.
+- Express scope as small user stories (US-001, US-002, ...) with verifiable acceptance criteria.
 
 Phase 2 - Split -> specs
 - Create `specs/*.md` from `PRD.md`.
