@@ -38,6 +38,10 @@ For UI stories, also include:
 
 ## Repo & Workflow
 - Branch strategy:
+- Canonical mario-devx directory: `.mario/` (unless `MARIO_ROOT_MODE=1`)
+- Commit message format (if AUTO_COMMIT=1): `PI-XXXX: <message>`
+- Tagging strategy (optional):
 - AUTO_COMMIT: 1
 - AUTO_PUSH: 0
+- LLM verifier (3rd model) required?:
 - Human-in-the-loop checkpoints:
