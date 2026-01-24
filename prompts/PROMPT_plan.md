@@ -13,9 +13,9 @@ Persistent state:
 Rules:
 - Plan only. Do not implement.
 - Do not assume missing functionality; search the codebase first.
-- Produce a prioritized, brick-sized plan in `IMPLEMENTATION_PLAN.md`.
-- Each brick must be executable in one loop iteration.
-- Each brick must include:
+- Produce a prioritized, plan-item-sized plan in `IMPLEMENTATION_PLAN.md`.
+- Each plan item must be executable in one loop iteration.
+- Each plan item must include:
   - Scope (what changes)
   - Done when (explicit verification: tests/lint/typecheck/build)
   - Notes/risks

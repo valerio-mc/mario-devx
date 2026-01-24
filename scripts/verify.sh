@@ -34,7 +34,7 @@ write_feedback_pass() {
     echo "Reason:"
     echo "- Deterministic checks passed"
     echo "Next actions:"
-    echo "- Proceed to the next brick"
+    echo "- Proceed to the next plan item"
   } > state/feedback.md
 }
 

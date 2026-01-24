@@ -1,7 +1,7 @@
 # IMPLEMENTATION PLAN
 
 Rules:
-- One brick per loop iteration.
-- Each brick must include "Done when" with explicit verification.
+ - One plan item per loop iteration.
+ - Each plan item must include "Done when" with explicit verification.
 
-## Bricks
+## Plan Items

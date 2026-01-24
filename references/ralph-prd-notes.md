@@ -15,4 +15,4 @@ Key requirements we intentionally mirror:
 Differences (intentional):
 
 - mario-devx stores the PRD in `PRD.md` (instead of defaulting to `tasks/prd.md`).
-- mario-devx uses an additional brick plan file (`IMPLEMENTATION_PLAN.md`) and loop scripts.
+- mario-devx uses an additional plan file (`IMPLEMENTATION_PLAN.md`) and loop scripts.

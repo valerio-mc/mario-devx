@@ -1,6 +1,6 @@
 ---
 name: mario-devx
-description: Italian Ralph-style methodology for OpenCode: interactive PRD interview -> specs -> brick-by-brick implementation plan -> build loop with deterministic backpressure plus LLM/human verifier feedback injection.
+description: Italian Ralph-style methodology for OpenCode: interactive PRD interview -> specs -> plan-item-by-plan-item implementation plan -> build loop with deterministic backpressure plus LLM/human verifier feedback injection.
 ---
 
 Persist state on disk (and in git), not in chat context.
@@ -8,7 +8,7 @@ Persist state on disk (and in git), not in chat context.
 Core artifacts (in the target project root)
 - `PRD.md`: project intent, scope, constraints.
 - `specs/*.md`: one topic-of-concern per file, derived from PRD.
-- `IMPLEMENTATION_PLAN.md`: ordered list of bricks (one brick per iteration).
+- `IMPLEMENTATION_PLAN.md`: ordered list of plan items (one item per iteration).
 - `AGENTS.md`: operational commands + toggles (backpressure + AUTO_COMMIT/AUTO_PUSH).
 - `state/feedback.md`: verifier output injected into the next loop.
 
@@ -37,10 +37,10 @@ Phase 2 - Split -> specs
 Phase 3 - Planning loop -> IMPLEMENTATION_PLAN
 - Plan only. Do not implement.
 - Compare `specs/*` vs codebase.
-- Each brick must include an explicit "Done when" (verification).
+- Each plan item must include an explicit "Done when" (verification).
 
-Phase 4 - Building loop -> one brick
-- Implement exactly one brick.
+Phase 4 - Building loop -> one plan item
+- Implement exactly one plan item.
 - Search first; do not assume missing.
 - Apply deterministic backpressure (commands from `AGENTS.md`).
 - Optionally run LLM verifier to generate `state/feedback.md`.
