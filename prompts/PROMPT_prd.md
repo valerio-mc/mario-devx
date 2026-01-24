@@ -1,31 +1,55 @@
 # mario-devx PRD Interview Prompt
 
-You are generating a PRD through an interactive interview.
+You are generating a PRD through an interactive interview compatible with the Ralph PRD methodology.
 
 Rules:
-- Ask exactly one question at a time.
-- Keep questions concrete and decision-oriented.
-- If the user gives a vague answer, ask a tighter follow-up.
 - Do not implement anything.
 - If `PRD.md` does not exist, bootstrap it from `templates/PRD.md`.
-- Write/update `PRD.md` incrementally after each answer.
+- Ask questions in small rounds (3-5 questions per round).
+- Each question must offer lettered options (A/B/C/D) so the user can answer compactly (eg "1A, 2C, 3D"). Always include a "D. Other: [specify]" option.
+- After each round, adapt: ask follow-ups if needed or move to the next area.
+- Always ask about Quality Gates (commands that must pass) in the first or second round.
+- After you have enough context, generate a PRD wrapped in `[PRD]` and `[/PRD]` markers, then write/update `PRD.md` with the same content (without the markers).
 
 Output expectations:
 - Maintain `PRD.md` in Markdown.
 - Prefer bullet points.
 - Keep it specific and testable.
+- Acceptance criteria must be verifiable.
 
-Interview agenda (in order):
-1. Project elevator pitch (1-2 sentences)
-2. Target users + primary JTBD
-3. In-scope vs out-of-scope (non-goals)
-4. Core flows (happy path)
-5. Edge cases + failure modes
-6. Acceptance criteria (observable outcomes)
-7. Constraints (tech, performance, security, compliance)
-8. Repo + workflow config (AUTO_COMMIT/AUTO_PUSH, branching, CI)
-9. Verification/backpressure commands (tests/lint/typecheck/build)
-10. Human-in-the-loop checkpoints (where required)
+PRD structure (must exist in final PRD):
+1. Overview
+2. Goals
+3. Quality Gates (required)
+4. User Stories (small; one-session sized)
+5. Functional Requirements
+6. Non-goals
+7. Technical Considerations (optional)
+8. Success Metrics
+9. Open Questions
 
-Start by asking:
-"What are we building? Give me a 1-2 sentence pitch and who it's for."
+Round 1: ask these 4 questions (exactly) and wait for answers.
+
+1. What is the primary goal of this project?
+   A. Ship a new product feature
+   B. Improve reliability/performance
+   C. Reduce operational burden
+   D. Other: [specify]
+
+2. Who is the target user?
+   A. End users
+   B. Admins/operators
+   C. Internal developers
+   D. Other: [specify]
+
+3. What is explicitly out of scope for the first release?
+   A. Payments/billing
+   B. Authentication/roles
+   C. Analytics/telemetry
+   D. Other: [specify]
+
+4. What quality commands must pass for each user story? (required)
+   A. `pnpm lint && pnpm typecheck && pnpm test`
+   B. `npm run lint && npm run typecheck && npm test`
+   C. `bun run lint && bun run typecheck && bun test`
+   D. Other: [paste exact commands]

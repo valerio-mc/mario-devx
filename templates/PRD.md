@@ -1,10 +1,26 @@
 # PRD
 
-## Pitch
+## Overview
 
-## Target Users
+## Goals
 
-## JTBD
+## Quality Gates
+
+These commands must pass for every user story:
+- `TODO`
+
+For UI stories, also include:
+- `TODO`
+
+## User Stories
+
+### US-001: 
+**Description:** As a [user], I want [feature] so that [benefit].
+
+**Acceptance Criteria:**
+- [ ] 
+
+## Functional Requirements
 
 ## Scope
 
@@ -14,9 +30,11 @@
 
 ## Edge Cases
 
-## Acceptance Criteria
+## Success Metrics
 
 ## Constraints
+
+## Open Questions
 
 ## Repo & Workflow
 - Branch strategy:
