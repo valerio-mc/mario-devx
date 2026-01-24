@@ -1,10 +1,10 @@
-# Mario Devx
+# Mario DevX
 
 Ralph-style, file-based agent loops for shipping software.
 
 Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
 
-Mario Devx is a "skill" + a small set of templates and scripts that let you run any AI coding CLI in a deterministic loop:
+Mario DevX is a "skill" + a small set of templates and scripts that let you run any AI coding CLI in a deterministic loop:
 
 - PRD interview -> `.mario/PRD.md`
 - Split into specs -> `.mario/specs/*.md`
@@ -24,7 +24,7 @@ If you have ever watched an agent:
 - "fix" a bug by redefining the acceptance criteria,
 - or confidently ship a placeholder,
 
-Mario Devx adds two things that agents actually respect:
+Mario DevX adds two things that agents actually respect:
 
 1. Backpressure (commands that must pass)
 2. A loop (keep going until it does)
@@ -175,7 +175,7 @@ In practice, you will usually set a different model/provider here.
 
 ## Verification model
 
-Mario Devx has two verification layers:
+Mario DevX has two verification layers:
 
 1. Deterministic backpressure: `scripts/verify.sh`
 2. LLM verifier (PASS/FAIL feedback): `scripts/verify-llm.sh`
