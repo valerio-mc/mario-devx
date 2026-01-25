@@ -34,8 +34,9 @@ LLM_VERIFY_CMD=
 MARIO_NO_PROGRESS_LIMIT=3
 MARIO_REPEAT_FAIL_LIMIT=5
 
-# Backpressure commands (optional)
-# Set these to project-specific commands.
+# Backpressure commands (optional overrides)
+# Source of truth is `## Quality Gates` in PRD.md.
+# If PRD has no quality gates yet, the harness will attempt to auto-detect and persist `CMD_*` here.
 CMD_LINT=
 CMD_TYPECHECK=
 CMD_TEST=

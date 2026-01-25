@@ -7,10 +7,10 @@
 ## Quality Gates
 
 These commands must pass for every user story:
-- `TODO`
+- TODO: set your exact commands (example: pnpm lint && pnpm typecheck && pnpm test)
 
 For UI stories, also include:
-- `TODO`
+- TODO: set UI gates if relevant (example: pnpm e2e)
 
 ## User Stories
 

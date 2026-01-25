@@ -12,6 +12,10 @@ Rules:
 - Implement exactly ONE plan item from `IMPLEMENTATION_PLAN.md` / `.mario/IMPLEMENTATION_PLAN.md`.
 - Search first; do not assume missing.
 - Apply backpressure: run the verification commands configured in `AGENTS.md` / `.mario/AGENTS.md`.
+- Backpressure source of truth:
+  - Prefer `## Quality Gates` from the PRD.
+  - Fall back to `CMD_*` in `.mario/AGENTS.md`.
+  - If neither exists, expect the harness to auto-detect and persist `CMD_*`.
 - If deterministic verification is not possible, request human verification by setting `HITL_REQUIRED=1` and writing a checklist to `state/feedback.md`.
 - Update `IMPLEMENTATION_PLAN.md` to mark the plan item `DONE` and note discoveries.
 - Append a one-line note to `.mario/progress.md` describing what changed.
