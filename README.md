@@ -6,7 +6,7 @@ Ralph-style, file-based agent loops for shipping software.
 
 Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
 
-Mario DevX is a project harness (templates + prompts + scripts) that lets you run any AI coding CLI in a deterministic loop:
+**Mario DevX** is a project harness (templates + prompts + scripts) that lets you run any AI coding CLI in a deterministic loop:
 
 - PRD interview -> `.mario/PRD.md`
 - Split into specs -> `.mario/specs/*.md`
@@ -43,10 +43,10 @@ If you have ever watched an agent:
 
 Mario DevX adds two things that agents actually respect:
 
-1. Backpressure (commands that must pass)
-2. A loop (keep going until it does)
+1. **Backpressure** (commands that must pass)
+2. **Loop** (keep going until it does)
 
-Backpressure is the part where we stop "vibes-based software delivery".
+**Backpressure** is the part where we stop "vibes-based software delivery".
 It is a small set of commands (lint/typecheck/tests/build) that must pass before the loop is allowed to claim DONE.
 If the commands fail, the agent doesn't get a gold star. It gets to keep working. Revolutionary.
 
@@ -60,7 +60,7 @@ Inspired by the Ralph playbook's "Key Principles" section: https://github.com/gh
 - The only memory is what you put on disk: `.mario/*` + git history.
 - Keep plan items small enough to finish in one context window.
 
-Context rotting (why long chat sessions go sideways):
+**Context rotting** (why long chat sessions go sideways):
 
 - Long sessions accumulate contradictory instructions, stale assumptions, and half-finished threads.
 - The model starts to "optimize" for coherence with old context instead of correctness with current code.
@@ -72,7 +72,7 @@ Same inputs, fresh context, less hallucinated momentum.
 Some numbers (because the problem is math, not vibes):
 
 - When "200K tokens" are advertised, usable context is closer to ~176K.
-- Models tend to perform best in a smaller "smart zone" (roughly 40-60% of context).
+- Models tend to perform best in a smaller **smart zone** (roughly 40-60% of context).
 - Tight tasks + one task per loop keeps you near 100% smart-zone utilization.
 
 This informs everything else:
@@ -84,12 +84,12 @@ This informs everything else:
 
 ### Steering: patterns + backpressure
 
-- Steer upstream: keep the prompts + files stable so the agent starts from a known state.
-- Steer downstream: make it impossible to "ship" without passing quality gates.
+- **Steer upstream**: keep the prompts + files stable so the agent starts from a known state.
+- **Steer downstream**: make it impossible to "ship" without passing quality gates.
 
 In practice:
 
-- Put your real "definition of done" into `.mario/PRD.md` under `## Quality Gates`.
+- Put your real **definition of done** into `.mario/PRD.md` under `## Quality Gates`.
 - The harness runs those commands as backpressure.
 - If you don't define them, it will try to guess (and write the guess into `.mario/AGENTS.md`).
 - If it can't guess, it fails loudly instead of pretending everything is fine.
@@ -163,9 +163,9 @@ Edit `.mario/AGENTS.md` to select your agent.
 
 Backpressure is configured in this order:
 
-1. `## Quality Gates` in `.mario/PRD.md` (source of truth)
-2. `CMD_*` in `.mario/AGENTS.md` (optional overrides)
-3. Auto-detection (fallback): the harness tries to infer commands and writes them into `.mario/AGENTS.md`
+1. **PRD Quality Gates**: `## Quality Gates` in `.mario/PRD.md` (source of truth)
+2. **AGENTS overrides**: `CMD_*` in `.mario/AGENTS.md` (optional overrides)
+3. **Auto-detection** (fallback): the harness tries to infer commands and writes them into `.mario/AGENTS.md`
 
 The goal is that you can install Mario DevX and immediately run `./mario build` without first doing a small ritual of "please tell me how to run tests".
 If your project actually has no tests/build/lint, Mario DevX will make that awkward (on purpose).
@@ -302,7 +302,7 @@ Mario DevX has two verification layers:
 
 Combined gate (default for build mode): `.mario/scripts/verify-all.sh`
 
-LLM review: build mode runs the LLM verifier after deterministic backpressure (unless disabled via `MARIO_LLM_VERIFY=0`). The verifier writes PASS/FAIL back into `.mario/state/feedback.md`.
+**LLM review:** build mode runs the LLM verifier after deterministic backpressure (unless disabled via `MARIO_LLM_VERIFY=0`). The verifier writes PASS/FAIL back into `.mario/state/feedback.md`.
 
 (All executables live under `.mario/scripts/`; `./mario` is just a shim.)
 
