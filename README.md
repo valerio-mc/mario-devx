@@ -24,6 +24,7 @@ This repo takes deep inspiration from the Ralph Wiggum ecosystem. See Acknowledg
 - [Key principles](#key-principles)
 - [What gets installed](#what-gets-installed)
 - [Quick start](#quick-start)
+- [ELI5: using Mario DevX on a new project](#eli5-using-mario-devx-on-a-new-project)
 - [The workflow (3 phases, 2 modes, 1 loop)](#the-workflow-3-phases-2-modes-1-loop)
 - [File layout](#file-layout)
 - [Configuration (.mario/AGENTS.md)](#configuration-marioagentsmd)
@@ -193,6 +194,51 @@ Quality gate parsing rules:
 ```
 
 This repo is a project harness. It doesn’t require any specific TUI.
+
+## ELI5: using Mario DevX on a new project
+
+If you want to use Mario DevX on a fresh project, here’s the “I just want it to work” path.
+
+- Make a folder for your project and enter it
+  - `mkdir my-project && cd my-project`
+- Initialize git (yes, really)
+  - `git init`
+  - Why: the loop uses git for diff snapshots, branch switching, and “did anything change?” signals.
+  - Without git, you can still run, but you lose most of the guardrails (so you’re basically freehanding it).
+- Install Mario DevX into the project
+  - `curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash`
+  - This drops an all-in-one `.mario/` folder + a single `./mario` shim.
+- Pick which agent CLI you’re using (and tell Mario)
+  - Edit `.mario/AGENTS.md`
+  - Set `AGENT_CMD` (and ideally `LLM_VERIFY_CMD` to use a different model/provider as reviewer)
+  - Examples live in the file. Copy one. Don’t improvise if you’re new.
+- (Optional) Tell it which git branch to work on
+  - Add `Branch: my-feature` (or `branchName: my-feature`) near the top of `.mario/PRD.md`
+  - Build mode will create/switch to that branch automatically.
+- Write your PRD (interactive interview)
+  - Run: `./mario prd`
+  - Answer questions in short rounds until `.mario/PRD.md` describes what you actually want.
+- Set your “definition of done” (backpressure)
+  - In `.mario/PRD.md`, fill `## Quality Gates` with real commands your repo can run.
+  - Example list items:
+    - `- pnpm lint && pnpm test`
+    - `- go test ./...`
+  - If you don’t set gates, Mario DevX will try to auto-detect commands and write them into `.mario/AGENTS.md`.
+  - If it can’t detect anything, it will fail (politely, but firmly) instead of pretending everything is fine.
+- Generate the plan (no code changes)
+  - Run: `./mario plan`
+  - This writes `.mario/IMPLEMENTATION_PLAN.md` with plan items like `PI-0001`, `PI-0002`, ...
+- Build in a loop (one plan item per iteration)
+  - Run: `./mario build`
+  - Each iteration:
+    - reads `.mario/state/feedback.md` first (so it doesn’t repeat mistakes)
+    - runs your agent once (fresh context)
+    - runs deterministic gates (`.mario/scripts/verify.sh`)
+    - runs the LLM judge (`.mario/scripts/verify-llm.sh`) and requires `EXIT_SIGNAL: true` to stop
+    - logs what happened in `.mario/activity.log`, `.mario/errors.log`, `.mario/progress.md`, and `.mario/runs/*`
+- If the loop gets stuck
+  - Stop it (Ctrl+C), tighten your plan item, and/or fix your quality gates.
+  - “More context” is not a strategy. Smaller tasks are.
 
 ## The workflow (3 phases, 2 modes, 1 loop)
 
