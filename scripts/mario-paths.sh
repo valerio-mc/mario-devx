@@ -58,6 +58,9 @@ mario_detect_paths() {
 
   MARIO_FEEDBACK_FILE="$(mario_join "$MARIO_STATE_DIR" "state/feedback.md")"
   MARIO_PROGRESS_FILE="$(mario_join "$MARIO_STATE_DIR" "progress.md")"
+  MARIO_GUARDRAILS_FILE="$(mario_join "$MARIO_STATE_DIR" "guardrails.md")"
+  MARIO_ACTIVITY_LOG="$(mario_join "$MARIO_STATE_DIR" "activity.log")"
+  MARIO_ERRORS_LOG="$(mario_join "$MARIO_STATE_DIR" "errors.log")"
   MARIO_RUNS_DIR="$(mario_join "$MARIO_STATE_DIR" "runs")"
   MARIO_PROMPTS_DIR="$(mario_join "$MARIO_STATE_DIR" "prompts")"
 }
@@ -92,6 +95,18 @@ mario_bootstrap_minimal_files() {
 
   if [[ ! -f "$MARIO_PROGRESS_FILE" ]]; then
     printf '%s\n' '# Mario Progress' > "$MARIO_PROGRESS_FILE"
+  fi
+
+  if [[ ! -f "$MARIO_GUARDRAILS_FILE" ]]; then
+    printf '%s\n' '# Guardrails' > "$MARIO_GUARDRAILS_FILE"
+  fi
+
+  if [[ ! -f "$MARIO_ACTIVITY_LOG" ]]; then
+    printf '%s\n' '# Mario DevX activity log' > "$MARIO_ACTIVITY_LOG"
+  fi
+
+  if [[ ! -f "$MARIO_ERRORS_LOG" ]]; then
+    printf '%s\n' '# Mario DevX errors log' > "$MARIO_ERRORS_LOG"
   fi
 }
 

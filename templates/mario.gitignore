@@ -9,3 +9,7 @@
 
 # Precomputed git snapshots.
 /state/git.*
+
+# Local activity/errors logs (optional to keep)
+/activity.log
+/errors.log

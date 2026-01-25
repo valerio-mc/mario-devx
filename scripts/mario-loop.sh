@@ -97,11 +97,24 @@ write_prompt() {
     echo "- Agent config: $MARIO_AGENTS_FILE"
     echo "- Feedback (read first): $MARIO_FEEDBACK_FILE"
     echo "- Progress log: $MARIO_PROGRESS_FILE"
+    echo "- Guardrails: $MARIO_GUARDRAILS_FILE"
+    echo "- Activity log: $MARIO_ACTIVITY_LOG"
+    echo "- Errors log: $MARIO_ERRORS_LOG"
     echo
     echo "---"
     echo
     cat "$PROMPT_TEMPLATE"
   } > "$out_file"
+}
+
+activity() {
+  # shellcheck disable=SC2129
+  printf '%s\n' "[$(date -Iseconds)] $*" >> "$MARIO_ACTIVITY_LOG" 2>/dev/null || true
+}
+
+errorlog() {
+  # shellcheck disable=SC2129
+  printf '%s\n' "[$(date -Iseconds)] $*" >> "$MARIO_ERRORS_LOG" 2>/dev/null || true
 }
 
 ITERATION=0
@@ -116,9 +129,12 @@ while true; do
   fi
 
   ITERATION=$((ITERATION + 1))
+  iter_start_epoch="$(date +%s)"
   timestamp="$(date +%Y%m%d-%H%M%S)"
   run_dir="$MARIO_RUNS_DIR/${timestamp}-${MODE}-iter${ITERATION}"
   mkdir -p "$run_dir"
+
+  activity "start mode=$MODE iteration=$ITERATION run=$run_dir"
 
   before_head=""
   after_head=""
@@ -140,6 +156,10 @@ while true; do
   agent_ec=${PIPESTATUS[0]}
   set -e
   printf '%s\n' "$agent_ec" > "$run_dir/agent.exit_code"
+
+  if [[ "$agent_ec" != "0" ]]; then
+    errorlog "agent_exit mode=$MODE iteration=$ITERATION run=$run_dir exit_code=$agent_ec"
+  fi
 
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     after_head="$(git rev-parse HEAD 2>/dev/null || true)"
@@ -173,6 +193,10 @@ while true; do
 
   printf '%s\n' "- $(date -Iseconds) mode=$MODE iteration=$ITERATION run=$run_dir verify=$verify_status" >> "$MARIO_PROGRESS_FILE" 2>/dev/null || true
 
+  iter_end_epoch="$(date +%s)"
+  iter_seconds=$((iter_end_epoch - iter_start_epoch))
+  activity "end mode=$MODE iteration=$ITERATION run=$run_dir verify=$verify_status seconds=$iter_seconds"
+
   if [[ "$verify_ec" == "0" ]]; then
     exit 0
   fi
@@ -187,6 +211,12 @@ while true; do
   else
     REPEAT_FAIL_COUNT=0
     LAST_FAIL_KEY="$fail_key"
+  fi
+
+  if [[ -n "$fail_key" ]]; then
+    errorlog "verify_fail mode=$MODE iteration=$ITERATION run=$run_dir fail_key=$fail_key no_progress=$NO_PROGRESS_COUNT repeat_fail=$REPEAT_FAIL_COUNT"
+  else
+    errorlog "verify_fail mode=$MODE iteration=$ITERATION run=$run_dir (no feedback hash) no_progress=$NO_PROGRESS_COUNT repeat_fail=$REPEAT_FAIL_COUNT"
   fi
 
   if [[ "$NO_PROGRESS_COUNT" -ge "$MARIO_NO_PROGRESS_LIMIT" ]]; then
