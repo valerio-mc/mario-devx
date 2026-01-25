@@ -170,7 +170,11 @@ curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.
 ### 3) Pick your agent runner
 
 - Edit `.mario/AGENTS.md`
-- Set `AGENT_CMD` (and ideally `LLM_VERIFY_CMD` so the judge is a different model/provider)
+- Set `AGENT_CMD` (used for `plan`/`build` loops)
+- Set `LLM_VERIFY_CMD` (the judge)
+
+Note: PRD is OpenCode-first. `./mario prd` launches `opencode .`.
+Other terminal agents have similar "start in project root" commands (e.g. Claude Code), but Mario DevX does not wire them up.
 
 ### 4) (Optional) Tell it which branch to use
 
@@ -186,9 +190,9 @@ Branch: my-feature
 ./mario prd "my brilliant idea"
 ```
 
-- It asks 3-5 questions.
-- You answer in the terminal.
-- It repeats until it outputs a final PRD.
+- This launches the OpenCode TUI in your project.
+- You answer questions in a normal chat session.
+- Keep going until the PRD is done.
 
 ### 6) Set backpressure (definition of done)
 
@@ -247,6 +251,9 @@ install.sh                 # curlable installer
 ### Agent runner
 
 The loop executes `AGENT_CMD` once per iteration.
+
+PRD mode is different:
+- `./mario prd` launches the OpenCode TUI (`opencode .`) and uses `.mario/prompts/PROMPT_prd.md` as the starting prompt.
 
 If `AGENT_CMD` contains `{prompt}`, it will be replaced with the prompt file path.
 If it does not, the prompt content is piped through stdin.
