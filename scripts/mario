@@ -20,6 +20,7 @@ Usage:
 Notes:
   - Configure the agent + backpressure in .mario/AGENTS.md
   - State lives in .mario/
+  - PRD runs in the OpenCode TUI (opencode-specific)
 EOF
 }
 
@@ -48,154 +49,38 @@ doctor() {
   echo "OK: basic files present" >&2
 }
 
-prd_interactive() {
+prd_tui() {
   local initial_idea="${1:-}"
-  local round=0
+  local prompt_file=".mario/prompts/PROMPT_prd.md"
 
-  add_unique_num() {
-    local list="$1"
-    local n="$2"
-    case " $list " in
-      *" $n "*) printf '%s' "$list" ;;
-      *) printf '%s' "$list $n" ;;
-    esac
+  command -v opencode >/dev/null 2>&1 || {
+    echo "Missing 'opencode' executable." >&2
+    echo "Install OpenCode or use plan/build only." >&2
+    return 2
   }
 
-  extract_question_nums() {
-    local file="$1"
-    local nums=""
-    local line
-    while IFS= read -r line; do
-      if [[ "$line" =~ ^([0-9]+)\.[[:space:]] ]]; then
-        nums="$(add_unique_num "$nums" "${BASH_REMATCH[1]}")"
-      fi
-    done < "$file"
-    printf '%s\n' "$nums"
+  [[ -f "$prompt_file" ]] || {
+    echo "Missing $prompt_file" >&2
+    echo "Run the installer again:" >&2
+    echo "  curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash -- --force" >&2
+    return 2
   }
 
-  sanitize_answer_line() {
-    # Strip control characters (arrow keys, etc.) from terminal input.
-    # Keep: tab/newline/carriage return + printable ASCII.
-    printf '%s' "$1" | tr -cd '\11\12\15\40-\176'
-  }
-
-  has_choice_for_num() {
-    local ans="$1"
-    local n="$2"
-    # Accept patterns like: 1A, 1A:, 1A - ..., 1D: ...
-    printf '%s' "$ans" | grep -Eq "(^|[^0-9])${n}[[:space:]]*[A-Da-d]([[:space:]]*[-:;,]|[[:space:]]|$)"
-  }
-
-  normalize_single_question_answer() {
-    local ans="$1"
-
-    # If there is only question 1, allow shorthand answers like:
-    #   A
-    #   D: ...
-    # and normalize them to:
-    #   1A
-    #   1D: ...
-    if [[ "$ans" =~ ^[[:space:]]*([A-Da-d])([[:space:]]*.*)$ ]]; then
-      printf '%s\n' "1${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
-      return 0
-    fi
-
-    printf '%s\n' "$ans"
-  }
-
-  mkdir -p ".mario/state" ".mario/runs" 2>/dev/null || true
-  : > /dev/null
-
-  if [[ -n "$initial_idea" ]]; then
-    if [[ ! -f ".mario/state/feedback.md" ]]; then
-      printf '%s\n' "Status: NONE" > ".mario/state/feedback.md"
-    fi
-    if ! grep -q "^Initial idea:" ".mario/state/feedback.md" 2>/dev/null; then
-      {
-        echo
-        echo "Initial idea: $initial_idea"
-      } >> ".mario/state/feedback.md"
-    fi
-  fi
-
-  while true; do
-    round=$((round + 1))
-    out_file="$(mktemp -t mario-prd.XXXXXX)"
-
-    # One PRD step (the loop script defaults to MAX_ITERATIONS=1 in prd mode).
-    set +e
-    bash "$SCRIPT_DIR/mario-loop.sh" prd 2>&1 | tee "$out_file"
-    ec=${PIPESTATUS[0]}
-    set -e
-
-    if [[ "$ec" != "0" ]]; then
-      echo "PRD run failed (exit $ec)." >&2
-      rm -f "$out_file" || true
-      return "$ec"
-    fi
-
-    # If the agent produced a PRD block, we consider it done.
-    if grep -q "\[PRD\]" "$out_file" && grep -q "\[/PRD\]" "$out_file"; then
-      rm -f "$out_file" || true
-      return 0
-    fi
-
-    expected_nums_raw="$(extract_question_nums "$out_file" || true)"
-    expected_nums="$(sanitize_answer_line "$expected_nums_raw")"
-
-    rm -f "$out_file" || true
-
-    while true; do
+  tmp_prompt="$(mktemp -t mario-prd-tui.XXXXXX)"
+  {
+    echo "# Mario DevX PRD Interview"
+    echo
+    if [[ -n "$initial_idea" ]]; then
+      echo "Initial idea: $initial_idea"
       echo
-      if [[ -n "${expected_nums// /}" ]]; then
-        echo "Enter your answers for round $round (questions:${expected_nums})." >&2
-      else
-        echo "Enter your answers for round $round." >&2
-      fi
-      echo "Example: 1D: <text>, 2A, 3C, 4D: <text>" >&2
-      echo "Type 'q' to stop." >&2
-      printf '> ' >&2
-      IFS= read -r ans || true
-
-      ans="$(sanitize_answer_line "$ans")"
-
-      # If the agent asked exactly one question, accept shorthand answers.
-      if [[ "${expected_nums// /}" == "1" ]]; then
-        ans="$(normalize_single_question_answer "$ans")"
-      fi
-
-      if [[ -z "$ans" || "$ans" == "q" || "$ans" == "quit" ]]; then
-        return 0
-      fi
-
-      # If we can detect question numbers, require an explicit choice per question.
-      if [[ -n "${expected_nums// /}" ]]; then
-        missing=""
-        for n in $expected_nums; do
-          if ! has_choice_for_num "$ans" "$n"; then
-            missing="$missing $n"
-          fi
-        done
-        if [[ -n "${missing// /}" ]]; then
-          echo "Missing choices for question(s):$missing" >&2
-          echo "Please reply compactly like: 1A, 2C, 3D: ..., 4B" >&2
-          continue
-        fi
-      fi
-
-      break
-    done
-
-    if [[ ! -f ".mario/state/feedback.md" ]]; then
-      printf '%s\n' "Status: NONE" > ".mario/state/feedback.md"
     fi
+    cat "$prompt_file"
+  } > "$tmp_prompt"
 
-    {
-      echo
-      echo "Answers (round $round):"
-      echo "$ans"
-    } >> ".mario/state/feedback.md"
-  done
+  # Launch the OpenCode TUI in this project.
+  # The PRD prompt is passed via --prompt; user interacts inside the TUI.
+  opencode . --prompt "$(cat "$tmp_prompt")"
+  rm -f "$tmp_prompt" || true
 }
 
 cmd_init() {
@@ -218,7 +103,7 @@ case "$cmd" in
     ;;
   prd)
     shift || true
-    prd_interactive "$*"
+    prd_tui "$*"
     ;;
   plan|build)
     shift || true
