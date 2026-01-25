@@ -44,6 +44,10 @@ Mario DevX adds two things that agents actually respect:
 1. Backpressure (commands that must pass)
 2. A loop (keep going until it does)
 
+Backpressure is the part where we stop "vibes-based software delivery".
+It is a small set of commands (lint/typecheck/tests/build) that must pass before the loop is allowed to claim DONE.
+If the commands fail, the agent doesn't get a gold star. It gets to keep working. Revolutionary.
+
 ## Key principles
 
 Inspired by the Ralph playbook's "Key Principles" section: https://github.com/ghuntley/how-to-ralph-wiggum#key-principles
@@ -54,10 +58,26 @@ Inspired by the Ralph playbook's "Key Principles" section: https://github.com/gh
 - The only memory is what you put on disk: `.mario/*` + git history.
 - Keep plan items small enough to finish in one context window.
 
+Context rotting (why long chat sessions go sideways):
+
+- Long sessions accumulate contradictory instructions, stale assumptions, and half-finished threads.
+- The model starts to "optimize" for coherence with old context instead of correctness with current code.
+- You end up with a giant context window that *feels* like progress and *behaves* like entropy.
+
+Mario DevX fights this by restarting the agent each iteration and forcing state onto disk.
+Same inputs, fresh context, less hallucinated momentum.
+
 ### Steering: patterns + backpressure
 
 - Steer upstream: keep the prompts + files stable so the agent starts from a known state.
-- Steer downstream: make it impossible to "ship" without passing `CMD_*` and (optionally) the LLM judge.
+- Steer downstream: make it impossible to "ship" without passing quality gates.
+
+In practice:
+
+- Put your real "definition of done" into `.mario/PRD.md` under `## Quality Gates`.
+- The harness runs those commands as backpressure.
+- If you don't define them, it will try to guess (and write the guess into `.mario/AGENTS.md`).
+- If it can't guess, it fails loudly instead of pretending everything is fine.
 
 ### Let Mario Mario (but wear a helmet)
 
@@ -131,6 +151,9 @@ Backpressure is configured in this order:
 1. `## Quality Gates` in `.mario/PRD.md` (source of truth)
 2. `CMD_*` in `.mario/AGENTS.md` (optional overrides)
 3. Auto-detection (fallback): the harness tries to infer commands and writes them into `.mario/AGENTS.md`
+
+The goal is that you can install Mario DevX and immediately run `./mario build` without first doing a small ritual of "please tell me how to run tests".
+If your project actually has no tests/build/lint, Mario DevX will make that awkward (on purpose).
 
 Quality gate parsing rules:
 
