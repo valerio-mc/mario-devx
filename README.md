@@ -18,12 +18,15 @@ This repo takes deep inspiration from the Ralph Wiggum ecosystem. See Acknowledg
 
 ## Table of contents
 
-- [Quick start](#quick-start)
+- [Why this exists](#why-this-exists)
 - [Key principles](#key-principles)
 - [What gets installed](#what-gets-installed)
+- [Quick start](#quick-start)
 - [The workflow (3 phases, 2 modes, 1 loop)](#the-workflow-3-phases-2-modes-1-loop)
+- [File layout](#file-layout)
 - [Configuration (.mario/AGENTS.md)](#configuration-marioagentsmd)
 - [Verification model](#verification-model)
+- [Safety](#safety)
 - [Manual install](#manual-install)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
@@ -128,7 +131,6 @@ Edit `.mario/AGENTS.md` to select your agent and backpressure commands.
 ```bash
 # PRD interview
 ./mario prd
-
 
 # Plan only (no code changes)
 ./mario plan
