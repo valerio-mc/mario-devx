@@ -131,5 +131,5 @@ chmod +x \
 
 echo "Mario DevX installed into: $ROOT" >&2
 echo "Next:" >&2
-echo "  - edit .mario/AGENTS.md" >&2
+echo "  - set quality gates in .mario/PRD.md (recommended)" >&2
 echo "  - run: ./mario prd" >&2

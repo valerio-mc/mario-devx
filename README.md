@@ -124,7 +124,19 @@ This installs:
 
 ### 2) Configure
 
-Edit `.mario/AGENTS.md` to select your agent and backpressure commands.
+Edit `.mario/AGENTS.md` to select your agent.
+
+Backpressure is configured in this order:
+
+1. `## Quality Gates` in `.mario/PRD.md` (source of truth)
+2. `CMD_*` in `.mario/AGENTS.md` (optional overrides)
+3. Auto-detection (fallback): the harness tries to infer commands and writes them into `.mario/AGENTS.md`
+
+Quality gate parsing rules:
+
+- Only list items under `## Quality Gates` are considered.
+- You can write them as `- pnpm lint && pnpm test` (backticks are optional).
+- Avoid putting examples in list items unless you want them to run.
 
 ### 3) Run
 
@@ -209,7 +221,13 @@ AGENT_CMD='codex exec --yolo -'
 
 ### Backpressure commands
 
-Set the commands that must pass before a plan item is considered done:
+Backpressure commands are optional overrides.
+
+Preferred: set the commands under `## Quality Gates` in `.mario/PRD.md`.
+
+Fallback: if PRD has no quality gates yet, Mario DevX will try to auto-detect common stacks (Node/Rust/Go/Python) and persist the detected `CMD_*` here.
+
+If you want to override (or pin) them manually:
 
 ```bash
 CMD_LINT='npm run lint'
@@ -245,6 +263,8 @@ Mario DevX has two verification layers:
 2. LLM verifier (PASS/FAIL feedback): `.mario/scripts/verify-llm.sh`
 
 Combined gate (default for build mode): `.mario/scripts/verify-all.sh`
+
+LLM review: build mode runs the LLM verifier after deterministic backpressure (unless disabled via `MARIO_LLM_VERIFY=0`). The verifier writes PASS/FAIL back into `.mario/state/feedback.md`.
 
 (All executables live under `.mario/scripts/`; `./mario` is just a shim.)
 
