@@ -22,6 +22,10 @@ Execution model:
 - If `.mario/state/feedback.md` contains answers to your last round, incorporate them and either ask the next round or finalize the PRD.
 - If answers are missing, ask the next round of questions and stop.
 
+Answer parsing:
+- The user may have multiple "Answers (round N)" blocks. Use the most recent one.
+- Ignore obvious terminal noise/control characters; focus on the user's compact selections (e.g. `1A, 2C, 3D: ...`).
+
 Output expectations:
 - Maintain the canonical PRD file (`.mario/PRD.md` or `PRD.md`) in Markdown.
 - Prefer bullet points.
