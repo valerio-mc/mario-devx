@@ -10,10 +10,10 @@ Path selection:
 Rules:
 - Do not implement anything.
 - If no PRD exists, create one at `.mario/PRD.md` (preferred) or `PRD.md` (legacy root mode).
-- Ask questions in small rounds (3-5 questions per round).
-- Each question must offer lettered options (A/B/C/D) so the user can answer compactly (eg "1A, 2C, 3D"). Always include a "D. Other: [specify]" option.
-- After each round, adapt: ask follow-ups if needed or move to the next area.
-- Always ask about Quality Gates (commands that must pass) in the first or second round.
+- Ask exactly ONE question per run (one-shot loop friendly).
+- The question must offer lettered options (A/B/C/D) so the user can answer compactly (eg `1A` or `1D: ...`). Always include a `D. Other: [specify]` option.
+- Avoid generic questions when the initial idea already answers them. Ask the highest-information missing detail.
+- Ensure Quality Gates (commands that must pass) are collected no later than the second question if not already specified.
 - After you have enough context, generate a PRD wrapped in `[PRD]` and `[/PRD]` markers, then write/update the canonical PRD file (`.mario/PRD.md` or `PRD.md`) with the same content (without the markers).
 
 Execution model:
@@ -25,6 +25,12 @@ Execution model:
 Answer parsing:
 - The user may have multiple "Answers (round N)" blocks. Use the most recent one.
 - Ignore obvious terminal noise/control characters; focus on the user's compact selections (e.g. `1A, 2C, 3D: ...`).
+
+Question output format (STRICT):
+- Start with a single line: `Round N — reply like \`1A\` or \`1D: ...\``
+- Then output exactly ONE numbered question using `1.`
+- Then output exactly four options `A.` `B.` `C.` `D.`
+- Do not output multiple questions in one run.
 
 Output expectations:
 - Maintain the canonical PRD file (`.mario/PRD.md` or `PRD.md`) in Markdown.
@@ -43,28 +49,10 @@ PRD structure (must exist in final PRD):
 8. Success Metrics
 9. Open Questions
 
-Round 1: ask these 4 questions (exactly) and wait for answers.
-
-1. What is the primary goal of this project?
-   A. Ship a new product feature
-   B. Improve reliability/performance
-   C. Reduce operational burden
-   D. Other: [specify]
-
-2. Who is the target user?
-   A. End users
-   B. Admins/operators
-   C. Internal developers
-   D. Other: [specify]
-
-3. What is explicitly out of scope for the first release?
-   A. Payments/billing
-   B. Authentication/roles
-   C. Analytics/telemetry
-   D. Other: [specify]
-
-4. What quality commands must pass for each user story? (required)
-   A. `pnpm lint && pnpm typecheck && pnpm test`
-   B. `npm run lint && npm run typecheck && npm test`
-   C. `bun run lint && bun run typecheck && bun test`
-   D. Other: [paste exact commands]
+Interview logic:
+- First, read the initial idea (if present) from `.mario/state/feedback.md`.
+- Then read the most recent `Answers (round N)` block.
+- Update the PRD draft on disk with what you know so far.
+- If Quality Gates are missing, your next single question must collect them.
+- Otherwise, ask the single most important missing detail that unlocks a precise PRD (usually: explicit non-goals, target platform/stack, UI scope, or acceptance criteria style).
+- When you have enough detail to write a *testable* PRD, output `[PRD]...[/PRD]` and update the canonical PRD file.
