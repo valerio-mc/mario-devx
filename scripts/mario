@@ -86,6 +86,23 @@ prd_interactive() {
     printf '%s' "$ans" | grep -Eq "(^|[^0-9])${n}[[:space:]]*[A-Da-d]([[:space:]]*[-:;,]|[[:space:]]|$)"
   }
 
+  normalize_single_question_answer() {
+    local ans="$1"
+
+    # If there is only question 1, allow shorthand answers like:
+    #   A
+    #   D: ...
+    # and normalize them to:
+    #   1A
+    #   1D: ...
+    if [[ "$ans" =~ ^[[:space:]]*([A-Da-d])([[:space:]]*.*)$ ]]; then
+      printf '%s\n' "1${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+      return 0
+    fi
+
+    printf '%s\n' "$ans"
+  }
+
   mkdir -p ".mario/state" ".mario/runs" 2>/dev/null || true
   : > /dev/null
 
@@ -141,6 +158,11 @@ prd_interactive() {
       IFS= read -r ans || true
 
       ans="$(sanitize_answer_line "$ans")"
+
+      # If the agent asked exactly one question, accept shorthand answers.
+      if [[ "${expected_nums// /}" == "1" ]]; then
+        ans="$(normalize_single_question_answer "$ans")"
+      fi
 
       if [[ -z "$ans" || "$ans" == "q" || "$ans" == "quit" ]]; then
         return 0
