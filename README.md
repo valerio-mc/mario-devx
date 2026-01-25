@@ -67,6 +67,19 @@ Context rotting (why long chat sessions go sideways):
 Mario DevX fights this by restarting the agent each iteration and forcing state onto disk.
 Same inputs, fresh context, less hallucinated momentum.
 
+Some numbers (because the problem is math, not vibes):
+
+- When "200K tokens" are advertised, usable context is closer to ~176K.
+- Models tend to perform best in a smaller "smart zone" (roughly 40-60% of context).
+- Tight tasks + one task per loop keeps you near 100% smart-zone utilization.
+
+This informs everything else:
+
+- Use the main agent/context as a scheduler (keep it clean).
+- Use subagents as memory extension (fan out, then garbage collect).
+- Simplicity and brevity win (verbose inputs degrade determinism).
+- Prefer Markdown over JSON for work tracking (token efficiency).
+
 ### Steering: patterns + backpressure
 
 - Steer upstream: keep the prompts + files stable so the agent starts from a known state.
