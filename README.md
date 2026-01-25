@@ -16,6 +16,18 @@ State lives on disk and in git, not in a chat window. Fresh context every iterat
 
 This repo takes deep inspiration from the Ralph Wiggum ecosystem. See Acknowledgements.
 
+## Table of contents
+
+- [Quick start](#quick-start)
+- [Key principles](#key-principles)
+- [What gets installed](#what-gets-installed)
+- [The workflow (3 phases, 2 modes, 1 loop)](#the-workflow-3-phases-2-modes-1-loop)
+- [Configuration (.mario/AGENTS.md)](#configuration-marioagentsmd)
+- [Verification model](#verification-model)
+- [Manual install](#manual-install)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
+
 ## Why this exists
 
 If you have ever watched an agent:
@@ -28,6 +40,32 @@ Mario DevX adds two things that agents actually respect:
 
 1. Backpressure (commands that must pass)
 2. A loop (keep going until it does)
+
+## Key principles
+
+Inspired by the Ralph playbook's "Key Principles" section: https://github.com/ghuntley/how-to-ralph-wiggum#key-principles
+
+### Context is everything
+
+- Every loop iteration is a fresh agent instance.
+- The only memory is what you put on disk: `.mario/*` + git history.
+- Keep plan items small enough to finish in one context window.
+
+### Steering: patterns + backpressure
+
+- Steer upstream: keep the prompts + files stable so the agent starts from a known state.
+- Steer downstream: make it impossible to "ship" without passing `CMD_*` and (optionally) the LLM judge.
+
+### Let Mario Mario (but wear a helmet)
+
+- The loop will eventually converge, but only if you keep tasks small and the gates real.
+- If your agent runs with auto-permissions, treat your environment like it can get popped.
+
+Practical protections:
+
+- Prefer sandboxes / minimal credentials.
+- Keep secrets out of the repo.
+- Escape hatches: Ctrl+C stops the loop; regenerate the plan when it gets weird.
 
 ## What gets installed
 
@@ -233,7 +271,8 @@ If you do not want to use the installer, copy these into your project:
 
 - `templates/*` -> `.mario/*`
 - `prompts/*` -> `.mario/prompts/*`
-- `scripts/*` -> `scripts/*`
+- `scripts/*` -> `.mario/scripts/*`
+- `mario` -> `./mario`
 
 Or: `curl` the installer (preferred) and let it do the copying.
 
