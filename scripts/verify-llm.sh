@@ -155,9 +155,29 @@ fi
 
 cp "$tmp_feedback" "$MARIO_FEEDBACK_FILE"
 
+exit_signal=""
+exit_signal_line="$(grep -E '^EXIT_SIGNAL:' "$MARIO_FEEDBACK_FILE" | head -n 1 | tr -d '\r' || true)"
+case "$exit_signal_line" in
+  "EXIT_SIGNAL: true") exit_signal="true" ;;
+  "EXIT_SIGNAL: false") exit_signal="false" ;;
+esac
+
 status_line="$(head -n 1 "$MARIO_FEEDBACK_FILE" | tr -d '\r' || true)"
 if [[ "$status_line" == "Status: PASS" ]]; then
-  exit 0
+  if [[ "$exit_signal" == "true" ]]; then
+    exit 0
+  fi
+
+  {
+    echo "Status: FAIL"
+    echo "EXIT_SIGNAL: false"
+    echo "Reason:"
+    echo "- Verifier returned PASS but did not set EXIT_SIGNAL: true"
+    echo "Next actions:"
+    echo "- Update the verifier prompt and re-run"
+    echo "- Inspect raw verifier output in $raw_out"
+  } > "$MARIO_FEEDBACK_FILE"
+  exit 1
 fi
 
 exit 1
