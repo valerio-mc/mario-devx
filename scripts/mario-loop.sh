@@ -107,6 +107,95 @@ write_prompt() {
   } > "$out_file"
 }
 
+extract_prd_branch() {
+  # Accept either:
+  # - Branch: my-feature
+  # - branchName: my-feature
+  local prd_file="$1"
+  [[ -f "$prd_file" ]] || return 0
+
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      "Branch:"*)
+        printf '%s\n' "${line#Branch:}"
+        return 0
+        ;;
+      "branchName:"*)
+        printf '%s\n' "${line#branchName:}"
+        return 0
+        ;;
+      "branch:"*)
+        printf '%s\n' "${line#branch:}"
+        return 0
+        ;;
+    esac
+  done < "$prd_file"
+}
+
+trim() {
+  local s="$1"
+  s="${s#${s%%[![:space:]]*}}" # ltrim
+  s="${s%${s##*[![:space:]]}}" # rtrim
+  printf '%s' "$s"
+}
+
+ensure_branch() {
+  local desired="$1"
+  [[ -n "$desired" ]] || return 0
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Validate branch name.
+  if ! git check-ref-format --branch "$desired" >/dev/null 2>&1; then
+    errorlog "invalid_branch name=$desired"
+    printf '%s\n' "Status: FAIL" > "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "Reason:" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "- Invalid branch name in PRD: '$desired'" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "Next actions:" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "- Fix the Branch/branchName field in $MARIO_PRD_FILE" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    return 1
+  fi
+
+  current_branch="$(git branch --show-current 2>/dev/null || true)"
+  if [[ "$current_branch" == "$desired" ]]; then
+    return 0
+  fi
+
+  # Allow switching branches even when `.mario/*` is dirty (PRD/plan evolve constantly).
+  # Block only if there are uncommitted changes outside `.mario/`.
+  dirty_non_mario=0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    path="${line:3}"
+    if [[ "$path" != .mario/* ]]; then
+      dirty_non_mario=1
+      break
+    fi
+  done < <(git status --porcelain 2>/dev/null || true)
+
+  if [[ "$dirty_non_mario" == "1" ]]; then
+    errorlog "branch_switch_blocked dirty_non_mario current=$current_branch desired=$desired"
+    printf '%s\n' "Status: FAIL" > "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "Reason:" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "- Cannot switch branches with uncommitted changes outside .mario/" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "Next actions:" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "- Commit or stash changes, then re-run" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    printf '%s\n' "- Or clear Branch/branchName in $MARIO_PRD_FILE" >> "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+    return 1
+  fi
+
+  if git show-ref --verify --quiet "refs/heads/$desired"; then
+    activity "git checkout $desired"
+    git checkout "$desired" >/dev/null
+  else
+    activity "git checkout -b $desired"
+    git checkout -b "$desired" >/dev/null
+  fi
+}
+
 activity() {
   # shellcheck disable=SC2129
   printf '%s\n' "[$(date -Iseconds)] $*" >> "$MARIO_ACTIVITY_LOG" 2>/dev/null || true
@@ -130,6 +219,17 @@ while true; do
 
   ITERATION=$((ITERATION + 1))
   iter_start_epoch="$(date +%s)"
+
+  if [[ "$MODE" == "build" ]]; then
+    prd_branch_raw="$(extract_prd_branch "$MARIO_PRD_FILE" || true)"
+    prd_branch="$(trim "$prd_branch_raw")"
+    if [[ -n "$prd_branch" ]]; then
+      if ! ensure_branch "$prd_branch"; then
+        exit 6
+      fi
+    fi
+  fi
+
   timestamp="$(date +%Y%m%d-%H%M%S)"
   run_dir="$MARIO_RUNS_DIR/${timestamp}-${MODE}-iter${ITERATION}"
   mkdir -p "$run_dir"
