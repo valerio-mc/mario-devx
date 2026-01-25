@@ -211,11 +211,29 @@ If you don’t set this, Mario DevX tries to auto-detect and write `CMD_*` into 
 ./mario plan
 ```
 
+What it does:
+
+- Runs a single planning pass (no code changes expected).
+- Reads `.mario/PRD.md` (+ optional `.mario/specs/*`).
+- Writes/updates `.mario/IMPLEMENTATION_PLAN.md` into small plan items (`PI-0001`, `PI-0002`, ...) sized to finish in one build iteration.
+
 ### 8) Build (one plan item per iteration)
 
 ```bash
 ./mario build
 ```
+
+What it does:
+
+- Runs the build loop.
+- Each iteration runs your agent once, then applies backpressure:
+  - deterministic gates from PRD `## Quality Gates` (or `CMD_*` autodetect)
+  - LLM judge (`LLM_VERIFY_CMD`) which must output `Status: PASS` and `EXIT_SIGNAL: true` to stop
+- Produces run artifacts under `.mario/runs/*` and logs to `.mario/activity.log` / `.mario/errors.log`.
+
+How many iterations?
+
+- It keeps iterating until verification says you're done (`EXIT_SIGNAL: true`), or until a circuit breaker trips (`MARIO_NO_PROGRESS_LIMIT`, `MARIO_REPEAT_FAIL_LIMIT`, `MAX_ITERATIONS`).
 
 If it gets stuck: stop it (Ctrl+C), tighten the plan item, and try again. More context is not a power-up.
 
