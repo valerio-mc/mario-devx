@@ -43,11 +43,12 @@ Core artifacts live in `.mario/` (in the target project):
 
 Executable entrypoints (in the target project):
 
-- `scripts/mario`: wrapper CLI (`init|prd|plan|build|doctor`)
-- `scripts/mario-loop.sh`: loop runner
-- `scripts/verify.sh`: deterministic backpressure
-- `scripts/verify-llm.sh`: LLM judge backpressure
-- `scripts/verify-all.sh`: combined gate
+- `./mario`: single project-local shim
+- `.mario/scripts/mario`: wrapper CLI (`init|prd|plan|build|doctor`)
+- `.mario/scripts/mario-loop.sh`: loop runner
+- `.mario/scripts/verify.sh`: deterministic backpressure
+- `.mario/scripts/verify-llm.sh`: LLM judge backpressure
+- `.mario/scripts/verify-all.sh`: combined gate
 
 ## Quick start
 
@@ -77,8 +78,8 @@ MARIO_DEVX_REF=v0.0.0 \
 This installs:
 
 - `.mario/*` (state + prompts)
-- `scripts/*` (loop + verifier)
-- `scripts/mario` (wrapper CLI)
+- `.mario/scripts/*` (loop + verifier + wrapper)
+- `./mario` (single shim entrypoint)
 
 ### 2) Configure
 
@@ -88,14 +89,14 @@ Edit `.mario/AGENTS.md` to select your agent and backpressure commands.
 
 ```bash
 # PRD interview
-scripts/mario prd
+./mario prd
 
 
 # Plan only (no code changes)
-scripts/mario plan
+./mario plan
 
 # Implement one plan item per iteration
-scripts/mario build
+./mario build
 ```
 
 This repo is a project harness. It doesn’t require any specific TUI.
@@ -200,10 +201,12 @@ In practice, you will usually set a different model/provider here.
 
 Mario DevX has two verification layers:
 
-1. Deterministic backpressure: `scripts/verify.sh`
-2. LLM verifier (PASS/FAIL feedback): `scripts/verify-llm.sh`
+1. Deterministic backpressure: `.mario/scripts/verify.sh`
+2. LLM verifier (PASS/FAIL feedback): `.mario/scripts/verify-llm.sh`
 
-Combined gate (default for build mode): `scripts/verify-all.sh`
+Combined gate (default for build mode): `.mario/scripts/verify-all.sh`
+
+(All executables live under `.mario/scripts/`; `./mario` is just a shim.)
 
 Verifier output is persisted to `.mario/state/feedback.md` in this format:
 
