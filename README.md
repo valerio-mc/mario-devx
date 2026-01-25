@@ -21,16 +21,13 @@ This repo takes deep inspiration from the Ralph Wiggum ecosystem. See Acknowledg
 ## Table of contents
 
 - [Why this exists](#why-this-exists)
-- [Key principles](#key-principles)
+- [Key principles & workflow](#key-principles--workflow)
 - [What gets installed](#what-gets-installed)
-- [Quick start](#quick-start)
-- [ELI5: using Mario DevX on a new project](#eli5-using-mario-devx-on-a-new-project)
-- [The workflow (3 phases, 2 modes, 1 loop)](#the-workflow-3-phases-2-modes-1-loop)
+- [ELI5: get hit done](#eli5-get-hit-done)
 - [File layout](#file-layout)
 - [Configuration (.mario/AGENTS.md)](#configuration-marioagentsmd)
 - [Verification model](#verification-model)
 - [Safety](#safety)
-- [Manual install](#manual-install)
 - [Acknowledgements](#acknowledgements)
 - [License](#license)
 
@@ -51,7 +48,7 @@ Mario DevX adds two things that agents actually respect:
 It is a small set of commands (lint/typecheck/tests/build) that must pass before the loop is allowed to claim DONE.
 If the commands fail, the agent doesn't get a gold star. It gets to keep working. Revolutionary.
 
-## Key principles
+## Key principles & workflow
 
 Inspired by the Ralph playbook's "Key Principles" section: https://github.com/ghuntley/how-to-ralph-wiggum#key-principles
 
@@ -70,11 +67,7 @@ Inspired by the Ralph playbook's "Key Principles" section: https://github.com/gh
 Mario DevX fights this by restarting the agent each iteration and forcing state onto disk.
 Same inputs, fresh context, less hallucinated momentum.
 
-Some numbers (because the problem is math, not vibes):
-
-- When "200K tokens" are advertised, usable context is closer to ~176K.
-- Models tend to perform best in a smaller **smart zone** (roughly 40-60% of context).
-- Tight tasks + one task per loop keeps you near 100% smart-zone utilization.
+TL;DR: huge context windows rot fast. Keep tasks small so the agent stays in the **smart zone**.
 
 This informs everything else:
 
@@ -106,6 +99,26 @@ Practical protections:
 - Keep secrets out of the repo.
 - Escape hatches: Ctrl+C stops the loop; regenerate the plan when it gets weird.
 
+### Workflow (3 phases, 2 modes, 1 loop)
+
+This mirrors the classic Ralph mental model:
+
+1. Define requirements (PRD)
+2. Plan (gap analysis)
+3. Build (one task, verify, commit)
+
+PRD definition is iterative:
+
+- PRD mode is an interview in small rounds (3-5 questions/round).
+- It updates `.mario/PRD.md` incrementally.
+- You answer directly in the terminal; the harness appends your answers into `.mario/state/feedback.md` for the next run.
+- You stop when it’s good enough and switch to planning/building.
+
+Optional branch hygiene:
+
+- Add `Branch: my-feature` (or `branchName: my-feature`) near the top of `.mario/PRD.md`.
+- In build mode, the harness will switch to (or create) that branch before running the agent.
+
 ## What gets installed
 
 Core artifacts live in `.mario/` (in the target project):
@@ -130,136 +143,77 @@ Executable entrypoints (in the target project):
 - `.mario/scripts/verify-llm.sh`: LLM judge backpressure
 - `.mario/scripts/verify-all.sh`: combined gate
 
-## Quick start
+## ELI5: get hit done
 
-Prereqs:
+This is the "I want results, not a dissertation" path.
 
-- A git repo (the loop uses git as memory)
-- One AI coding CLI (pick at least one):
-  - Claude Code
-  - Codex
-  - OpenCode (works, but not required)
+### 1) Create a project and initialize git (don’t be a Goomba)
 
-### 1) Install into your project (agent-agnostic)
+```bash
+mkdir my-project
+```
 
-From your project root:
+```bash
+cd my-project
+```
+
+```bash
+git init
+```
+
+### 2) Install Mario DevX
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash
 ```
 
-Pin a version/tag (recommended for teams):
+### 3) Pick your agent runner
 
-```bash
-MARIO_DEVX_REF=v0.0.0 \
-  curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/v0.0.0/install.sh | bash
+- Edit `.mario/AGENTS.md`
+- Set `AGENT_CMD` (and ideally `LLM_VERIFY_CMD` so the judge is a different model/provider)
+
+### 4) (Optional) Tell it which branch to use
+
+Add a line near the top of `.mario/PRD.md`:
+
+```text
+Branch: my-feature
 ```
 
-This installs:
-
-- `.mario/*` (state + prompts)
-- `.mario/scripts/*` (loop + verifier + wrapper)
-- `./mario` (single shim entrypoint)
-
-### 2) Configure
-
-Edit `.mario/AGENTS.md` to select your agent.
-
-Backpressure is configured in this order:
-
-1. **PRD Quality Gates**: `## Quality Gates` in `.mario/PRD.md` (source of truth)
-2. **AGENTS overrides**: `CMD_*` in `.mario/AGENTS.md` (optional overrides)
-3. **Auto-detection** (fallback): the harness tries to infer commands and writes them into `.mario/AGENTS.md`
-
-The goal is that you can install Mario DevX and immediately run `./mario build` without first doing a small ritual of "please tell me how to run tests".
-If your project actually has no tests/build/lint, Mario DevX will make that awkward (on purpose).
-
-Quality gate parsing rules:
-
-- Only list items under `## Quality Gates` are considered.
-- You can write them as `- pnpm lint && pnpm test` (backticks are optional).
-- Avoid putting examples in list items unless you want them to run.
-
-### 3) Run
+### 5) PRD interview: bootstrap your idea, then answer rounds in the terminal
 
 ```bash
-# PRD interview
-./mario prd
+./mario prd "my brilliant idea"
+```
 
-# Plan only (no code changes)
+- It asks 3-5 questions.
+- You answer in the terminal.
+- It repeats until it outputs a final PRD.
+
+### 6) Set backpressure (definition of done)
+
+In `.mario/PRD.md` under `## Quality Gates`, add real commands your repo can run. Example:
+
+```text
+Quality Gates (in PRD.md):
+- pnpm lint && pnpm test
+```
+
+If you don’t set this, Mario DevX tries to auto-detect and write `CMD_*` into `.mario/AGENTS.md`. If it can’t, it fails (on purpose).
+
+### 7) Plan
+
+```bash
 ./mario plan
+```
 
-# Implement one plan item per iteration
+### 8) Build (one plan item per iteration)
+
+```bash
 ./mario build
 ```
 
-This repo is a project harness. It doesn’t require any specific TUI.
-
-## ELI5: using Mario DevX on a new project
-
-If you want to use Mario DevX on a fresh project, here’s the “I just want it to work” path.
-
-- Make a folder for your project and enter it
-  - `mkdir my-project && cd my-project`
-- Initialize git (yes, really)
-  - `git init`
-  - Why: the loop uses git for diff snapshots, branch switching, and “did anything change?” signals.
-  - Without git, you can still run, but you lose most of the guardrails (so you’re basically freehanding it).
-- Install Mario DevX into the project
-  - `curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash`
-  - This drops an all-in-one `.mario/` folder + a single `./mario` shim.
-- Pick which agent CLI you’re using (and tell Mario)
-  - Edit `.mario/AGENTS.md`
-  - Set `AGENT_CMD` (and ideally `LLM_VERIFY_CMD` to use a different model/provider as reviewer)
-  - Examples live in the file. Copy one. Don’t improvise if you’re new.
-- (Optional) Tell it which git branch to work on
-  - Add `Branch: my-feature` (or `branchName: my-feature`) near the top of `.mario/PRD.md`
-  - Build mode will create/switch to that branch automatically.
-- Write your PRD (interactive interview)
-  - Run: `./mario prd "your idea"`
-  - The agent asks a round of questions, you answer in the terminal, repeat.
-  - Your answers are persisted under the hood into `.mario/state/feedback.md`.
-- Set your “definition of done” (backpressure)
-  - In `.mario/PRD.md`, fill `## Quality Gates` with real commands your repo can run.
-  - Example list items:
-    - `- pnpm lint && pnpm test`
-    - `- go test ./...`
-  - If you don’t set gates, Mario DevX will try to auto-detect commands and write them into `.mario/AGENTS.md`.
-  - If it can’t detect anything, it will fail (politely, but firmly) instead of pretending everything is fine.
-- Generate the plan (no code changes)
-  - Run: `./mario plan`
-  - This writes `.mario/IMPLEMENTATION_PLAN.md` with plan items like `PI-0001`, `PI-0002`, ...
-- Build in a loop (one plan item per iteration)
-  - Run: `./mario build`
-  - Each iteration:
-    - reads `.mario/state/feedback.md` first (so it doesn’t repeat mistakes)
-    - runs your agent once (fresh context)
-    - runs deterministic gates (`.mario/scripts/verify.sh`)
-    - runs the LLM judge (`.mario/scripts/verify-llm.sh`) and requires `EXIT_SIGNAL: true` to stop
-    - logs what happened in `.mario/activity.log`, `.mario/errors.log`, `.mario/progress.md`, and `.mario/runs/*`
-- If the loop gets stuck
-  - Stop it (Ctrl+C), tighten your plan item, and/or fix your quality gates.
-  - “More context” is not a strategy. Smaller tasks are.
-
-## The workflow (3 phases, 2 modes, 1 loop)
-
-This mirrors the "Three Phases, Two Prompts, One Loop" mental model described in Ralph docs:
-
-1. Define requirements (PRD)
-2. Plan (gap analysis)
-3. Build (one task, verify, commit)
-
-PRD definition is iterative:
-
-- PRD mode is an interview in small rounds (3-5 questions/round).
-- It updates `.mario/PRD.md` incrementally.
-- You answer directly in the terminal; the harness appends your answers into `.mario/state/feedback.md` for the next run.
-- You stop when it’s good enough and switch to planning/building.
-
-Optional branch hygiene:
-
-- Add `Branch: my-feature` (or `branchName: my-feature`) near the top of `.mario/PRD.md`.
-- In build mode, the harness will switch to (or create) that branch before running the agent.
+If it gets stuck: stop it (Ctrl+C), tighten the plan item, and try again. More context is not a power-up.
 
 ## File layout
 
@@ -389,19 +343,6 @@ You are running an agent in a loop. It will do what you told it to do, not what 
 - Keep secrets out of the repo.
 - Use short plan items.
 - If the loop is stuck, stop it and regenerate the plan.
-
-## Manual install
-
-If you do not want to use the installer, copy these into your project:
-
-- `templates/*` -> `.mario/*`
-- `prompts/*` -> `.mario/prompts/*`
-- `scripts/*` -> `.mario/scripts/*`
-- `mario` -> `./mario`
-
-Or: `curl` the installer (preferred) and let it do the copying.
-
-Then edit `.mario/AGENTS.md` and run the loop.
 
 ## Acknowledgements
 
