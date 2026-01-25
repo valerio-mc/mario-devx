@@ -12,7 +12,7 @@ Mario DevX
 
 Usage:
   .mario/scripts/mario init [--force]
-  .mario/scripts/mario prd
+  .mario/scripts/mario prd [initial idea]
   .mario/scripts/mario plan
   .mario/scripts/mario build
   .mario/scripts/mario doctor
@@ -48,6 +48,71 @@ doctor() {
   echo "OK: basic files present" >&2
 }
 
+prd_interactive() {
+  local initial_idea="${1:-}"
+  local round=0
+
+  mkdir -p ".mario/state" ".mario/runs" 2>/dev/null || true
+  : > /dev/null
+
+  if [[ -n "$initial_idea" ]]; then
+    if [[ ! -f ".mario/state/feedback.md" ]]; then
+      printf '%s\n' "Status: NONE" > ".mario/state/feedback.md"
+    fi
+    if ! grep -q "^Initial idea:" ".mario/state/feedback.md" 2>/dev/null; then
+      {
+        echo
+        echo "Initial idea: $initial_idea"
+      } >> ".mario/state/feedback.md"
+    fi
+  fi
+
+  while true; do
+    round=$((round + 1))
+    out_file="$(mktemp -t mario-prd.XXXXXX)"
+
+    # One PRD step (the loop script defaults to MAX_ITERATIONS=1 in prd mode).
+    set +e
+    bash "$SCRIPT_DIR/mario-loop.sh" prd 2>&1 | tee "$out_file"
+    ec=${PIPESTATUS[0]}
+    set -e
+
+    if [[ "$ec" != "0" ]]; then
+      echo "PRD run failed (exit $ec)." >&2
+      rm -f "$out_file" || true
+      return "$ec"
+    fi
+
+    # If the agent produced a PRD block, we consider it done.
+    if grep -q "\[PRD\]" "$out_file" && grep -q "\[/PRD\]" "$out_file"; then
+      rm -f "$out_file" || true
+      return 0
+    fi
+
+    rm -f "$out_file" || true
+
+    echo
+    echo "Enter your answers for round $round (example: 1A, 2C, 3D)." >&2
+    echo "Type 'q' to stop." >&2
+    printf '> ' >&2
+    IFS= read -r ans || true
+
+    if [[ -z "$ans" || "$ans" == "q" || "$ans" == "quit" ]]; then
+      return 0
+    fi
+
+    if [[ ! -f ".mario/state/feedback.md" ]]; then
+      printf '%s\n' "Status: NONE" > ".mario/state/feedback.md"
+    fi
+
+    {
+      echo
+      echo "Answers (round $round):"
+      echo "$ans"
+    } >> ".mario/state/feedback.md"
+  done
+}
+
 cmd_init() {
   if [[ -f "./install.sh" ]]; then
     bash ./install.sh "$@"
@@ -66,7 +131,11 @@ case "$cmd" in
     shift || true
     cmd_init "$@"
     ;;
-  prd|plan|build)
+  prd)
+    shift || true
+    prd_interactive "$*"
+    ;;
+  plan|build)
     shift || true
     exec bash "$SCRIPT_DIR/mario-loop.sh" "$cmd" "$@"
     ;;

@@ -40,8 +40,20 @@ fi
 : "${MARIO_REPEAT_FAIL_LIMIT:=5}"
 
 case "$MODE" in
-  build) : "${VERIFY_CMD:=$SCRIPT_DIR/verify-all.sh}" ;;
-  *) : "${VERIFY_CMD:=$SCRIPT_DIR/verify.sh}" ;;
+  build)
+    : "${VERIFY_CMD:=$SCRIPT_DIR/verify-all.sh}"
+    ;;
+  prd|plan)
+    # PRD/PLAN are not "completion" loops.
+    # They are meant to be run repeatedly by the user, feeding answers via files.
+    if [[ "${MAX_ITERATIONS}" == "0" ]]; then
+      MAX_ITERATIONS=1
+    fi
+    : "${VERIFY_CMD:=:}"
+    ;;
+  *)
+    : "${VERIFY_CMD:=:}"
+    ;;
 esac
 
 prompt_template_candidates=(
@@ -63,7 +75,7 @@ if [[ -z "$PROMPT_TEMPLATE" ]]; then
   for p in "${prompt_template_candidates[@]}"; do
     echo "- $p" >&2
   done
-  echo "Run mario-init to bootstrap prompts into $MARIO_PROMPTS_DIR." >&2
+  echo "Run the installer to bootstrap prompts into $MARIO_PROMPTS_DIR." >&2
   exit 2
 fi
 
@@ -259,6 +271,23 @@ while true; do
 
   if [[ "$agent_ec" != "0" ]]; then
     errorlog "agent_exit mode=$MODE iteration=$ITERATION run=$run_dir exit_code=$agent_ec"
+
+    # Agent runner failure is a harness failure; stop immediately.
+    {
+      echo "Status: FAIL"
+      echo "Reason:"
+      echo "- Agent command failed (exit $agent_ec)"
+      echo "Next actions:"
+      echo "- Fix AGENT_CMD/LLM_VERIFY_CMD in $MARIO_AGENTS_FILE"
+      echo "- Re-run: ./mario $MODE"
+      echo "- Inspect: $agent_out"
+    } > "$MARIO_FEEDBACK_FILE" 2>/dev/null || true
+
+    iter_end_epoch="$(date +%s)"
+    iter_seconds=$((iter_end_epoch - iter_start_epoch))
+    activity "end mode=$MODE iteration=$ITERATION run=$run_dir verify=FAIL seconds=$iter_seconds"
+
+    exit "$agent_ec"
   fi
 
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
