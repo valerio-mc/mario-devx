@@ -216,8 +216,9 @@ If you want to use Mario DevX on a fresh project, here’s the “I just want it
   - Add `Branch: my-feature` (or `branchName: my-feature`) near the top of `.mario/PRD.md`
   - Build mode will create/switch to that branch automatically.
 - Write your PRD (interactive interview)
-  - Run: `./mario prd`
-  - Answer questions in short rounds until `.mario/PRD.md` describes what you actually want.
+  - Run: `./mario prd "your idea"`
+  - The agent asks a round of questions, you answer in the terminal, repeat.
+  - Your answers are persisted under the hood into `.mario/state/feedback.md`.
 - Set your “definition of done” (backpressure)
   - In `.mario/PRD.md`, fill `## Quality Gates` with real commands your repo can run.
   - Example list items:
@@ -252,6 +253,7 @@ PRD definition is iterative:
 
 - PRD mode is an interview in small rounds (3-5 questions/round).
 - It updates `.mario/PRD.md` incrementally.
+- You answer directly in the terminal; the harness appends your answers into `.mario/state/feedback.md` for the next run.
 - You stop when it’s good enough and switch to planning/building.
 
 Optional branch hygiene:

@@ -1,6 +1,6 @@
 # mario-devx PRD Interview Prompt
 
-You are generating a PRD through an interactive interview compatible with the Ralph PRD methodology.
+You are generating a PRD through an iterative interview process compatible with the Ralph PRD methodology.
 
 Path selection:
 - If `.mario/PRD.md` exists, treat `.mario/` as canonical.
@@ -15,6 +15,12 @@ Rules:
 - After each round, adapt: ask follow-ups if needed or move to the next area.
 - Always ask about Quality Gates (commands that must pass) in the first or second round.
 - After you have enough context, generate a PRD wrapped in `[PRD]` and `[/PRD]` markers, then write/update the canonical PRD file (`.mario/PRD.md` or `PRD.md`) with the same content (without the markers).
+
+Execution model:
+- This prompt may be executed in a one-shot CLI loop.
+- If there is no live chat, use `.mario/state/feedback.md` as the user's "reply" channel between runs.
+- If `.mario/state/feedback.md` contains answers to your last round, incorporate them and either ask the next round or finalize the PRD.
+- If answers are missing, ask the next round of questions and stop.
 
 Output expectations:
 - Maintain the canonical PRD file (`.mario/PRD.md` or `PRD.md`) in Markdown.
