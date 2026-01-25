@@ -115,6 +115,9 @@ Core artifacts live in `.mario/` (in the target project):
 - `.mario/AGENTS.md`: operational knobs (agent command + backpressure)
 - `.mario/state/feedback.md`: verifier output injected into the next iteration
 - `.mario/progress.md`: append-only loop log
+- `.mario/guardrails.md`: "signs" (short, high-signal rules to prevent repeated failure)
+- `.mario/activity.log`: append-only harness activity log (iterations, timing)
+- `.mario/errors.log`: append-only harness error log (failures, repeated failure keys)
 - `.mario/runs/*`: per-iteration artifacts (prompt, outputs, diffs, logs)
 
 Executable entrypoints (in the target project):
@@ -205,6 +208,11 @@ PRD definition is iterative:
 - It updates `.mario/PRD.md` incrementally.
 - You stop when it’s good enough and switch to planning/building.
 
+Optional branch hygiene:
+
+- Add `Branch: my-feature` (or `branchName: my-feature`) near the top of `.mario/PRD.md`.
+- In build mode, the harness will switch to (or create) that branch before running the agent.
+
 ## File layout
 
 In your project (default):
@@ -217,6 +225,9 @@ In your project (default):
   AGENTS.md                # agent + backpressure config
   state/feedback.md        # verifier feedback injected into next iteration
   progress.md              # append-only loop log
+  guardrails.md            # short, high-signal "signs"
+  activity.log             # harness activity log
+  errors.log               # harness errors log
   runs/*                   # per-iteration prompts, outputs, diffs, logs
 ```
 
@@ -304,12 +315,18 @@ Combined gate (default for build mode): `.mario/scripts/verify-all.sh`
 
 **LLM review:** build mode runs the LLM verifier after deterministic backpressure (unless disabled via `MARIO_LLM_VERIFY=0`). The verifier writes PASS/FAIL back into `.mario/state/feedback.md`.
 
+Exit detection:
+
+- `Status: PASS` alone is not enough.
+- The LLM verifier must also set `EXIT_SIGNAL: true`, otherwise the harness treats it as FAIL.
+
 (All executables live under `.mario/scripts/`; `./mario` is just a shim.)
 
 Verifier output is persisted to `.mario/state/feedback.md` in this format:
 
 ```text
 Status: PASS|FAIL
+EXIT_SIGNAL: true|false
 Reason:
 - ...
 Next actions:
