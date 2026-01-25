@@ -92,7 +92,7 @@ mkdir -p \
   ".mario/specs" \
   ".mario/state" \
   ".mario/prompts" \
-  "scripts"
+  ".mario/scripts"
 
 # templates -> .mario
 copy_or_fetch "templates/PRD.md" "templates/PRD.md" ".mario/PRD.md"
@@ -108,23 +108,28 @@ copy_or_fetch "prompts/PROMPT_plan.md" "prompts/PROMPT_plan.md" ".mario/prompts/
 copy_or_fetch "prompts/PROMPT_build.md" "prompts/PROMPT_build.md" ".mario/prompts/PROMPT_build.md"
 copy_or_fetch "prompts/PROMPT_verify_llm.md" "prompts/PROMPT_verify_llm.md" ".mario/prompts/PROMPT_verify_llm.md"
 
-# scripts -> scripts/
-copy_or_fetch "scripts/mario-loop.sh" "scripts/mario-loop.sh" "scripts/mario-loop.sh"
-copy_or_fetch "scripts/mario-paths.sh" "scripts/mario-paths.sh" "scripts/mario-paths.sh"
-copy_or_fetch "scripts/verify.sh" "scripts/verify.sh" "scripts/verify.sh"
-copy_or_fetch "scripts/verify-all.sh" "scripts/verify-all.sh" "scripts/verify-all.sh"
-copy_or_fetch "scripts/verify-llm.sh" "scripts/verify-llm.sh" "scripts/verify-llm.sh"
-copy_or_fetch "scripts/mario" "scripts/mario" "scripts/mario"
+
+# entrypoint shim -> project root
+copy_or_fetch "mario" "mario" "mario"
+
+# scripts -> .mario/scripts/
+copy_or_fetch "scripts/mario-loop.sh" "scripts/mario-loop.sh" ".mario/scripts/mario-loop.sh"
+copy_or_fetch "scripts/mario-paths.sh" "scripts/mario-paths.sh" ".mario/scripts/mario-paths.sh"
+copy_or_fetch "scripts/verify.sh" "scripts/verify.sh" ".mario/scripts/verify.sh"
+copy_or_fetch "scripts/verify-all.sh" "scripts/verify-all.sh" ".mario/scripts/verify-all.sh"
+copy_or_fetch "scripts/verify-llm.sh" "scripts/verify-llm.sh" ".mario/scripts/verify-llm.sh"
+copy_or_fetch "scripts/mario" "scripts/mario" ".mario/scripts/mario"
 
 chmod +x \
-  "scripts/mario" \
-  "scripts/mario-loop.sh" \
-  "scripts/mario-paths.sh" \
-  "scripts/verify.sh" \
-  "scripts/verify-all.sh" \
-  "scripts/verify-llm.sh" || true
+  "mario" \
+  ".mario/scripts/mario" \
+  ".mario/scripts/mario-loop.sh" \
+  ".mario/scripts/mario-paths.sh" \
+  ".mario/scripts/verify.sh" \
+  ".mario/scripts/verify-all.sh" \
+  ".mario/scripts/verify-llm.sh" || true
 
 echo "Mario DevX installed into: $ROOT" >&2
 echo "Next:" >&2
 echo "  - edit .mario/AGENTS.md" >&2
-echo "  - run: scripts/mario prd" >&2
+echo "  - run: ./mario prd" >&2

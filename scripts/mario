@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT_DIR"
 
@@ -9,11 +11,11 @@ usage() {
 Mario DevX
 
 Usage:
-  scripts/mario init [--force]
-  scripts/mario prd
-  scripts/mario plan
-  scripts/mario build
-  scripts/mario doctor
+  .mario/scripts/mario init [--force]
+  .mario/scripts/mario prd
+  .mario/scripts/mario plan
+  .mario/scripts/mario build
+  .mario/scripts/mario doctor
 
 Notes:
   - Configure the agent + backpressure in .mario/AGENTS.md
@@ -34,8 +36,8 @@ doctor() {
     ok=0
   fi
 
-  if [[ ! -f "scripts/mario-loop.sh" ]]; then
-    echo "FAIL: missing scripts/mario-loop.sh" >&2
+  if [[ ! -f "$SCRIPT_DIR/mario-loop.sh" ]]; then
+    echo "FAIL: missing .mario/scripts/mario-loop.sh" >&2
     ok=0
   fi
 
@@ -66,7 +68,7 @@ case "$cmd" in
     ;;
   prd|plan|build)
     shift || true
-    exec bash "scripts/mario-loop.sh" "$cmd" "$@"
+    exec bash "$SCRIPT_DIR/mario-loop.sh" "$cmd" "$@"
     ;;
   doctor)
     doctor
