@@ -2,28 +2,17 @@
 
 Ralph-style, file-based agent loops for shipping software.
 
-<table>
-  <tr>
-    <td>
-      <p>
-        Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
-      </p>
-      <p>
-        Mario DevX is a project harness (templates + prompts + scripts) that lets you run any AI coding CLI in a deterministic loop:
-      </p>
-      <ul>
-        <li>PRD interview -&gt; <code>.mario/PRD.md</code></li>
-        <li>Split into specs -&gt; <code>.mario/specs/*.md</code></li>
-        <li>Planning loop -&gt; <code>.mario/IMPLEMENTATION_PLAN.md</code> (plan items with stable IDs)</li>
-        <li>Build loop -&gt; implement exactly one plan item per iteration</li>
-        <li>Backpressure -&gt; deterministic checks + an LLM verifier that can fail the iteration</li>
-      </ul>
-    </td>
-    <td>
-      <img src="mario_devx.png" alt="Mario DevX" width="260" />
-    </td>
-  </tr>
-</table>
+<img align="right" src="mario_devx.png" alt="Mario DevX" width="260" />
+
+Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
+
+Mario DevX is a project harness (templates + prompts + scripts) that lets you run any AI coding CLI in a deterministic loop:
+
+- PRD interview -> `.mario/PRD.md`
+- Split into specs -> `.mario/specs/*.md`
+- Planning loop -> `.mario/IMPLEMENTATION_PLAN.md` (plan items with stable IDs)
+- Build loop -> implement exactly one plan item per iteration
+- Backpressure -> deterministic checks + an LLM verifier that can fail the iteration
 
 State lives on disk and in git, not in a chat window. Fresh context every iteration. Same prompt, new code.
 
