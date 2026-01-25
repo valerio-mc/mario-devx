@@ -1,8 +1,8 @@
 # Mario DevX
 
-Ralph-style, file-based agent loops for shipping software.
-
 <img align="right" src="mario_devx.png" alt="Mario DevX" width="300" />
+
+Ralph-style, file-based agent loops for shipping software.
 
 Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
 
