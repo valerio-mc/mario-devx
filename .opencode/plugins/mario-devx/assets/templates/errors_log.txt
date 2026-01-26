@@ -1,0 +1,3 @@
+# Mario DevX errors log
+#
+# Append-only. Written by the harness.
