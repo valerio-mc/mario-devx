@@ -6,7 +6,7 @@ Ralph-style, file-based agent loops for shipping software.
 
 Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
 
-**Mario DevX** is a project harness (templates + prompts + scripts) that lets you run any AI coding CLI in a deterministic loop:
+**Mario DevX** is an OpenCode plugin (templates + prompts + state files) that runs a deterministic loop inside the OpenCode TUI:
 
 - PRD interview -> `.mario/PRD.md`
 - Split into specs -> `.mario/specs/*.md`
@@ -134,14 +134,14 @@ Core artifacts live in `.mario/` (in the target project):
 - `.mario/errors.log`: append-only harness error log (failures, repeated failure keys)
 - `.mario/runs/*`: per-iteration artifacts (prompt, outputs, diffs, logs)
 
-Executable entrypoints (in the target project):
+OpenCode entrypoints (in the target project):
 
-- `./mario`: single project-local shim
-- `.mario/scripts/mario`: wrapper CLI (`init|prd|plan|build|doctor`)
-- `.mario/scripts/mario-loop.sh`: loop runner
-- `.mario/scripts/verify.sh`: deterministic backpressure
-- `.mario/scripts/verify-llm.sh`: LLM judge backpressure
-- `.mario/scripts/verify-all.sh`: combined gate
+- `/mario-devx:init`
+- `/mario-devx:prd`
+- `/mario-devx:plan`
+- `/mario-devx:build`
+- `/mario-devx:approve`
+- `/mario-devx:verify`
 
 ## ELI5: get hit done
 
@@ -161,20 +161,30 @@ cd my-project
 git init
 ```
 
-### 2) Install Mario DevX
+### 2) Install the OpenCode plugin
+
+Copy the plugin into your project:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash
+mkdir -p .opencode/plugins
+cp -R /path/to/mario-devx/.opencode/plugins/mario-devx ./.
+cp /path/to/mario-devx/.opencode/plugins/mario-devx.ts ./.opencode/plugins/
+cp /path/to/mario-devx/.opencode/package.json ./.opencode/
 ```
 
-### 3) Pick your agent runner
+Then start OpenCode in the project:
 
-- Edit `.mario/AGENTS.md`
-- Set `AGENT_CMD` (used for `plan`/`build` loops)
-- Set `LLM_VERIFY_CMD` (the judge)
+```bash
+opencode .
+```
 
-Note: PRD is OpenCode-first. `./mario prd` launches `opencode .`.
-Other terminal agents have similar "start in project root" commands (e.g. Claude Code), but Mario DevX does not wire them up.
+### 3) Initialize mario-devx state
+
+In the OpenCode TUI:
+
+```
+/mario-devx:init
+```
 
 ### 4) (Optional) Tell it which branch to use
 
@@ -184,15 +194,11 @@ Add a line near the top of `.mario/PRD.md`:
 Branch: my-feature
 ```
 
-### 5) PRD interview: bootstrap your idea, then answer rounds in the terminal
+### 5) PRD interview: bootstrap your idea, then answer rounds in the TUI
 
-```bash
-./mario prd "my brilliant idea"
 ```
-
-- This launches the OpenCode TUI in your project.
-- You answer questions in a normal chat session.
-- Keep going until the PRD is done.
+/mario-devx:prd my brilliant idea
+```
 
 ### 6) Set backpressure (definition of done)
 
@@ -207,8 +213,8 @@ If you don’t set this, Mario DevX tries to auto-detect and write `CMD_*` into 
 
 ### 7) Plan
 
-```bash
-./mario plan
+```
+/mario-devx:plan
 ```
 
 What it does:
@@ -217,19 +223,23 @@ What it does:
 - Reads `.mario/PRD.md` (+ optional `.mario/specs/*`).
 - Writes/updates `.mario/IMPLEMENTATION_PLAN.md` into small plan items (`PI-0001`, `PI-0002`, ...) sized to finish in one build iteration.
 
-### 8) Build (one plan item per iteration)
+### 8) Build (two-step HITL)
 
-```bash
-./mario build
+```
+/mario-devx:build
 ```
 
 What it does:
 
-- Runs the build loop.
-- Each iteration runs your agent once, then applies backpressure:
-  - deterministic gates from PRD `## Quality Gates` (or `CMD_*` autodetect)
-  - LLM judge (`LLM_VERIFY_CMD`) which must output `Status: PASS` and `EXIT_SIGNAL: true` to stop
-- Produces run artifacts under `.mario/runs/*` and logs to `.mario/activity.log` / `.mario/errors.log`.
+- Drafts a pending iteration plan under `.mario/state/pending_plan.md`.
+- You review/edit it, then run:
+
+```
+/mario-devx:approve
+```
+
+- The plugin runs the agent, deterministic gates, and the LLM judge.
+- It writes feedback to `.mario/state/feedback.md` and logs artifacts under `.mario/runs/*`.
 
 How many iterations?
 
@@ -258,42 +268,14 @@ In your project (default):
 In this repo:
 
 ```text
-prompts/                   # prompt templates copied into .mario/prompts/
-scripts/                   # loop + verification scripts
-templates/                 # project templates copied into .mario/
-install.sh                 # curlable installer
+.opencode/plugins/mario-devx/   # OpenCode plugin source + assets
 ```
 
 ## Configuration (.mario/AGENTS.md)
 
 ### Agent runner
 
-The loop executes `AGENT_CMD` once per iteration.
-
-PRD mode is different:
-- `./mario prd` launches the OpenCode TUI (`opencode .`) and uses `.mario/prompts/PROMPT_prd.md` as the starting prompt.
-
-If `AGENT_CMD` contains `{prompt}`, it will be replaced with the prompt file path.
-If it does not, the prompt content is piped through stdin.
-
-Defaults:
-
-```bash
-AGENT=opencode
-AGENT_CMD='opencode run --format default "$(cat {prompt})"'
-```
-
-Examples:
-
-```bash
-# Claude Code (stdin)
-AGENT=claude
-AGENT_CMD='claude -p --dangerously-skip-permissions'
-
-# Codex (stdin)
-AGENT=codex
-AGENT_CMD='codex exec --yolo -'
-```
+The plugin always uses the current OpenCode session and agent. `AGENT_CMD` is ignored and kept only for legacy compatibility.
 
 ### Backpressure commands
 
@@ -319,26 +301,16 @@ MARIO_NO_PROGRESS_LIMIT=3
 MARIO_REPEAT_FAIL_LIMIT=5
 ```
 
-### LLM verifier (third model supervision)
+### LLM verifier (same agent)
 
-By default, build mode runs deterministic checks and then runs an LLM verifier.
-
-```bash
-MARIO_LLM_VERIFY=1
-LLM_VERIFY_CMD=
-```
-
-If `LLM_VERIFY_CMD` is empty, it falls back to `AGENT_CMD`.
-In practice, you will usually set a different model/provider here.
+By default, build mode runs deterministic checks and then runs the LLM verifier using the same agent/session.
 
 ## Verification model
 
 Mario DevX has two verification layers:
 
-1. Deterministic backpressure: `.mario/scripts/verify.sh`
-2. LLM verifier (PASS/FAIL feedback): `.mario/scripts/verify-llm.sh`
-
-Combined gate (default for build mode): `.mario/scripts/verify-all.sh`
+1. Deterministic backpressure (auto-detected or from PRD Quality Gates)
+2. LLM verifier (PASS/FAIL feedback)
 
 **LLM review:** build mode runs the LLM verifier after deterministic backpressure (unless disabled via `MARIO_LLM_VERIFY=0`). The verifier writes PASS/FAIL back into `.mario/state/feedback.md`.
 
@@ -347,7 +319,7 @@ Exit detection:
 - `Status: PASS` alone is not enough.
 - The LLM verifier must also set `EXIT_SIGNAL: true`, otherwise the harness treats it as FAIL.
 
-(All executables live under `.mario/scripts/`; `./mario` is just a shim.)
+
 
 Verifier output is persisted to `.mario/state/feedback.md` in this format:
 
