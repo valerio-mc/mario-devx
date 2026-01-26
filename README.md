@@ -51,7 +51,7 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 mkdir my-project && cd my-project && git init
 ```
 
-One sentence: If it’s not in git, it’s not real.
+If it’s not in git, it’s not real.
 
 ### 2) Copy the plugin into your project
 
@@ -64,7 +64,7 @@ tmpdir="$(mktemp -d)" && \
   cp "$tmpdir"/mario-devx-main/.opencode/package.json ./.opencode/
 ```
 
-One sentence: This is the part where you "install" it without pretending we have a package manager story.
+This is the part where you "install" it without pretending we have a package manager story.
 
 ### 3) Start OpenCode
 
@@ -72,7 +72,7 @@ One sentence: This is the part where you "install" it without pretending we have
 opencode .
 ```
 
-One sentence: You want the loop in the UI, not in your shell history.
+You want the loop in the UI, not in your shell history.
 
 ### 4) Initialize mario-devx state
 
@@ -80,7 +80,7 @@ One sentence: You want the loop in the UI, not in your shell history.
 /mario-devx:init
 ```
 
-One sentence: This creates `.mario/` and seeds the canonical docs/prompts.
+This creates `.mario/` and seeds the canonical docs/prompts.
 
 ### 5) Write the PRD (interview)
 
@@ -88,13 +88,13 @@ One sentence: This creates `.mario/` and seeds the canonical docs/prompts.
 /mario-devx:prd my brilliant idea
 ```
 
-One sentence: Answer the questions until `.mario/PRD.md` is specific enough to embarrass you later.
+Answer the questions until `.mario/PRD.md` is specific enough to embarrass you later.
 
 ### 6) Set Quality Gates
 
 Edit `.mario/PRD.md` and put real commands under `## Quality Gates`.
 
-One sentence: If you don’t define “done”, the agent will.
+If you don’t define “done”, the agent will.
 
 ### 7) Generate the plan
 
@@ -102,7 +102,7 @@ One sentence: If you don’t define “done”, the agent will.
 /mario-devx:plan
 ```
 
-One sentence: This writes `.mario/IMPLEMENTATION_PLAN.md` into one-iteration-sized plan items.
+This writes `.mario/IMPLEMENTATION_PLAN.md` into one-iteration-sized plan items.
 
 ### 8) Draft the next iteration (HITL checkpoint)
 
@@ -110,7 +110,7 @@ One sentence: This writes `.mario/IMPLEMENTATION_PLAN.md` into one-iteration-siz
 /mario-devx:build
 ```
 
-One sentence: This drafts `.mario/state/pending_plan.md` so you can fix the inevitable "plan item too big" problem.
+This drafts `.mario/state/pending_plan.md` so you can fix the inevitable "plan item too big" problem.
 
 ### 9) Approve and run the iteration
 
@@ -118,7 +118,7 @@ One sentence: This drafts `.mario/state/pending_plan.md` so you can fix the inev
 /mario-devx:approve
 ```
 
-One sentence: The plugin runs the agent, runs gates, runs the judge, and writes feedback to `.mario/state/feedback.md`.
+The plugin runs the agent, runs gates, runs the judge, and writes feedback to `.mario/state/feedback.md`.
 
 ## What gets created
 
