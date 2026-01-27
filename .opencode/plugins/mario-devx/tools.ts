@@ -402,13 +402,13 @@ export const createTools = (ctx: PluginContext) => {
           );
           await ensureDir(runDir);
 
-          const buildPrompt = await buildPrompt(repoRoot, "build", draft.content);
-          await writeRunArtifacts(runDir, buildPrompt);
+          const buildModePrompt = await buildPrompt(repoRoot, "build", draft.content);
+          await writeRunArtifacts(runDir, buildModePrompt);
 
           await showToast(ctx, `Auto: running ${draft.pending.id} (step ${attempted}/${maxItems})`, "info");
 
           // Run build in a separate session to avoid deadlocking the current session.
-          await runInChildSession(ctx, context.agent, buildPrompt);
+          await runInChildSession(ctx, context.agent, buildModePrompt);
 
           // Deterministic gates in the plugin process (fast feedback).
           const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
