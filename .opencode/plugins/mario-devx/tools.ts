@@ -89,13 +89,27 @@ const runGateCommands = async (
 
   for (const command of commands) {
     logLines.push(`$ ${command.command}`);
-    try {
-      const result = await $`${command.command}`;
-      logLines.push(result.stdout.toString());
-      logLines.push(result.stderr.toString());
-    } catch (error) {
+
+    const cmd = command.command.trim();
+    if (cmd.length === 0) {
       ok = false;
-      logLines.push(String(error));
+      logLines.push("ERROR: empty gate command");
+      break;
+    }
+
+    if (cmd.includes("\n") || cmd.includes("\r")) {
+      ok = false;
+      logLines.push("ERROR: gate command contains newline characters (refusing to run)");
+      break;
+    }
+
+    const result = await $`sh -c ${cmd}`.nothrow();
+    logLines.push(`exitCode: ${result.exitCode}`);
+    logLines.push(result.stdout.toString());
+    logLines.push(result.stderr.toString());
+
+    if (result.exitCode !== 0) {
+      ok = false;
       break;
     }
   }
