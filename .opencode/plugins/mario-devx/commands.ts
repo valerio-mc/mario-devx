@@ -60,6 +60,11 @@ export const createCommands = (): CommandDefinition[] => [
     "Call tool mario_devx_verify with no arguments. Then follow the verifier instructions in the tool output.",
   ),
   command(
+    "auto",
+    "Run up to N plan items automatically",
+    "Call tool mario_devx_auto with max_items=$ARGUMENTS. Return the tool result.",
+  ),
+  command(
     "status",
     "Show mario-devx status",
     "Call tool mario_devx_status with no arguments.",

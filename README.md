@@ -25,6 +25,7 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 /mario-devx:build
 /mario-devx:approve
 /mario-devx:verify
+/mario-devx:auto <N>
 /mario-devx:status
 ```
 

@@ -117,6 +117,50 @@ const formatPromptResult = (title: string, prompt: string): string => {
   ].join("\n");
 };
 
+const extractTextFromPromptResponse = (response: unknown): string => {
+  if (!response) {
+    return "";
+  }
+  const candidate = response as {
+    data?: { parts?: { type?: string; text?: string }[] };
+    parts?: { type?: string; text?: string }[];
+  };
+  const parts = candidate.parts ?? candidate.data?.parts ?? [];
+  return parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n");
+};
+
+const parseVerifierStatus = (text: string): { status: "PASS" | "FAIL"; exit: boolean } => {
+  const status: "PASS" | "FAIL" = text.includes("Status: PASS") ? "PASS" : "FAIL";
+  const exit = text.includes("EXIT_SIGNAL: true");
+  if (status === "PASS" && exit) {
+    return { status: "PASS", exit: true };
+  }
+  return { status: "FAIL", exit: false };
+};
+
+const runInChildSession = async (
+  ctx: PluginContext,
+  agent: string | undefined,
+  prompt: string,
+): Promise<{ sessionID: string; outputText: string }> => {
+  const created = await ctx.client.session.create();
+  const sessionID = (created as { data?: { id?: string } }).data?.id;
+  if (!sessionID) {
+    return { sessionID: "", outputText: "" };
+  }
+  const response = await ctx.client.session.prompt({
+    path: { id: sessionID },
+    body: {
+      agent,
+      parts: [{ type: "text", text: prompt }],
+    },
+  });
+  return { sessionID, outputText: extractTextFromPromptResponse(response) };
+};
+
 const draftPendingPlan = async (
   repoRoot: string,
   idea: string | undefined,
@@ -308,6 +352,107 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
+    mario_devx_auto: tool({
+      description: "Run up to N plan items automatically (stops on failure)",
+      args: {
+        max_items: tool.schema
+          .number()
+          .min(1)
+          .max(100)
+          .describe("Maximum number of plan items to attempt")
+          .default(1),
+      },
+      async execute(args, context: ToolContext) {
+        await ensureMario(repoRoot, false);
+
+        const maxItems = Math.floor(args.max_items);
+        const prdPath = path.join(repoRoot, ".mario", "PRD.md");
+        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
+        const gateCommands = await resolveGateCommands(repoRoot, prdPath, agentsPath);
+        await persistGateCommands(agentsPath, gateCommands);
+
+        let attempted = 0;
+        let completed = 0;
+
+        while (attempted < maxItems) {
+          const draft = await draftPendingPlan(repoRoot, undefined);
+          if (!draft) {
+            break;
+          }
+
+          attempted += 1;
+          const state = await bumpIteration(repoRoot, "build");
+          const runDir = path.join(
+            marioRunsDir(repoRoot),
+            `${new Date().toISOString().replace(/[:.]/g, "")}-auto-iter${state.iteration}`,
+          );
+          await ensureDir(runDir);
+
+          const buildPrompt = await buildPrompt(repoRoot, "build", draft.content);
+          await writeRunArtifacts(runDir, buildPrompt);
+
+          await showToast(ctx, `Auto: running ${draft.pending.id} (step ${attempted}/${maxItems})`, "info");
+
+          // Run build in a separate session to avoid deadlocking the current session.
+          await runInChildSession(ctx, context.agent, buildPrompt);
+
+          // Deterministic gates in the plugin process (fast feedback).
+          const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
+
+          // Verifier runs as another child session. It must write feedback to .mario/state/feedback.md.
+          const verifierPrompt = await buildPrompt(
+            repoRoot,
+            "verify",
+            [
+              `Run artifacts: ${runDir}`,
+              `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
+              `Gates log: ${path.join(runDir, "gates.log")}`,
+              `Plan item: ${draft.pending.id} - ${draft.pending.title}`,
+            ].join("\n"),
+          );
+
+          const verifierResult = await runInChildSession(ctx, context.agent, verifierPrompt);
+          const verifierText = verifierResult.outputText;
+          await writeText(path.join(runDir, "judge.out"), verifierText);
+
+          const parsed = parseVerifierStatus(verifierText);
+          await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), verifierText || "Status: FAIL\n");
+
+          await appendLine(
+            path.join(repoRoot, ".mario", "progress.md"),
+            `- ${nowIso()} auto iter=${state.iteration} item=${draft.pending.id} gates=${gateResult.ok ? "PASS" : "FAIL"} judge=${parsed.status}`,
+          );
+
+          await writeIterationState(repoRoot, {
+            ...state,
+            lastRunDir: runDir,
+            lastStatus: parsed.status,
+          });
+
+          if (!gateResult.ok) {
+            await showToast(ctx, `Auto stopped: gates failed on ${draft.pending.id}`, "warning");
+            break;
+          }
+
+          if (parsed.status !== "PASS" || !parsed.exit) {
+            await showToast(ctx, `Auto stopped: verifier failed on ${draft.pending.id}`, "warning");
+            break;
+          }
+
+          completed += 1;
+        }
+
+        const note =
+          completed === attempted && attempted === maxItems
+            ? "Reached max_items limit."
+            : completed === attempted
+              ? "No more TODO plan items found."
+              : "Stopped early due to failure. See .mario/state/feedback.md.";
+
+        return `Auto finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
+      },
+    }),
+
     mario_devx_status: tool({
       description: "Show mario-devx status",
       args: {},
@@ -336,6 +481,7 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:approve (execute pending plan)",
           "- /mario-devx:cancel",
           "- /mario-devx:verify",
+          "- /mario-devx:auto <N>",
           "- /mario-devx:status",
         ].join("\n");
       },
