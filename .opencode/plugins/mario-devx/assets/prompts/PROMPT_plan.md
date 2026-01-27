@@ -20,10 +20,16 @@ Rules:
 - Do not assume missing functionality; search the codebase first.
 - Produce a prioritized, plan-item-sized plan in `IMPLEMENTATION_PLAN.md`.
 - Each plan item must be executable in one loop iteration.
+- Single-shot: produce ONE plan update, write the file, then STOP.
+- After writing the plan, tell the user to run `/mario-devx:build`.
 - Each plan item must include:
   - Scope (what changes)
   - Done when (explicit verification: tests/lint/typecheck/build)
   - Notes/risks
+
+Hard limits:
+- Maximum 30 plan items total.
+- Do not rewrite or reorder existing `DONE` items (leave them as-is).
 
 Plan item format requirements:
 - Every plan item has a stable ID: `PI-0001`, `PI-0002`, ...
