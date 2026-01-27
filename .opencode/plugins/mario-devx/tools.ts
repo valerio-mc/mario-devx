@@ -6,7 +6,7 @@ import { buildPrompt } from "./prompt";
 import { resolveGateCommands, persistGateCommands } from "./gates";
 import { ensureMario, bumpIteration, readIterationState, writeIterationState, readPendingPlan, writePendingPlan, clearPendingPlan, getPendingPlanPath } from "./state";
 import { marioRoot, marioRunsDir } from "./paths";
-import { GateCommand, PendingPlan } from "./types";
+import { PendingPlan } from "./types";
 
 type ToolContext = {
   sessionID?: string;
@@ -41,18 +41,6 @@ const showToast = async (
   });
 };
 
-const extractTextFromResponse = (response: unknown): string => {
-  if (!response) {
-    return "";
-  }
-  const candidate = response as { parts?: { type?: string; text?: string }[]; data?: { parts?: { type?: string; text?: string }[] } };
-  const parts = candidate.parts ?? candidate.data?.parts ?? [];
-  return parts
-    .filter((part) => part.type === "text")
-    .map((part) => part.text ?? "")
-    .join("\n");
-};
-
 const getNextPlanItem = async (planPath: string): Promise<{ id: string; title: string; block: string } | null> => {
   const content = await readTextIfExists(planPath);
   if (!content) {
@@ -85,7 +73,7 @@ const writeRunArtifacts = async (runDir: string, prompt: string): Promise<void> 
 };
 
 const runGateCommands = async (
-  commands: GateCommand[],
+  commands: { name: string; command: string }[],
   $: PluginContext["$"] | undefined,
   runDir: string,
 ): Promise<{ ok: boolean; summary: string }> => {
@@ -119,25 +107,14 @@ const runGateCommands = async (
   };
 };
 
-const runJudge = async (
-  ctx: PluginContext,
-  sessionID: string,
-  agent: string | undefined,
-  runDir: string,
-): Promise<{ status: "PASS" | "FAIL"; output: string }> => {
-  const prompt = await buildPrompt(getRepoRoot(ctx), "verify", `Run artifacts: ${runDir}`);
-  const response = await ctx.client.session.prompt({
-    path: { id: sessionID },
-    body: {
-      agent,
-      parts: [{ type: "text", text: prompt }],
-    },
-  });
-  const output = extractTextFromResponse(response);
-  await writeText(path.join(runDir, "judge.out"), output);
-  const status = output.includes("Status: PASS") && output.includes("EXIT_SIGNAL: true") ? "PASS" : "FAIL";
-  await writeText(path.join(marioRoot(getRepoRoot(ctx)), "state", "feedback.md"), output || "Status: FAIL\n");
-  return { status, output };
+const formatPromptResult = (title: string, prompt: string): string => {
+  return [
+    title,
+    "",
+    "---",
+    "",
+    prompt,
+  ].join("\n");
 };
 
 const draftPendingPlan = async (
@@ -195,40 +172,20 @@ export const createTools = (ctx: PluginContext) => {
       args: {
         idea: tool.schema.string().optional().describe("Initial idea"),
       },
-      async execute(args, context: ToolContext) {
+      async execute(args) {
         await ensureMario(repoRoot, false);
-        if (!context.sessionID) {
-          return "No active session found. Run this command from the OpenCode TUI.";
-        }
         const prompt = await buildPrompt(repoRoot, "prd", args.idea ? `Initial idea: ${args.idea}` : undefined);
-        await ctx.client.session.prompt({
-          path: { id: context.sessionID ?? "" },
-          body: {
-            agent: context.agent,
-            parts: [{ type: "text", text: prompt }],
-          },
-        });
-        return "PRD interview started. Answer the questions in the chat.";
+        return formatPromptResult("PRD mode: answer the questions (3-5 per round)", prompt);
       },
     }),
 
     mario_devx_plan: tool({
       description: "Generate/update implementation plan",
       args: {},
-      async execute(_args, context: ToolContext) {
+      async execute() {
         await ensureMario(repoRoot, false);
-        if (!context.sessionID) {
-          return "No active session found. Run this command from the OpenCode TUI.";
-        }
         const prompt = await buildPrompt(repoRoot, "plan");
-        await ctx.client.session.prompt({
-          path: { id: context.sessionID ?? "" },
-          body: {
-            agent: context.agent,
-            parts: [{ type: "text", text: prompt }],
-          },
-        });
-        return "Planning prompt sent. Review .mario/IMPLEMENTATION_PLAN.md";
+        return formatPromptResult("Planning mode: write/update .mario/IMPLEMENTATION_PLAN.md", prompt);
       },
     }),
 
@@ -252,10 +209,7 @@ export const createTools = (ctx: PluginContext) => {
     mario_devx_approve: tool({
       description: "Approve and execute the pending iteration",
       args: {},
-      async execute(_args, context: ToolContext) {
-        if (!context.sessionID) {
-          return "No active session found. Run this command from the OpenCode TUI.";
-        }
+      async execute() {
         const { pending, content } = await readPendingPlan(repoRoot);
         if (!pending || !content) {
           return "No pending plan found. Run /mario-devx:build first.";
@@ -268,37 +222,20 @@ export const createTools = (ctx: PluginContext) => {
         await ensureDir(runDir);
         const prompt = await buildPrompt(repoRoot, "build", content);
         await writeRunArtifacts(runDir, prompt);
-        await ctx.client.session.prompt({
-          path: { id: context.sessionID ?? "" },
-          body: {
-            agent: context.agent,
-            parts: [{ type: "text", text: prompt }],
-          },
-        });
 
-        const prdPath = path.join(repoRoot, ".mario", "PRD.md");
-        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-        const gateCommands = await resolveGateCommands(repoRoot, prdPath, agentsPath);
-        await persistGateCommands(agentsPath, gateCommands);
-        const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
-
-        const judge = await runJudge(ctx, context.sessionID ?? "", context.agent, runDir);
-
-        await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} build iter=${state.iteration} gates=${gateResult.ok ? "PASS" : "FAIL"} judge=${judge.status}`);
+        await clearPendingPlan(repoRoot);
         await writeIterationState(repoRoot, {
           ...state,
           lastRunDir: runDir,
-          lastStatus: judge.status,
+          lastStatus: "NONE",
         });
 
-        await clearPendingPlan(repoRoot);
-        await showToast(
-          ctx,
-          `Iteration ${state.iteration} complete. Judge: ${judge.status}.`,
-          judge.status === "PASS" ? "success" : "warning",
-        );
+        await showToast(ctx, `Approved ${pending.id}. Implement, then run /mario-devx:verify.`, "info");
 
-        return `Iteration ${state.iteration} complete. Gates: ${gateResult.ok ? "PASS" : "FAIL"}. Judge: ${judge.status}.`;
+        return formatPromptResult(
+          `Build mode: implement ${pending.id} (then run /mario-devx:verify)`,
+          prompt,
+        );
       },
     }),
 
@@ -314,37 +251,60 @@ export const createTools = (ctx: PluginContext) => {
     mario_devx_verify: tool({
       description: "Run deterministic gates + LLM judge without executing",
       args: {},
-      async execute(_args, context: ToolContext) {
-        if (!context.sessionID) {
-          return "No active session found. Run this command from the OpenCode TUI.";
-        }
+      async execute() {
         await ensureMario(repoRoot, false);
-        const state = await bumpIteration(repoRoot, "build");
-        const runDir = path.join(
-          marioRunsDir(repoRoot),
-          `${new Date().toISOString().replace(/[:.]/g, "")}-verify-iter${state.iteration}`,
-        );
+        const current = await readIterationState(repoRoot);
+        const state = current.iteration === 0 ? await bumpIteration(repoRoot, "build") : current;
+
+        const runDir =
+          state.lastRunDir && state.lastRunDir.length > 0
+            ? state.lastRunDir
+            : path.join(
+                marioRunsDir(repoRoot),
+                `${new Date().toISOString().replace(/[:.]/g, "")}-verify-iter${state.iteration}`,
+              );
+
         await ensureDir(runDir);
         const prdPath = path.join(repoRoot, ".mario", "PRD.md");
         const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
         const gateCommands = await resolveGateCommands(repoRoot, prdPath, agentsPath);
         await persistGateCommands(agentsPath, gateCommands);
         const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
-        const judge = await runJudge(ctx, context.sessionID ?? "", context.agent, runDir);
 
         await writeIterationState(repoRoot, {
           ...state,
           lastRunDir: runDir,
-          lastStatus: judge.status,
+          lastStatus: "NONE",
         });
-        await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} gates=${gateResult.ok ? "PASS" : "FAIL"} judge=${judge.status}`);
+        await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} gates=${gateResult.ok ? "PASS" : "FAIL"}`);
 
         await showToast(
           ctx,
-          `Verification complete. Judge: ${judge.status}.`,
-          judge.status === "PASS" ? "success" : "warning",
+          `Gates: ${gateResult.ok ? "PASS" : "FAIL"}. Now write verifier feedback.`,
+          gateResult.ok ? "success" : "warning",
         );
-        return `Verification complete. Gates: ${gateResult.ok ? "PASS" : "FAIL"}. Judge: ${judge.status}.`;
+
+        const verifierPrompt = await buildPrompt(
+          repoRoot,
+          "verify",
+          [
+            `Run artifacts: ${runDir}`,
+            `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
+            `Gates log: ${path.join(runDir, "gates.log")}`,
+          ].join("\n"),
+        );
+
+        const preface = [
+          `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
+          `Evidence: ${path.join(runDir, "gates.log")}`,
+          "",
+          "Now act as the verifier:",
+          "- Produce the exact Status/EXIT_SIGNAL format.",
+          "- Write it to .mario/state/feedback.md.",
+          "- If gates failed, Status must be FAIL and EXIT_SIGNAL must be false.",
+        ].join("\n");
+
+        return formatPromptResult(preface, verifierPrompt);
       },
     }),
 

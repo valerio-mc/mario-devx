@@ -37,7 +37,7 @@ export const createCommands = (): CommandDefinition[] => [
   command(
     "plan",
     "Generate/update implementation plan",
-    "Call tool mario_devx_plan with no arguments. Return a brief summary of where the plan was written.",
+    "Call tool mario_devx_plan with no arguments. Then follow the instructions in the tool output.",
   ),
   command(
     "build",
@@ -47,7 +47,7 @@ export const createCommands = (): CommandDefinition[] => [
   command(
     "approve",
     "Approve and execute pending build",
-    "Call tool mario_devx_approve with no arguments. Return the verification result and next action.",
+    "Call tool mario_devx_approve with no arguments. Then follow the instructions in the tool output.",
   ),
   command(
     "cancel",
@@ -57,7 +57,7 @@ export const createCommands = (): CommandDefinition[] => [
   command(
     "verify",
     "Run deterministic + LLM verification",
-    "Call tool mario_devx_verify with no arguments.",
+    "Call tool mario_devx_verify with no arguments. Then follow the verifier instructions in the tool output.",
   ),
   command(
     "status",
