@@ -240,16 +240,46 @@ const getNextPlanItem = async (planPath: string): Promise<{ id: string; title: s
     return null;
   }
   const lines = content.split(/\r?\n/);
-  const startIndex = lines.findIndex((line) => line.startsWith("### PI-") && line.includes("- TODO -"));
-  if (startIndex === -1) {
+
+  const parseHeader = (line: string): { id: string; status: "DOING" | "TODO"; title: string } | null => {
+    const match = line.match(/^###\s+(PI-\d+)\s+-\s+(TODO|DOING)\s+-\s+(.*)$/i);
+    if (!match) {
+      return null;
+    }
+    const id = match[1] ?? "";
+    const statusRaw = (match[2] ?? "").toUpperCase();
+    const title = match[3] ?? "";
+    if (!id || !title || (statusRaw !== "TODO" && statusRaw !== "DOING")) {
+      return null;
+    }
+    return { id, status: statusRaw as "DOING" | "TODO", title };
+  };
+
+  // Prefer resuming a DOING item; otherwise pick the first TODO.
+  let startIndex = -1;
+  let parsed: { id: string; status: "DOING" | "TODO"; title: string } | null = null;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const candidate = parseHeader(lines[i] ?? "");
+    if (!candidate) {
+      continue;
+    }
+    if (candidate.status === "DOING") {
+      startIndex = i;
+      parsed = candidate;
+      break;
+    }
+    if (candidate.status === "TODO" && startIndex === -1) {
+      startIndex = i;
+      parsed = candidate;
+    }
+  }
+
+  if (startIndex === -1 || !parsed) {
     return null;
   }
-  const header = lines[startIndex];
-  const match = header.match(/^###\s+(PI-\d+)\s+-\s+TODO\s+-\s+(.*)$/);
-  if (!match) {
-    return null;
-  }
-  const [, id, title] = match;
+
+  const { id, title } = parsed;
   const blockLines: string[] = [];
   for (let i = startIndex; i < lines.length; i += 1) {
     if (i !== startIndex && lines[i].startsWith("### PI-")) {
@@ -449,7 +479,16 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         const draft = await draftPendingPlan(repoRoot, args.idea);
         if (!draft) {
-          return "No TODO plan items found in .mario/IMPLEMENTATION_PLAN.md.";
+          return [
+            "No TODO/DOING plan items found in .mario/IMPLEMENTATION_PLAN.md.",
+            "",
+            "Common causes:",
+            "- The plan contains placeholders like '[... existing ...]' instead of real plan items.",
+            "- Plan item headers are not in the format: '### PI-0003 - TODO - Title'",
+            "",
+            "Fix:",
+            "- Run /mario-devx:plan again and ensure it writes fully-expanded plan items (no placeholders).",
+          ].join("\n");
         }
         await writePendingPlan(repoRoot, draft.pending, draft.content);
         await showToast(ctx, `Pending plan drafted for ${draft.pending.id}.`, "info");
