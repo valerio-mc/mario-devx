@@ -34,6 +34,10 @@ Hard limits:
 - Maximum 30 plan items total.
 - Do not rewrite or reorder existing `DONE` items (leave them as-is).
 
+No placeholder rule (non-negotiable):
+- Do NOT use ellipses or placeholders like `[...]`, `...`, `(... existing ...)`, or `(... rest of plan ...)`.
+- The plan must be complete and fully expanded in the file: every plan item must be present with its full content.
+
 Plan item format requirements:
 - Every plan item has a stable ID: `PI-0001`, `PI-0002`, ...
 - Use status: `TODO`, `DOING`, `DONE`, `BLOCKED`.
