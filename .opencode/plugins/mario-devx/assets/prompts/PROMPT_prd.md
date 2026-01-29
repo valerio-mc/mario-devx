@@ -14,6 +14,11 @@ Rules:
 - Every question must offer lettered options (A/B/C/D) so the user can answer compactly.
 - Avoid generic questions when the initial idea already answers them. Ask the highest-information missing details.
 - Ensure Quality Gates (commands that must pass) are collected in the first or second round.
+
+Web apps:
+- If the project is a web app, ask whether to enable UI verification during `/mario-devx:verify`.
+- Explain that UI verification uses Vercel's `agent-browser` (Playwright-based) to interact with the app in a real browser.
+- If the user opts in, call tool `mario_devx_ui_verify` to configure `.mario/AGENTS.md` and check prerequisites.
 - After you have enough context, generate a PRD wrapped in `[PRD]` and `[/PRD]` markers, then write/update the canonical PRD file (`.mario/PRD.md` or `PRD.md`) with the same content (without the markers).
 
 Execution model:

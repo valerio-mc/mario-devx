@@ -65,6 +65,11 @@ export const createCommands = (): CommandDefinition[] => [
     "Call tool mario_devx_auto with max_items=$ARGUMENTS. Return the tool result.",
   ),
   command(
+    "ui-verify",
+    "Configure UI verification (agent-browser)",
+    "Call tool mario_devx_ui_verify with no arguments. Then follow the instructions in the tool output.",
+  ),
+  command(
     "status",
     "Show mario-devx status",
     "Call tool mario_devx_status with no arguments.",

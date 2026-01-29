@@ -19,6 +19,106 @@ const nowIso = (): string => new Date().toISOString();
 
 const getRepoRoot = (ctx: PluginContext): string => ctx.worktree ?? ctx.directory ?? process.cwd();
 
+const getXdgConfigHome = (): string => {
+  return process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? "", ".config");
+};
+
+const getGlobalSkillPath = (skillName: string): string => {
+  return path.join(getXdgConfigHome(), "opencode", "skill", skillName, "SKILL.md");
+};
+
+const parseEnvValue = (value: string): string => {
+  const trimmed = value.trim();
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+};
+
+const parseAgentsEnv = (content: string): Record<string, string> => {
+  const env: Record<string, string> = {};
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const idx = line.indexOf("=");
+    if (idx === -1) {
+      continue;
+    }
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1);
+    if (!key) {
+      continue;
+    }
+    env[key] = parseEnvValue(value);
+  }
+  return env;
+};
+
+const upsertAgentsKey = (content: string, key: string, value: string): string => {
+  const lines = content.split(/\r?\n/);
+  const nextLine = `${key}='${value.replace(/'/g, "'\\''")}'`;
+  let updated = false;
+  const nextLines = lines.map((line) => {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith("#") || !trimmed.startsWith(`${key}=`)) {
+      return line;
+    }
+    updated = true;
+    return nextLine;
+  });
+  if (updated) {
+    return nextLines.join("\n");
+  }
+  return `${content.trimEnd()}\n${nextLine}\n`;
+};
+
+const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
+  const pkgRaw = await readTextIfExists(path.join(repoRoot, "package.json"));
+  if (!pkgRaw) {
+    return false;
+  }
+  try {
+    const pkg = JSON.parse(pkgRaw) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+    return Boolean(deps.next || deps.vite || deps["react-scripts"]);
+  } catch {
+    return false;
+  }
+};
+
+const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
+  const localCandidates = [
+    path.join(repoRoot, ".opencode", "skill", "agent-browser", "SKILL.md"),
+    path.join(repoRoot, ".opencode", "skills", "agent-browser", "SKILL.md"),
+    path.join(repoRoot, ".claude", "skills", "agent-browser", "SKILL.md"),
+  ];
+  for (const candidate of localCandidates) {
+    if ((await readTextIfExists(candidate)) !== null) {
+      return true;
+    }
+  }
+  if ((await readTextIfExists(getGlobalSkillPath("agent-browser"))) !== null) {
+    return true;
+  }
+  return false;
+};
+
+const hasAgentBrowserCli = async (ctx: PluginContext): Promise<boolean> => {
+  if (!ctx.$) {
+    return false;
+  }
+  const result = await ctx.$`sh -c ${"command -v agent-browser"}`.nothrow();
+  return result.exitCode === 0;
+};
+
 const appendLine = async (filePath: string, line: string): Promise<void> => {
   const existing = await readTextIfExists(filePath);
   const next = existing ? `${existing.trimEnd()}\n${line}\n` : `${line}\n`;
@@ -329,6 +429,18 @@ export const createTools = (ctx: PluginContext) => {
         await persistGateCommands(agentsPath, gateCommands);
         const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
 
+        const agentsRaw = await readTextIfExists(agentsPath);
+        const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw) : {};
+        const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
+        const uiVerifyCmd = agentsEnv.UI_VERIFY_CMD || "npm run dev";
+        const uiVerifyUrl = agentsEnv.UI_VERIFY_URL || "http://localhost:3000";
+        const uiVerifyRequired = agentsEnv.UI_VERIFY_REQUIRED === "1";
+        const agentBrowserRepo = agentsEnv.AGENT_BROWSER_REPO || "https://github.com/vercel-labs/agent-browser";
+
+        const isWebApp = await isLikelyWebApp(repoRoot);
+        const cliOk = await hasAgentBrowserCli(ctx);
+        const skillOk = await hasAgentBrowserSkill(repoRoot);
+
         await writeIterationState(repoRoot, {
           ...state,
           lastRunDir: runDir,
@@ -356,13 +468,107 @@ export const createTools = (ctx: PluginContext) => {
           `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
           `Evidence: ${path.join(runDir, "gates.log")}`,
           "",
+          uiVerifyEnabled && isWebApp
+            ? [
+                "UI verification:",
+                `- Enabled: yes${uiVerifyRequired ? " (required)" : ""}`,
+                `- Dev command: ${uiVerifyCmd}`,
+                `- URL: ${uiVerifyUrl}`,
+                `- agent-browser CLI: ${cliOk ? "found" : "missing"}`,
+                `- agent-browser skill: ${skillOk ? "found" : "missing"}`,
+                `- Repo: ${agentBrowserRepo}`,
+                "",
+                uiVerifyRequired && (!cliOk || !skillOk)
+                  ? "If UI verification is required and prerequisites are missing, Status must be FAIL and EXIT_SIGNAL must be false."
+                  : "",
+                "",
+                cliOk && skillOk
+                  ? "Run UI verification using agent-browser and store evidence in the run directory (screenshots/logs)."
+                  : [
+                      "Ask the user if they want to install missing prerequisites for UI verification.",
+                      "Install commands:",
+                      "- Skill: npx skills add vercel-labs/agent-browser",
+                      "- CLI: npm install -g agent-browser && agent-browser install",
+                    ].join("\n"),
+                "",
+              ]
+                .filter((line) => line.trim().length > 0)
+                .join("\n")
+            : null,
           "Now act as the verifier:",
           "- Produce the exact Status/EXIT_SIGNAL format.",
           "- Write it to .mario/state/feedback.md.",
           "- If gates failed, Status must be FAIL and EXIT_SIGNAL must be false.",
-        ].join("\n");
+        ]
+          .filter((line) => Boolean(line))
+          .join("\n");
 
-        return formatPromptResult(preface, verifierPrompt);
+        const uiSteps =
+          uiVerifyEnabled && isWebApp && cliOk && skillOk
+            ? [
+                "",
+                "UI verification steps (agent-browser):",
+                `1) Start the dev server in the background: ${uiVerifyCmd}`,
+                `2) Wait for ${uiVerifyUrl} to respond (use curl loop).`,
+                "3) Use agent-browser to validate the main flow for the current plan item:",
+                `   - agent-browser open ${uiVerifyUrl}`,
+                "   - agent-browser snapshot -i --json",
+                "   - click/fill as needed (prefer @refs from snapshot)",
+                `   - agent-browser screenshot ${path.join(runDir, "ui.png")}`,
+                `   - agent-browser console --json > ${path.join(runDir, "ui-console.json")}`,
+                `   - agent-browser errors --json > ${path.join(runDir, "ui-errors.json")}`,
+                "   - agent-browser close",
+                `4) Save evidence under: ${runDir}`,
+                "5) Stop the dev server.",
+              ].join("\n")
+            : "";
+
+        return formatPromptResult(`${preface}${uiSteps}`, verifierPrompt);
+      },
+    }),
+
+    mario_devx_ui_verify: tool({
+      description: "Configure UI verification (agent-browser) for mario-devx",
+      args: {},
+      async execute() {
+        await ensureMario(repoRoot, false);
+
+        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
+        const agentsRaw = (await readTextIfExists(agentsPath)) ?? "";
+        const isWebApp = await isLikelyWebApp(repoRoot);
+        if (!isWebApp) {
+          return "This project does not look like a Node web app (no Next/Vite/react-scripts detected).";
+        }
+
+        const cliOk = await hasAgentBrowserCli(ctx);
+        const skillOk = await hasAgentBrowserSkill(repoRoot);
+
+        let next = agentsRaw;
+        next = upsertAgentsKey(next, "UI_VERIFY", "1");
+        next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", "0");
+        next = upsertAgentsKey(next, "UI_VERIFY_CMD", "npm run dev");
+        next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
+        next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
+        await writeText(agentsPath, next);
+
+        const missing: string[] = [];
+        if (!skillOk) missing.push("agent-browser skill");
+        if (!cliOk) missing.push("agent-browser CLI");
+
+        if (missing.length === 0) {
+          return "UI verification enabled in .mario/AGENTS.md (UI_VERIFY=1). agent-browser prerequisites found.";
+        }
+
+        return [
+          "UI verification enabled in .mario/AGENTS.md (UI_VERIFY=1), but prerequisites are missing:",
+          `- Missing: ${missing.join(", ")}`,
+          "",
+          "Install options:",
+          "- Skill: npx skills add vercel-labs/agent-browser",
+          "- CLI: npm install -g agent-browser && agent-browser install",
+          "",
+          "Reply with which ones to install (skill / cli / both), or keep going without UI verification.",
+        ].join("\n");
       },
     }),
 
@@ -496,6 +702,7 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:cancel",
           "- /mario-devx:verify",
           "- /mario-devx:auto <N>",
+          "- /mario-devx:ui-verify",
           "- /mario-devx:status",
         ].join("\n");
       },

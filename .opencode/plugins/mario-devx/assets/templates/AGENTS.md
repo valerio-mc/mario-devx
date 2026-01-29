@@ -5,6 +5,15 @@ AUTO_COMMIT=1
 AUTO_PUSH=0
 HITL_REQUIRED=0
 
+# UI verification (optional)
+# When enabled, `/mario-devx:verify` will also validate the UI using `agent-browser`.
+# Repo: https://github.com/vercel-labs/agent-browser
+UI_VERIFY=0
+UI_VERIFY_REQUIRED=0
+UI_VERIFY_CMD='npm run dev'
+UI_VERIFY_URL='http://localhost:3000'
+AGENT_BROWSER_REPO='https://github.com/vercel-labs/agent-browser'
+
 # Storage
 # - Default: keep mario-devx artifacts in `.mario/`.
 # - Set MARIO_ROOT_MODE=1 to use legacy repo-root locations.
