@@ -14,6 +14,15 @@ Rules:
 - Every question must offer lettered options (A/B/C/D) so the user can answer compactly.
 - Avoid generic questions when the initial idea already answers them. Ask the highest-information missing details.
 - Ensure Quality Gates (commands that must pass) are collected in the first or second round.
+- After EACH round of answers, update the canonical PRD file immediately (even if partial).
+- Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
+
+Required integration details (do not hand-wave):
+- Explicit provider + model IDs (example: OpenRouter + `openrouter/google/gemini-2.5-flash`).
+- Where API keys live (env var names, file: `.env.local`, never committed).
+- Execution boundary: server-only calls (do not expose keys in client code).
+- Response formats/schemas for: (1) the 3 questions, (2) the recipe output (so the UI can render deterministically).
+- Failure behavior: timeouts, rate limits, retries, and user-facing error states.
 
 Web apps:
 - If the project is a web app, ask whether to enable UI verification during `/mario-devx:verify`.
@@ -46,3 +55,6 @@ Interview logic:
 - Use the initial idea (provided at the top of the chat prompt) to skip obvious questions.
 - Iterate until the PRD is genuinely testable (specific scope + verifiable acceptance criteria + quality gates).
 - When you have enough detail, output `[PRD]...[/PRD]` and update the canonical PRD file.
+
+Stop condition:
+- When `.mario/PRD.md` has: explicit Quality Gates, 3-6 user stories with acceptance criteria, and the required integration details above, STOP and tell the user to run `/mario-devx:plan`.
