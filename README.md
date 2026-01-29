@@ -1,4 +1,4 @@
-# Mario DevX 👾
+# 👾 Mario DevX
 
 <img align="right" src="mario_devx.png" alt="Mario DevX" width="256" />
 
