@@ -28,6 +28,18 @@ Web apps:
 - If the project is a web app, ask whether to enable UI verification during `/mario-devx:verify`.
 - Explain that UI verification uses Vercel's `agent-browser` (Playwright-based) to interact with the app in a real browser.
 - If the user opts in, call tool `mario_devx_ui_verify` to configure `.mario/AGENTS.md` and check prerequisites.
+
+UI aesthetic interview (for web apps):
+- Ask a dedicated mini-round (3-6 questions) that forces a clear visual direction. Keep it specific and opinionated, not framework-y.
+- Cover at minimum:
+  - Aesthetic direction: pick 1 primary style label (editorial/minimal/industrial/playful/luxury/brutalist/retro/organic) + 3 adjectives + 1 anti-vibe.
+  - Typography: display vs body vibe; serif/sans/mono preference; any fonts to avoid.
+  - Color system: background/surface/text + 1-2 accents + semantic colors (success/warn/error); contrast target (WCAG 4.5:1 min).
+  - Layout density: sparse vs dense; grid vs freeform; symmetry vs asymmetry/overlap.
+  - Motion: where motion matters (page-load reveal, hover states); pacing; respect `prefers-reduced-motion`.
+  - Critical states: loading/empty/error/success and how they should feel.
+  - Accessibility non-negotiables: visible focus, keyboard nav, touch targets.
+- If the user provides references, ask for 2-3 links/screenshots + 1 anti-reference, and what exactly to copy.
 - After you have enough context, generate a PRD wrapped in `[PRD]` and `[/PRD]` markers, then write/update the canonical PRD file (`.mario/PRD.md` or `PRD.md`) with the same content (without the markers).
 
 Execution model:
