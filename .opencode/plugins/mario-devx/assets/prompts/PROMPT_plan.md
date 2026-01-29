@@ -18,6 +18,7 @@ Persistent state:
 Rules:
 - Plan only. Do not implement.
 - Do not assume missing functionality; search the codebase first.
+- Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
 - Produce a prioritized, plan-item-sized plan in `IMPLEMENTATION_PLAN.md`.
 - Each plan item must be executable in one loop iteration.
 - Single-shot: produce ONE plan update, write the file, then STOP.
@@ -25,7 +26,9 @@ Rules:
 - Each plan item must include:
   - Scope (what changes)
   - Done when (explicit verification: tests/lint/typecheck/build)
+  - Evidence (where to look: commands + artifact paths)
   - Notes/risks
+  - Rollback (what to undo if it goes sideways)
 
 Hard limits:
 - Maximum 30 plan items total.
@@ -42,6 +45,10 @@ Evidence requirements:
 - For deterministic checks, reference logs under `.mario/state/` or `.mario/runs/<run>/`.
 - If completion requires human judgment, set `HITL_REQUIRED=1` in AGENTS and describe the checklist.
 
-If `specs/*` are missing or inconsistent, propose how to split/fix them, but do not invent requirements.
+If `specs/*` are missing, create 3-8 high-signal specs under `.mario/specs/` derived from the PRD (one topic per file, one sentence without "and").
+If `specs/*` are inconsistent, propose specific edits and split/merge rules (but do not invent requirements).
+
+Sizing rule:
+- If a plan item cannot be completed in one iteration with clear evidence, split it.
 
 If any core files are missing, create minimal defaults (or ask the user to run `mario-init` to bootstrap templates).
