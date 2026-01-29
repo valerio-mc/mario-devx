@@ -14,6 +14,8 @@ Rules:
 - Every question must offer lettered options (A/B/C/D) so the user can answer compactly.
 - Avoid generic questions when the initial idea already answers them. Ask the highest-information missing details.
 - Ensure Quality Gates (commands that must pass) are collected in the first or second round.
+- In `## Quality Gates`, include runnable shell commands ONLY, wrapped in backticks (example: `npm run lint && npm run build`).
+- Put any prose about verification in another section (not under Quality Gates).
 - After EACH round of answers, update the canonical PRD file immediately (even if partial).
 - Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
 

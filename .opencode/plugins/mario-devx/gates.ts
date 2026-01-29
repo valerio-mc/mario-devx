@@ -8,6 +8,15 @@ const normalizeCommand = (value: string): string => {
   return value.replace(/^`|`$/g, "").trim();
 };
 
+const extractBackticked = (line: string): string | null => {
+  const match = line.match(/`([^`]+)`/);
+  if (!match) {
+    return null;
+  }
+  const cmd = normalizeCommand(match[1] ?? "");
+  return cmd.length > 0 ? cmd : null;
+};
+
 const extractQualityGates = (prd: string): string[] => {
   const lines = prd.split(/\r?\n/);
   const start = lines.findIndex((line) => line.trim() === "## Quality Gates");
@@ -23,7 +32,10 @@ const extractQualityGates = (prd: string): string[] => {
     if (!line.trim().startsWith("-")) {
       continue;
     }
-    const candidate = normalizeCommand(line.replace(/^\s*-\s*/, ""));
+
+    // Only accept backticked commands to avoid prose breaking gates.
+    // Example: - `npm run lint && npm run build`
+    const candidate = extractBackticked(line);
     if (!candidate || candidate.toLowerCase().includes("todo")) {
       continue;
     }
