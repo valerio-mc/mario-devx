@@ -119,6 +119,99 @@ const hasAgentBrowserCli = async (ctx: PluginContext): Promise<boolean> => {
   return result.exitCode === 0;
 };
 
+const readMostRecentPlanItemId = async (repoRoot: string): Promise<string | null> => {
+  const planPath = path.join(repoRoot, ".mario", "IMPLEMENTATION_PLAN.md");
+  const content = await readTextIfExists(planPath);
+  if (!content) {
+    return null;
+  }
+  const matches = Array.from(content.matchAll(/^###\s+(PI-\d+)\s+-\s+(TODO|DOING|DONE|BLOCKED)\s+-/gm));
+  if (matches.length === 0) {
+    return null;
+  }
+  return matches[matches.length - 1]?.[1] ?? null;
+};
+
+const runUiVerification = async (params: {
+  ctx: PluginContext;
+  runDir: string;
+  devCmd: string;
+  url: string;
+}): Promise<{ ok: boolean; summary: string }> => {
+  const { ctx, runDir, devCmd, url } = params;
+  if (!ctx.$) {
+    return { ok: false, summary: "Bun shell not available to run UI verification." };
+  }
+
+  const logPath = path.join(runDir, "ui-verify.log");
+  const pidPath = path.join(runDir, "devserver.pid");
+  const snapshotPath = path.join(runDir, "ui-snapshot.json");
+  const screenshotPath = path.join(runDir, "ui.png");
+  const consolePath = path.join(runDir, "ui-console.json");
+  const errorsPath = path.join(runDir, "ui-errors.json");
+
+  const log: string[] = [];
+  let pid = "";
+
+  // Start dev server in background.
+  log.push(`$ ${devCmd} (background)`);
+  const start = await ctx.$`sh -c ${`${devCmd} >/dev/null 2>&1 & echo $!`}`.nothrow();
+  pid = start.stdout.toString().trim();
+  log.push(`devserver pid: ${pid || "(none)"}`);
+  log.push(start.stderr.toString());
+  if (!pid) {
+    await writeText(logPath, log.join("\n"));
+    return { ok: false, summary: "Failed to start dev server." };
+  }
+  await writeText(pidPath, `${pid}\n`);
+
+  // Wait for URL to respond.
+  log.push(`$ wait for ${url}`);
+  const waitCmd = `i=0; while [ $i -lt 60 ]; do curl -fsS ${url} >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1`;
+  const waited = await ctx.$`sh -c ${waitCmd}`.nothrow();
+  log.push(`wait exitCode: ${waited.exitCode}`);
+  if (waited.exitCode !== 0) {
+    // stop server
+    await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
+    await writeText(logPath, log.join("\n"));
+    return { ok: false, summary: `Dev server did not become ready at ${url}.` };
+  }
+
+  // Drive browser with agent-browser.
+  const cmds: { label: string; cmd: string }[] = [
+    { label: "open", cmd: `agent-browser open ${url}` },
+    { label: "snapshot", cmd: `agent-browser snapshot -i --json > ${snapshotPath}` },
+    { label: "screenshot", cmd: `agent-browser screenshot ${screenshotPath}` },
+    { label: "console", cmd: `agent-browser console --json > ${consolePath}` },
+    { label: "errors", cmd: `agent-browser errors --json > ${errorsPath}` },
+    { label: "close", cmd: "agent-browser close" },
+  ];
+
+  for (const item of cmds) {
+    log.push(`$ ${item.cmd}`);
+    const r = await ctx.$`sh -c ${item.cmd}`.nothrow();
+    log.push(`exitCode: ${r.exitCode}`);
+    log.push(r.stdout.toString());
+    log.push(r.stderr.toString());
+    if (r.exitCode !== 0) {
+      // Ensure close and stop server.
+      await ctx.$`sh -c ${"agent-browser close >/dev/null 2>&1 || true"}`.nothrow();
+      await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
+      await writeText(logPath, log.join("\n"));
+      return {
+        ok: false,
+        summary: `agent-browser failed at '${item.label}'. If this is first run, you may need: agent-browser install`,
+      };
+    }
+  }
+
+  // Stop server.
+  log.push(`$ kill ${pid}`);
+  await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
+  await writeText(logPath, log.join("\n"));
+  return { ok: true, summary: "UI verification completed." };
+};
+
 const appendLine = async (filePath: string, line: string): Promise<void> => {
   const existing = await readTextIfExists(filePath);
   const next = existing ? `${existing.trimEnd()}\n${line}\n` : `${line}\n`;
@@ -429,6 +522,8 @@ export const createTools = (ctx: PluginContext) => {
         await persistGateCommands(agentsPath, gateCommands);
         const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
 
+        const planItemId = await readMostRecentPlanItemId(repoRoot);
+
         const agentsRaw = await readTextIfExists(agentsPath);
         const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw) : {};
         const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
@@ -441,6 +536,16 @@ export const createTools = (ctx: PluginContext) => {
         const cliOk = await hasAgentBrowserCli(ctx);
         const skillOk = await hasAgentBrowserSkill(repoRoot);
 
+        const shouldRunUiVerify = uiVerifyEnabled && isWebApp && cliOk && skillOk;
+        const uiResult = shouldRunUiVerify
+          ? await runUiVerification({
+              ctx,
+              runDir,
+              devCmd: uiVerifyCmd,
+              url: uiVerifyUrl,
+            })
+          : null;
+
         await writeIterationState(repoRoot, {
           ...state,
           lastRunDir: runDir,
@@ -448,10 +553,16 @@ export const createTools = (ctx: PluginContext) => {
         });
         await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} gates=${gateResult.ok ? "PASS" : "FAIL"}`);
 
+        const toastBits = [
+          `Gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
+          uiResult ? `UI: ${uiResult.ok ? "PASS" : "FAIL"}` : null,
+          "Now write verifier feedback.",
+        ].filter((x) => x);
+
         await showToast(
           ctx,
-          `Gates: ${gateResult.ok ? "PASS" : "FAIL"}. Now write verifier feedback.`,
-          gateResult.ok ? "success" : "warning",
+          toastBits.join(". "),
+          gateResult.ok && (!uiResult || uiResult.ok) ? "success" : "warning",
         );
 
         const verifierPrompt = await buildPrompt(
@@ -461,6 +572,9 @@ export const createTools = (ctx: PluginContext) => {
             `Run artifacts: ${runDir}`,
             `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
             `Gates log: ${path.join(runDir, "gates.log")}`,
+            planItemId ? `Plan item: ${planItemId}` : "Plan item: (unknown)",
+            uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
+            uiResult ? `UI log: ${path.join(runDir, "ui-verify.log")}` : "",
           ].join("\n"),
         );
 
