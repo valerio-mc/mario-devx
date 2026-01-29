@@ -177,9 +177,9 @@ Next actions:
 
 ## Acknowledgements
 
-- Geoffrey Huntley + playbook: https://github.com/ghuntley/how-to-ralph-wiggum
-- Resource index: https://github.com/snwfdhmp/awesome-ralph
-- agent-browser (Vercel): https://github.com/vercel-labs/agent-browser
+- [Geoffrey Huntley + playbook](https://github.com/ghuntley/how-to-ralph-wiggum)
+- [Resource index](https://github.com/snwfdhmp/awesome-ralph)
+- [agent-browser (Vercel)](https://github.com/vercel-labs/agent-browser)
 
 ## License
 
