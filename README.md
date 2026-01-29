@@ -124,6 +124,8 @@ This drafts `.mario/state/pending_plan.md` so you can fix the inevitable "plan i
 
 The plugin runs the agent, runs gates, runs the judge, and writes feedback to `.mario/state/feedback.md`.
 
+After you implement the plan item, run `/mario-devx:verify` (or `/mario-devx:auto <N>` if you want to keep going).
+
 ## What gets created
 
 In your project:
