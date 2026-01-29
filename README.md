@@ -26,6 +26,7 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 /mario-devx:approve
 /mario-devx:verify
 /mario-devx:auto <N>
+/mario-devx:ui-verify
 /mario-devx:status
 ```
 
@@ -95,6 +96,8 @@ Answer the questions until `.mario/PRD.md` is specific enough to embarrass you l
 
 Edit `.mario/PRD.md` and put real commands under `## Quality Gates`.
 
+If this is a web app and you want UI checks too, run `/mario-devx:ui-verify` (agent-browser / Playwright) and let `/mario-devx:verify` bully the frontend as well.
+
 If you don’t define “done”, the agent will.
 
 ### 7) Generate the plan
@@ -150,6 +153,8 @@ In this repo:
 
 - Source of truth: `## Quality Gates` in `.mario/PRD.md`.
 - Fallback: if you forgot, mario-devx auto-detects common scripts (Node) and a few sane defaults (Go/Rust/Python), then persists them to `.mario/AGENTS.md`.
+
+For web apps, you can optionally add UI backpressure via `agent-browser` (Playwright-based) by enabling it in `.mario/AGENTS.md` or running `/mario-devx:ui-verify`.
 
 ## Verifier output (strict on purpose)
 
