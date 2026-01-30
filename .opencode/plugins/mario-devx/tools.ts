@@ -693,7 +693,11 @@ export const createTools = (ctx: PluginContext) => {
     mario_devx_verify: tool({
       description: "Run deterministic gates + LLM judge without executing",
       args: {},
-      async execute() {
+      async execute(_args, context: ToolContext) {
+        const notInWork = await ensureNotInWorkSession(repoRoot, context);
+        if (!notInWork.ok) {
+          return notInWork.message;
+        }
         await ensureMario(repoRoot, false);
         const current = await readIterationState(repoRoot);
         const state = current.iteration === 0 ? await bumpIteration(repoRoot, "build") : current;
@@ -737,23 +741,54 @@ export const createTools = (ctx: PluginContext) => {
             })
           : null;
 
-        await writeIterationState(repoRoot, {
-          ...state,
-          lastRunDir: runDir,
-          lastStatus: "NONE",
-        });
-        await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} gates=${gateResult.ok ? "PASS" : "FAIL"}`);
+        const failEarly = async (reasonLines: string[]): Promise<string> => {
+          const text = [
+            "Status: FAIL",
+            "EXIT_SIGNAL: false",
+            "Reason:",
+            ...reasonLines.map((l) => `- ${l}`),
+            "Next actions:",
+            "- Fix the failing checks, then rerun /mario-devx:verify.",
+          ].join("\n");
+          await writeText(path.join(runDir, "judge.out"), text);
+          await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), text);
+          await writeIterationState(repoRoot, {
+            ...state,
+            lastRunDir: runDir,
+            lastStatus: "FAIL",
+          });
+          await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} result=FAIL`);
+          await showToast(ctx, "Verification: FAIL", "warning");
+          return text;
+        };
 
-        const toastBits = [
-          `Gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
-          uiResult ? `UI: ${uiResult.ok ? "PASS" : "FAIL"}` : null,
-          "Now write verifier feedback.",
-        ].filter((x) => x);
+        if (!gateResult.ok) {
+          return failEarly([
+            `Deterministic gates failed (see ${path.join(runDir, "gates.log")}).`,
+          ]);
+        }
+
+        if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk)) {
+          return failEarly([
+            "UI verification is required but agent-browser prerequisites are missing.",
+            `Repo: ${agentBrowserRepo}`,
+            "Install: npx skills add vercel-labs/agent-browser",
+            "Install: npm install -g agent-browser && agent-browser install",
+          ]);
+        }
+
+        if (uiVerifyEnabled && isWebApp && uiVerifyRequired && uiResult && !uiResult.ok) {
+          return failEarly([
+            `UI verification failed (see ${path.join(runDir, "ui-verify.log")}).`,
+          ]);
+        }
+
+        await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} gates=PASS${uiResult ? ` ui=${uiResult.ok ? "PASS" : "FAIL"}` : ""}`);
 
         await showToast(
           ctx,
-          toastBits.join(". "),
-          gateResult.ok && (!uiResult || uiResult.ok) ? "success" : "warning",
+          `Gates: PASS${uiResult ? `; UI: ${uiResult.ok ? "PASS" : "FAIL"}` : ""}. Running verifier...`,
+          "info",
         );
 
         const verifierPrompt = await buildPrompt(
@@ -761,7 +796,7 @@ export const createTools = (ctx: PluginContext) => {
           "verify",
           [
             `Run artifacts: ${runDir}`,
-            `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
+            "Deterministic gates: PASS",
             `Gates log: ${path.join(runDir, "gates.log")}`,
             planItemId ? `Plan item: ${planItemId}` : "Plan item: (unknown)",
             uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
@@ -769,66 +804,27 @@ export const createTools = (ctx: PluginContext) => {
           ].join("\n"),
         );
 
-        const preface = [
-          `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
-          `Evidence: ${path.join(runDir, "gates.log")}`,
-          "",
-          uiVerifyEnabled && isWebApp
-            ? [
-                "UI verification:",
-                `- Enabled: yes${uiVerifyRequired ? " (required)" : ""}`,
-                `- Dev command: ${uiVerifyCmd}`,
-                `- URL: ${uiVerifyUrl}`,
-                `- agent-browser CLI: ${cliOk ? "found" : "missing"}`,
-                `- agent-browser skill: ${skillOk ? "found" : "missing"}`,
-                `- Repo: ${agentBrowserRepo}`,
-                "",
-                uiVerifyRequired && (!cliOk || !skillOk)
-                  ? "If UI verification is required and prerequisites are missing, Status must be FAIL and EXIT_SIGNAL must be false."
-                  : "",
-                "",
-                cliOk && skillOk
-                  ? "Run UI verification using agent-browser and store evidence in the run directory (screenshots/logs)."
-                  : [
-                      "Ask the user if they want to install missing prerequisites for UI verification.",
-                      "Install commands:",
-                      "- Skill: npx skills add vercel-labs/agent-browser",
-                      "- CLI: npm install -g agent-browser && agent-browser install",
-                    ].join("\n"),
-                "",
-              ]
-                .filter((line) => line.trim().length > 0)
-                .join("\n")
-            : null,
-          "Now act as the verifier:",
-          "- Produce the exact Status/EXIT_SIGNAL format.",
-          "- Write it to .mario/state/feedback.md.",
-          "- If gates failed, Status must be FAIL and EXIT_SIGNAL must be false.",
-        ]
-          .filter((line) => Boolean(line))
-          .join("\n");
+        const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+        const verifierResponse = await ctx.client.session.prompt({
+          path: { id: ws.sessionId },
+          body: {
+            ...(context.agent ? { agent: context.agent } : {}),
+            parts: [{ type: "text", text: verifierPrompt }],
+          },
+        });
+        const verifierText = extractTextFromPromptResponse(verifierResponse);
+        await writeText(path.join(runDir, "judge.out"), verifierText);
+        await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), verifierText || "Status: FAIL\nEXIT_SIGNAL: false\n");
 
-        const uiSteps =
-          uiVerifyEnabled && isWebApp && cliOk && skillOk
-            ? [
-                "",
-                "UI verification steps (agent-browser):",
-                `1) Start the dev server in the background: ${uiVerifyCmd}`,
-                `2) Wait for ${uiVerifyUrl} to respond (use curl loop).`,
-                "3) Use agent-browser to validate the main flow for the current plan item:",
-                `   - agent-browser open ${uiVerifyUrl}`,
-                "   - agent-browser snapshot -i --json",
-                "   - click/fill as needed (prefer @refs from snapshot)",
-                `   - agent-browser screenshot ${path.join(runDir, "ui.png")}`,
-                `   - agent-browser console --json > ${path.join(runDir, "ui-console.json")}`,
-                `   - agent-browser errors --json > ${path.join(runDir, "ui-errors.json")}`,
-                "   - agent-browser close",
-                `4) Save evidence under: ${runDir}`,
-                "5) Stop the dev server.",
-              ].join("\n")
-            : "";
+        const parsed = parseVerifierStatus(verifierText);
+        await writeIterationState(repoRoot, {
+          ...state,
+          lastRunDir: runDir,
+          lastStatus: parsed.status,
+        });
 
-        return formatPromptResult(`${preface}${uiSteps}`, verifierPrompt);
+        await showToast(ctx, `Verifier: ${parsed.status}`, parsed.status === "PASS" ? "success" : "warning");
+        return `Verification complete. Gates: PASS${uiResult ? `; UI: ${uiResult.ok ? "PASS" : "FAIL"}` : ""}. Verifier: ${parsed.status}.`;
       },
     }),
 
