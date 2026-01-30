@@ -90,7 +90,7 @@ This creates `.mario/` and seeds the canonical docs/prompts.
 /mario-devx:prd my brilliant idea
 ```
 
-Answer the questions until `.mario/PRD.md` is specific enough to embarrass you later.
+This runs in a persistent per-repo **work session** (clean context each time); open `/sessions` and jump into `mario-devx (work)` to answer the questions.
 
 ### 6) Set Quality Gates
 
@@ -106,7 +106,7 @@ If you don’t define “done”, the agent will.
 /mario-devx:plan
 ```
 
-This writes `.mario/IMPLEMENTATION_PLAN.md` into one-iteration-sized plan items.
+This runs in the work session; open `/sessions` -> `mario-devx (work)` to watch it write `.mario/IMPLEMENTATION_PLAN.md`.
 
 ### 8) Draft the next iteration (HITL checkpoint)
 
@@ -122,9 +122,15 @@ This drafts `.mario/state/pending_plan.md` so you can fix the inevitable "plan i
 /mario-devx:approve
 ```
 
+This runs the build in the work session; open `/sessions` -> `mario-devx (work)` to watch it live.
+
 The plugin runs the agent, runs gates, runs the judge, and writes feedback to `.mario/state/feedback.md`.
 
-After you implement the plan item, run `/mario-devx:verify` (or `/mario-devx:auto <N>` if you want to keep going).
+After you implement the plan item, run `/mario-devx:verify` (or `/mario-devx:auto <N>` to keep going automatically).
+
+Control vs work session (the "new integrated logic"):
+- Run `/mario-devx:*` commands from your normal session.
+- PRD/plan/build/verifier work happens in a persistent per-repo work session (`mario-devx (work)`) that is reset between runs.
 
 ## What gets created
 
