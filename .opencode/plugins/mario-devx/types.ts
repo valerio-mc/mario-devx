@@ -20,3 +20,10 @@ export type IterationState = {
   lastRunDir?: string;
   lastStatus?: "PASS" | "FAIL" | "NONE";
 };
+
+export type WorkSessionState = {
+  sessionId: string;
+  baselineMessageId: string;
+  createdAt: string;
+  updatedAt: string;
+};

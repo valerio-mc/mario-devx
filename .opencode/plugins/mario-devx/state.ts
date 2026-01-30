@@ -1,7 +1,7 @@
 import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
 import { marioRoot, marioStateDir, marioRunsDir } from "./paths";
-import { IterationState, PendingPlan } from "./types";
+import { IterationState, PendingPlan, WorkSessionState } from "./types";
 import { seedMarioAssets } from "./assets";
 
 const iterationFile = (repoRoot: string): string =>
@@ -12,6 +12,9 @@ const pendingPlanFile = (repoRoot: string): string =>
 
 const pendingMetaFile = (repoRoot: string): string =>
   path.join(marioStateDir(repoRoot), "pending_plan.json");
+
+const workSessionFile = (repoRoot: string): string =>
+  path.join(marioStateDir(repoRoot), "work_session.json");
 
 export const ensureMario = async (repoRoot: string, force = false): Promise<void> => {
   await seedMarioAssets(repoRoot, force);
@@ -85,3 +88,27 @@ export const clearPendingPlan = async (repoRoot: string): Promise<void> => {
 
 export const getPendingPlanPath = (repoRoot: string): string =>
   pendingPlanFile(repoRoot);
+
+export const readWorkSessionState = async (repoRoot: string): Promise<WorkSessionState | null> => {
+  const raw = await readTextIfExists(workSessionFile(repoRoot));
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as WorkSessionState;
+    if (!parsed.sessionId || !parsed.baselineMessageId) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const writeWorkSessionState = async (
+  repoRoot: string,
+  state: WorkSessionState,
+): Promise<void> => {
+  await ensureDir(marioStateDir(repoRoot));
+  await writeText(workSessionFile(repoRoot), JSON.stringify(state, null, 2));
+};
