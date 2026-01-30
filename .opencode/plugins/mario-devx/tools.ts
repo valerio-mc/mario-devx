@@ -888,6 +888,10 @@ export const createTools = (ctx: PluginContext) => {
           .default(1),
       },
       async execute(args, context: ToolContext) {
+        const notInWork = await ensureNotInWorkSession(repoRoot, context);
+        if (!notInWork.ok) {
+          return notInWork.message;
+        }
         await ensureMario(repoRoot, false);
 
         const maxItems = Math.floor(args.max_items);
@@ -918,8 +922,15 @@ export const createTools = (ctx: PluginContext) => {
 
           await showToast(ctx, `Auto: running ${draft.pending.id} (step ${attempted}/${maxItems})`, "info");
 
-          // Run build in a separate session to avoid deadlocking the current session.
-          await runInChildSession(ctx, context.agent, buildModePrompt);
+          // Run build in the persistent work session (reset to baseline first).
+          const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+          await ctx.client.session.prompt({
+            path: { id: ws.sessionId },
+            body: {
+              ...(context.agent ? { agent: context.agent } : {}),
+              parts: [{ type: "text", text: buildModePrompt }],
+            },
+          });
 
           // Deterministic gates in the plugin process (fast feedback).
           const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
@@ -936,8 +947,15 @@ export const createTools = (ctx: PluginContext) => {
             ].join("\n"),
           );
 
-          const verifierResult = await runInChildSession(ctx, context.agent, verifierPrompt);
-          const verifierText = verifierResult.outputText;
+          await resetWorkSession(ctx, repoRoot, context.agent);
+          const verifierResponse = await ctx.client.session.prompt({
+            path: { id: ws.sessionId },
+            body: {
+              ...(context.agent ? { agent: context.agent } : {}),
+              parts: [{ type: "text", text: verifierPrompt }],
+            },
+          });
+          const verifierText = extractTextFromPromptResponse(verifierResponse);
           await writeText(path.join(runDir, "judge.out"), verifierText);
 
           const parsed = parseVerifierStatus(verifierText);
