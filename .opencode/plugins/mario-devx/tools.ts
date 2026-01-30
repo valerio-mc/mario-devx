@@ -634,7 +634,11 @@ export const createTools = (ctx: PluginContext) => {
     mario_devx_approve: tool({
       description: "Approve and execute the pending iteration",
       args: {},
-      async execute() {
+      async execute(_args, context: ToolContext) {
+        const notInWork = await ensureNotInWorkSession(repoRoot, context);
+        if (!notInWork.ok) {
+          return notInWork.message;
+        }
         const { pending, content } = await readPendingPlan(repoRoot);
         if (!pending || !content) {
           return "No pending plan found. Run /mario-devx:build first.";
@@ -648,6 +652,15 @@ export const createTools = (ctx: PluginContext) => {
         const prompt = await buildPrompt(repoRoot, "build", content);
         await writeRunArtifacts(runDir, prompt);
 
+        const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+        await ctx.client.session.prompt({
+          path: { id: ws.sessionId },
+          body: {
+            ...(context.agent ? { agent: context.agent } : {}),
+            parts: [{ type: "text", text: prompt }],
+          },
+        });
+
         await clearPendingPlan(repoRoot);
         await writeIterationState(repoRoot, {
           ...state,
@@ -655,12 +668,16 @@ export const createTools = (ctx: PluginContext) => {
           lastStatus: "NONE",
         });
 
-        await showToast(ctx, `Approved ${pending.id}. Implement, then run /mario-devx:verify.`, "info");
+        await showToast(ctx, `Approved ${pending.id}. Build running in work session.`, "info");
 
-        return formatPromptResult(
-          `Build mode: implement ${pending.id} (then run /mario-devx:verify)`,
-          prompt,
-        );
+        return [
+          `Build started in work session: ${ws.sessionId}`,
+          `Plan item: ${pending.id}`,
+          `Run dir: ${runDir}`,
+          "",
+          "Open the work session via /sessions to watch progress.",
+          "After implementation, run /mario-devx:verify from a control session.",
+        ].join("\n");
       },
     }),
 
@@ -967,10 +984,12 @@ export const createTools = (ctx: PluginContext) => {
       async execute() {
         const state = await readIterationState(repoRoot);
         const pending = await readPendingPlan(repoRoot);
+        const ws = await readWorkSessionState(repoRoot);
         return [
           `Iteration: ${state.iteration}`,
           `Last mode: ${state.lastMode ?? "none"}`,
           `Last status: ${state.lastStatus ?? "none"}`,
+          `Work session: ${ws?.sessionId ?? "none"}`,
           pending.pending ? `Pending plan: ${pending.pending.id} (${getPendingPlanPath(repoRoot)})` : "Pending plan: none",
         ].join("\n");
       },
@@ -992,6 +1011,8 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:auto <N>",
           "- /mario-devx:ui-verify",
           "- /mario-devx:status",
+          "",
+          "Note: PRD/plan/build/verifier run in a persistent per-repo work session.",
         ].join("\n");
       },
     }),
