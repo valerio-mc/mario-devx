@@ -47,6 +47,12 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 
 ## ELI5: get shit done
 
+### 0) Understand the sessions (or suffer)
+
+- You run `/mario-devx:*` commands from your normal session ("control session").
+- The actual PRD/plan/build/verifier work runs in a persistent per-repo **work session** called `mario-devx (work)`.
+- Open it via `/sessions` when you want to watch or answer prompts.
+
 ### 1) Create a repo
 
 ```bash
@@ -90,11 +96,11 @@ This creates `.mario/` and seeds the canonical docs/prompts.
 /mario-devx:prd my brilliant idea
 ```
 
-This runs in a persistent per-repo **work session** (clean context each time); open `/sessions` and jump into `mario-devx (work)` to answer the questions.
+This runs in `mario-devx (work)`; open `/sessions` and jump into it to answer.
 
 ### 6) Set Quality Gates
 
-Edit `.mario/PRD.md` and put real commands under `## Quality Gates`.
+Edit `.mario/PRD.md` and put real commands under `## Quality Gates` (commands only, wrap them in backticks).
 
 If this is a web app and you want UI checks too, run `/mario-devx:ui-verify` (agent-browser / Playwright) and let `/mario-devx:verify` bully the frontend as well.
 
@@ -106,7 +112,7 @@ If you don’t define “done”, the agent will.
 /mario-devx:plan
 ```
 
-This runs in the work session; open `/sessions` -> `mario-devx (work)` to watch it write `.mario/IMPLEMENTATION_PLAN.md`.
+This runs in `mario-devx (work)` and writes `.mario/IMPLEMENTATION_PLAN.md`.
 
 ### 8) Draft the next iteration (HITL checkpoint)
 
@@ -122,15 +128,11 @@ This drafts `.mario/state/pending_plan.md` so you can fix the inevitable "plan i
 /mario-devx:approve
 ```
 
-This runs the build in the work session; open `/sessions` -> `mario-devx (work)` to watch it live.
+This runs the build in `mario-devx (work)`.
 
 The plugin runs the agent, runs gates, runs the judge, and writes feedback to `.mario/state/feedback.md`.
 
-After you implement the plan item, run `/mario-devx:verify` (or `/mario-devx:auto <N>` to keep going automatically).
-
-Control vs work session (the "new integrated logic"):
-- Run `/mario-devx:*` commands from your normal session.
-- PRD/plan/build/verifier work happens in a persistent per-repo work session (`mario-devx (work)`) that is reset between runs.
+After you implement the plan item, run `/mario-devx:verify` from your control session (or `/mario-devx:auto <N>` to keep going automatically).
 
 ## What gets created
 
