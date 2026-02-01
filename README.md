@@ -20,10 +20,7 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 
 ```
 /mario-devx:new <idea>
-/mario-devx:build
-/mario-devx:approve
-/mario-devx:verify
-/mario-devx:auto <N>
+/mario-devx:run <N>
 /mario-devx:ui-verify
 /mario-devx:work
 /mario-devx:resume
@@ -44,7 +41,7 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 - **Steering (patterns + backpressure):** keep prompts/files stable upstream, then let gates bully the output downstream.
 - **Gates are law:** if tests don’t pass, you’re not done (shocking).
 - **Workflow (3 steps):** PRD -> Plan -> Build (one plan item per iteration, repeat until `EXIT_SIGNAL: true`).
-- **HITL is a feature:** `/mario-devx:build` drafts the iteration, `/mario-devx:approve` runs it.
+- **One command loop:** `/mario-devx:run <N>` executes the next plan item(s) and stops on failure.
 
 ## ELI5: get shit done
 
@@ -103,31 +100,30 @@ If you already have a PRD and just want to regenerate the plan, rerun `/mario-de
 
 Edit `.mario/PRD.md` and put real commands under `## Quality Gates` (commands only, wrap them in backticks).
 
-If this is a web app and you want UI checks too, run `/mario-devx:ui-verify` (agent-browser / Playwright) and let `/mario-devx:verify` bully the frontend as well.
+If this is a web app and you want UI checks too, run `/mario-devx:ui-verify` (agent-browser / Playwright) and let `/mario-devx:run` bully the frontend as well.
 
 If you don’t define “done”, the agent will.
 
 If you edit `.mario/PRD.md` after bootstrapping, rerun `/mario-devx:new` to refresh `.mario/IMPLEMENTATION_PLAN.md`.
 
-### 6) Draft the next iteration (HITL checkpoint)
+### 6) Run the loop
 
 ```
-/mario-devx:build
+/mario-devx:run 1
 ```
 
-This drafts `.mario/state/pending_plan.md` so you can fix the inevitable "plan item too big" problem.
+This:
 
-### 7) Approve and run the iteration
+- picks the next `TODO` (or resumes `DOING`) plan item from `.mario/IMPLEMENTATION_PLAN.md`
+- runs the builder in `mario-devx (work)`
+- runs deterministic gates (+ optional UI verify)
+- runs the judge and writes feedback to `.mario/state/feedback.md`
+
+To keep going:
 
 ```
-/mario-devx:approve
+/mario-devx:run 5
 ```
-
-This runs the build in `mario-devx (work)`.
-
-The plugin runs the agent, runs gates, runs the judge, and writes feedback to `.mario/state/feedback.md`.
-
-After you implement the plan item, run `/mario-devx:verify` from your control session (or `/mario-devx:auto <N>` to keep going automatically).
 
 ## What gets created
 
@@ -140,7 +136,6 @@ In your project:
   IMPLEMENTATION_PLAN.md
   AGENTS.md
   state/feedback.md
-  state/pending_plan.md
   progress.md
   guardrails.md
   activity.log
