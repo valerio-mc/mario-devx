@@ -387,16 +387,18 @@ const runGateCommands = async (
   commands: { name: string; command: string }[],
   $: PluginContext["$"] | undefined,
   runDir: string,
-): Promise<{ ok: boolean; summary: string }> => {
+): Promise<{ ok: boolean; summary: string; failed?: { name: string; command: string; exitCode: number }; results: Array<{ name: string; command: string; exitCode: number; durationMs: number }> }> => {
   if (commands.length === 0) {
-    return { ok: false, summary: "No quality gates detected." };
+    return { ok: false, summary: "No quality gates detected.", results: [] };
   }
   if (!$) {
-    return { ok: false, summary: "Bun shell not available to run gates." };
+    return { ok: false, summary: "Bun shell not available to run gates.", results: [] };
   }
 
   const logLines: string[] = [];
+  const results: Array<{ name: string; command: string; exitCode: number; durationMs: number }> = [];
   let ok = true;
+  let failed: { name: string; command: string; exitCode: number } | undefined;
 
   for (const command of commands) {
     logLines.push(`$ ${command.command}`);
@@ -414,20 +416,27 @@ const runGateCommands = async (
       break;
     }
 
+    const startedAt = Date.now();
     const result = await $`sh -c ${cmd}`.nothrow();
+    const durationMs = Date.now() - startedAt;
+    results.push({ name: command.name, command: cmd, exitCode: result.exitCode, durationMs });
     logLines.push(`exitCode: ${result.exitCode}`);
     logLines.push(result.stdout.toString());
     logLines.push(result.stderr.toString());
 
     if (result.exitCode !== 0) {
       ok = false;
+      failed = { name: command.name, command: cmd, exitCode: result.exitCode };
       break;
     }
   }
 
   await writeText(path.join(runDir, "gates.log"), logLines.join("\n"));
+  await writeText(path.join(runDir, "gates.json"), JSON.stringify(results, null, 2));
   return {
     ok,
+    results,
+    ...(failed ? { failed } : {}),
     summary: ok ? "All quality gates passed." : "Quality gate failed. See gates.log.",
   };
 };
@@ -966,8 +975,13 @@ export const createTools = (ctx: PluginContext) => {
         };
 
         if (!gateResult.ok) {
+          const failed = gateResult.failed
+            ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
+            : "(unknown command)";
           return failEarly([
-            `Deterministic gates failed (see ${path.join(runDir, "gates.log")}).`,
+            `Deterministic gate failed: ${failed}.`,
+            `Evidence: ${path.join(runDir, "gates.log")}`,
+            `Evidence: ${path.join(runDir, "gates.json")}`,
           ]);
         }
 
@@ -1232,11 +1246,14 @@ export const createTools = (ctx: PluginContext) => {
           });
 
           if (!gateResult.ok) {
+            const failed = gateResult.failed
+              ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
+              : "(unknown command)";
             await showToast(ctx, `Auto stopped: gates failed on ${draft.pending.id}`, "warning");
             await notifyControlSession(
               ctx,
               context.sessionID,
-              `mario-devx auto stopped: gates failed on ${draft.pending.id}. See ${path.join(runDir, "gates.log")}.`,
+              `mario-devx auto stopped: gate failed on ${draft.pending.id}: ${failed}. Evidence: ${path.join(runDir, "gates.log")}`,
             );
             break;
           }
