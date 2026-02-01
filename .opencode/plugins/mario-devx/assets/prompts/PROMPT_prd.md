@@ -26,10 +26,12 @@ Required integration details (do not hand-wave):
 - Response formats/schemas for: (1) the 3 questions, (2) the recipe output (so the UI can render deterministically).
 - Failure behavior: timeouts, rate limits, retries, and user-facing error states.
 
-Web apps:
-- If the project is a web app, ask whether to enable UI verification during `/mario-devx:verify`.
+Frontends / web apps:
+- Ask explicitly whether the project includes a frontend.
+- Add a single explicit marker line in the PRD: `Frontend: yes|no`.
+- If `Frontend: yes`, UI verification is enabled by default (best-effort): set `UI_VERIFY=1` and `UI_VERIFY_REQUIRED=0` in `.mario/AGENTS.md`.
 - Explain that UI verification uses Vercel's `agent-browser` (Playwright-based) to interact with the app in a real browser.
-- If the user opts in, call tool `mario_devx_ui_verify` to configure `.mario/AGENTS.md` and check prerequisites.
+- Do not call any tools to set this up; the user can install prerequisites later (skill + CLI) and/or adjust `.mario/AGENTS.md` manually.
 
 UI aesthetic interview (for web apps):
 - Ask a dedicated mini-round (3-6 questions) that forces a clear visual direction. Keep it specific and opinionated, not framework-y.

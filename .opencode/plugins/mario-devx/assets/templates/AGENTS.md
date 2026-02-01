@@ -5,8 +5,8 @@ AUTO_COMMIT=1
 AUTO_PUSH=0
 HITL_REQUIRED=0
 
-# UI verification (optional)
-# When enabled, `/mario-devx:verify` will also validate the UI using `agent-browser`.
+# UI verification (best-effort)
+# When enabled, `/mario-devx:run` will also validate the UI using `agent-browser`.
 # Repo: https://github.com/vercel-labs/agent-browser
 UI_VERIFY=0
 UI_VERIFY_REQUIRED=0

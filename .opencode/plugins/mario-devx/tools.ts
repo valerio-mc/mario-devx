@@ -7,7 +7,7 @@ import { resolveGateCommands, persistGateCommands } from "./gates";
 import { ensureMario, bumpIteration, readIterationState, writeIterationState, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
 import { marioRoot, marioRunsDir } from "./paths";
 import { RunPhase, RunState } from "./types";
-import { isPrdReadyForPlan } from "./bootstrap";
+import { isFrontendProject, isPrdReadyForPlan } from "./bootstrap";
 
 type ToolContext = {
   sessionID?: string;
@@ -58,6 +58,28 @@ const parseAgentsEnv = (content: string): Record<string, string> => {
     env[key] = parseEnvValue(value);
   }
   return env;
+};
+
+const ensureUiVerifyDefault = async (repoRoot: string): Promise<void> => {
+  const prd = await readTextIfExists(path.join(repoRoot, ".mario", "PRD.md"));
+  if (!prd || !isFrontendProject(prd)) {
+    return;
+  }
+
+  const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
+  const raw = (await readTextIfExists(agentsPath)) ?? "";
+  const env = parseAgentsEnv(raw);
+  if (env.UI_VERIFY === "1") {
+    return;
+  }
+
+  let next = raw;
+  next = upsertAgentsKey(next, "UI_VERIFY", "1");
+  next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", "0");
+  if (!env.UI_VERIFY_CMD) next = upsertAgentsKey(next, "UI_VERIFY_CMD", "npm run dev");
+  if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
+  if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
+  await writeText(agentsPath, next);
 };
 
 const upsertAgentsKey = (content: string, key: string, value: string): string => {
@@ -791,6 +813,7 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         await ensureMario(repoRoot, false);
+        await ensureUiVerifyDefault(repoRoot);
         const rawMax = (args.max_items ?? "").trim();
         const parsed = rawMax.length === 0 ? 1 : Number.parseInt(rawMax, 10);
         const maxItems = Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 1;
@@ -1032,51 +1055,6 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
-    mario_devx_ui_verify: tool({
-      description: "Configure UI verification (agent-browser) for mario-devx",
-      args: {},
-      async execute() {
-        await ensureMario(repoRoot, false);
-
-        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-        const agentsRaw = (await readTextIfExists(agentsPath)) ?? "";
-        const isWebApp = await isLikelyWebApp(repoRoot);
-        if (!isWebApp) {
-          return "This project does not look like a Node web app (no Next/Vite/react-scripts detected).";
-        }
-
-        const cliOk = await hasAgentBrowserCli(ctx);
-        const skillOk = await hasAgentBrowserSkill(repoRoot);
-
-        let next = agentsRaw;
-        next = upsertAgentsKey(next, "UI_VERIFY", "1");
-        next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", "0");
-        next = upsertAgentsKey(next, "UI_VERIFY_CMD", "npm run dev");
-        next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
-        next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
-        await writeText(agentsPath, next);
-
-        const missing: string[] = [];
-        if (!skillOk) missing.push("agent-browser skill");
-        if (!cliOk) missing.push("agent-browser CLI");
-
-        if (missing.length === 0) {
-          return "UI verification enabled in .mario/AGENTS.md (UI_VERIFY=1). agent-browser prerequisites found.";
-        }
-
-        return [
-          "UI verification enabled in .mario/AGENTS.md (UI_VERIFY=1), but prerequisites are missing:",
-          `- Missing: ${missing.join(", ")}`,
-          "",
-          "Install options:",
-          "- Skill: npx skills add vercel-labs/agent-browser",
-          "- CLI: npm install -g agent-browser && agent-browser install",
-          "",
-          "Reply with which ones to install (skill / cli / both), or keep going without UI verification.",
-        ].join("\n");
-      },
-    }),
-
     mario_devx_status: tool({
       description: "Show mario-devx status",
       args: {},
@@ -1166,10 +1144,12 @@ export const createTools = (ctx: PluginContext) => {
           } else {
             const cliOk = await hasAgentBrowserCli(ctx);
             const skillOk = await hasAgentBrowserSkill(repoRoot);
-            if (!cliOk || !skillOk) {
-              issues.push(`UI_VERIFY=1 but agent-browser prerequisites missing (${[!cliOk ? "cli" : null, !skillOk ? "skill" : null].filter(Boolean).join(", ")}).`);
-              fixes.push("Run /mario-devx:ui-verify and install missing prerequisites.");
-            }
+          if (!cliOk || !skillOk) {
+            issues.push(`UI_VERIFY=1 but agent-browser prerequisites missing (${[!cliOk ? "cli" : null, !skillOk ? "skill" : null].filter(Boolean).join(", ")}).`);
+            fixes.push("Install: npx skills add vercel-labs/agent-browser");
+            fixes.push("Install: npm install -g agent-browser && agent-browser install");
+            fixes.push("Optional: set UI_VERIFY=0 in .mario/AGENTS.md to disable best-effort UI checks.");
+          }
           }
         }
 
@@ -1214,7 +1194,6 @@ export const createTools = (ctx: PluginContext) => {
           "mario-devx commands:",
           "- /mario-devx:new <idea>",
           "- /mario-devx:run <N>",
-          "- /mario-devx:ui-verify",
           "- /mario-devx:status",
           "- /mario-devx:doctor",
           "",

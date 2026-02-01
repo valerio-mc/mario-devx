@@ -21,7 +21,6 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 ```
 /mario-devx:new <idea>
 /mario-devx:run <N>
-/mario-devx:ui-verify
 /mario-devx:doctor
 /mario-devx:status
 ```
@@ -102,7 +101,7 @@ If you already have a PRD and just want to regenerate the plan, rerun `/mario-de
 
 Edit `.mario/PRD.md` and put real commands under `## Quality Gates` (commands only, wrap them in backticks).
 
-If this is a web app and you want UI checks too, run `/mario-devx:ui-verify` (agent-browser / Playwright) and let `/mario-devx:run` bully the frontend as well.
+If this is a web app, mario-devx enables best-effort UI checks by default (when the PRD says there’s a frontend). Install prerequisites (`agent-browser` skill + CLI) and tune `.mario/AGENTS.md` (`UI_VERIFY_CMD`, `UI_VERIFY_URL`) if needed.
 
 If you don’t define “done”, the agent will.
 
@@ -156,7 +155,7 @@ In this repo:
 - Source of truth: `## Quality Gates` in `.mario/PRD.md`.
 - Fallback: if you forgot, mario-devx auto-detects common scripts (Node) and a few sane defaults (Go/Rust/Python), then persists them to `.mario/AGENTS.md`.
 
-For web apps, you can optionally add UI backpressure via `agent-browser` (Playwright-based) by enabling it in `.mario/AGENTS.md` or running `/mario-devx:ui-verify`.
+For web apps, you can enable UI backpressure via `agent-browser` (Playwright-based) by setting `UI_VERIFY=1` in `.mario/AGENTS.md`.
 
 ## Verifier output (strict on purpose)
 
@@ -182,7 +181,7 @@ Next actions:
 - **Quality Gates failing instantly:** in `.mario/PRD.md` under `## Quality Gates`, only backticked shell commands are executed. Prose bullets will be ignored.
 - **Plan generation looks like slop:** `.mario/IMPLEMENTATION_PLAN.md` must not contain placeholders like `[...]` or `TODO: fill later`. If it does, rerun `/mario-devx:new`.
 - **Where is it running?** open `/sessions` and jump into `mario-devx (work)`, or run `/mario-devx:status`.
-- **UI verify doesn’t run:** run `/mario-devx:ui-verify` to set it up (agent-browser / Playwright) and make sure prerequisites are installed.
+- **UI verify doesn’t run:** install prerequisites (`npx skills add vercel-labs/agent-browser`, and `npm install -g agent-browser && agent-browser install`) and check `.mario/AGENTS.md` (`UI_VERIFY=1`, `UI_VERIFY_CMD`, `UI_VERIFY_URL`).
 - **Still confused:** run `/mario-devx:doctor` and follow the suggestions.
 
 ## Acknowledgements

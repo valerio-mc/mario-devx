@@ -3,9 +3,9 @@ import { createCommands } from "./commands";
 import { createTools } from "./tools";
 import { readRunState, readWorkSessionState, writeRunState } from "./state";
 import { buildPrompt } from "./prompt";
-import { readTextIfExists } from "./fs";
+import { readTextIfExists, writeText } from "./fs";
 import path from "path";
-import { isPrdReadyForPlan } from "./bootstrap";
+import { isFrontendProject, isPrdReadyForPlan } from "./bootstrap";
 
 const marioDevxPlugin: Plugin = async (ctx) => {
   const tools = createTools(ctx);
@@ -57,6 +57,27 @@ const marioDevxPlugin: Plugin = async (ctx) => {
         const prd = await readTextIfExists(prdPath);
         if (!prd || !isPrdReadyForPlan(prd)) {
           return;
+        }
+
+        // If the PRD implies a frontend, enable UI verification (best-effort).
+        if (isFrontendProject(prd)) {
+          const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
+          const raw = (await readTextIfExists(agentsPath)) ?? "";
+          const lines = raw.split(/\r?\n/);
+          const upsert = (key: string, value: string): void => {
+            const idx = lines.findIndex((l) => l.trim().startsWith(`${key}=`));
+            if (idx === -1) {
+              lines.push(`${key}=${value}`);
+            } else {
+              lines[idx] = `${key}=${value}`;
+            }
+          };
+          upsert("UI_VERIFY", "1");
+          upsert("UI_VERIFY_REQUIRED", "0");
+          if (!raw.includes("UI_VERIFY_CMD=")) upsert("UI_VERIFY_CMD", "'npm run dev'");
+          if (!raw.includes("UI_VERIFY_URL=")) upsert("UI_VERIFY_URL", "'http://localhost:3000'");
+          if (!raw.includes("AGENT_BROWSER_REPO=")) upsert("AGENT_BROWSER_REPO", "'https://github.com/vercel-labs/agent-browser'");
+          await writeText(agentsPath, lines.join("\n").trimEnd() + "\n");
         }
 
         const ws2 = await readWorkSessionState(repoRoot);

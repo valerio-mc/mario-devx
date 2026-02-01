@@ -49,3 +49,19 @@ export const isPrdReadyForPlan = (prd: string): boolean => {
   const hasAcceptanceEvidence = acceptanceCheckboxes >= 3 || acceptanceHeadings >= 3;
   return hasGate && userStories >= 3 && hasAcceptanceEvidence;
 };
+
+export const isFrontendProject = (prd: string): boolean => {
+  if (!prd || prd.trim().length === 0) {
+    return false;
+  }
+
+  // Prefer an explicit marker.
+  const explicit = prd.match(/^Frontend:\s*(yes|no)\b/im);
+  if (explicit) {
+    return (explicit[1] ?? "").toLowerCase() === "yes";
+  }
+
+  // Fallback: heuristic keywords.
+  const re = /\b(frontend|web\s*app|ui|ux|react|next\.js|vite|vue|svelte|remix|angular)\b/i;
+  return re.test(prd);
+};
