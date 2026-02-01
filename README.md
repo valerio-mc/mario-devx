@@ -154,7 +154,8 @@ In this repo:
 
 - Source of truth: `## Quality Gates` in `.mario/PRD.md`.
 - Fallback: if you forgot, mario-devx auto-detects common scripts (Node) and a few sane defaults (Go/Rust/Python), then persists them to `.mario/AGENTS.md`.
-- UI backpressure (frontends): if your PRD says `Frontend: yes`, mario-devx enables best-effort UI verification by default (`UI_VERIFY=1`, `UI_VERIFY_REQUIRED=0`). It runs Vercel's `agent-browser` (Playwright-based) against your app by starting your dev server (`UI_VERIFY_CMD`) and driving a real browser at `UI_VERIFY_URL`.
+- UI backpressure (frontends): if your PRD says `Frontend: yes`, mario-devx enables best-effort UI verification by default (`UI_VERIFY=1`, `UI_VERIFY_REQUIRED=0`). You can always change these flags in `.mario/AGENTS.md`.
+- It runs Vercel's `agent-browser` (Playwright-based) against your app by starting your dev server (`UI_VERIFY_CMD`) and driving a real browser at `UI_VERIFY_URL`.
 - `agent-browser` interacts with the UI like a user (navigate, click, type) and records evidence (logs + screenshots) under `.mario/runs/*` (see `ui-verify.log` when present). If the prerequisites aren't installed, UI verify is skipped unless you make it required by setting `UI_VERIFY_REQUIRED=1`.
 
 ## Verifier output (strict on purpose)
