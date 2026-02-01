@@ -36,6 +36,7 @@ export type RunState = {
   status: RunStatus;
   phase: RunPhase;
   currentPI?: string;
+  controlSessionId?: string;
   workSessionId?: string;
   baselineMessageId?: string;
   runDir?: string;

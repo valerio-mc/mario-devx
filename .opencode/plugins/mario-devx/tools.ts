@@ -644,6 +644,17 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         const ws = await resetWorkSession(ctx, repoRoot, context.agent);
         const prompt = await buildPrompt(repoRoot, "prd", args.idea ? `Initial idea: ${args.idea}` : undefined);
+        await updateRunState(repoRoot, {
+          status: "DOING",
+          phase: "prd",
+          controlSessionId: context.sessionID,
+          workSessionId: ws.sessionId,
+          baselineMessageId: ws.baselineMessageId,
+          lastGate: "NONE",
+          lastUI: "NONE",
+          lastVerifier: "NONE",
+          startedAt: nowIso(),
+        });
         await ctx.client.session.promptAsync({
           path: { id: ws.sessionId },
           body: {
@@ -672,6 +683,17 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         const ws = await resetWorkSession(ctx, repoRoot, context.agent);
         const prompt = await buildPrompt(repoRoot, "plan");
+        await updateRunState(repoRoot, {
+          status: "DOING",
+          phase: "plan",
+          controlSessionId: context.sessionID,
+          workSessionId: ws.sessionId,
+          baselineMessageId: ws.baselineMessageId,
+          lastGate: "NONE",
+          lastUI: "NONE",
+          lastVerifier: "NONE",
+          startedAt: nowIso(),
+        });
         await ctx.client.session.promptAsync({
           path: { id: ws.sessionId },
           body: {
@@ -742,6 +764,7 @@ export const createTools = (ctx: PluginContext) => {
           status: "DOING",
           phase: "build",
           currentPI: pending.id,
+          controlSessionId: context.sessionID,
           runDir,
           workSessionId: ws.sessionId,
           baselineMessageId: ws.baselineMessageId,
@@ -935,6 +958,7 @@ export const createTools = (ctx: PluginContext) => {
           status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
           phase: "verify",
           currentPI: planItemId ?? undefined,
+          controlSessionId: context.sessionID,
           runDir,
           lastGate: "PASS",
           lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
@@ -1047,6 +1071,7 @@ export const createTools = (ctx: PluginContext) => {
             status: "DOING",
             phase: "auto",
             currentPI: draft.pending.id,
+            controlSessionId: context.sessionID,
             runDir,
             workSessionId: ws.sessionId,
             baselineMessageId: ws.baselineMessageId,
@@ -1118,6 +1143,7 @@ export const createTools = (ctx: PluginContext) => {
             status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
             phase: "auto",
             currentPI: draft.pending.id,
+            controlSessionId: context.sessionID,
             runDir,
             lastGate: gateResult.ok ? "PASS" : "FAIL",
             lastUI: "NONE",
