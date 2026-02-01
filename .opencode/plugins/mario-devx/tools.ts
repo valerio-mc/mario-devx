@@ -1080,34 +1080,33 @@ export const createTools = (ctx: PluginContext) => {
     mario_devx_status: tool({
       description: "Show mario-devx status",
       args: {},
-      async execute() {
+      async execute(_args, context: ToolContext) {
+        await ensureMario(repoRoot, false);
         const state = await readIterationState(repoRoot);
-        const ws = await readWorkSessionState(repoRoot);
+        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const run = await readRunState(repoRoot);
+
+        const next =
+          run.status === "DOING"
+            ? "Open /sessions to watch mario-devx (work)."
+            : run.status === "BLOCKED"
+              ? "Read .mario/state/feedback.md, fix issues, then run /mario-devx:run 1."
+              : "Run /mario-devx:run 1 to execute the next plan item.";
+
+        await notifyControlSession(
+          ctx,
+          context.sessionID,
+          `mario-devx status: work session ${ws.sessionId}.`,
+        );
+
         return [
           `Iteration: ${state.iteration}`,
           `Last mode: ${state.lastMode ?? "none"}`,
           `Last status: ${state.lastStatus ?? "none"}`,
-          `Work session: ${ws?.sessionId ?? "none"}`,
-          `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
-        ].join("\n");
-      },
-    }),
-
-    mario_devx_work: tool({
-      description: "Show mario-devx work session",
-      args: {},
-      async execute(_args, context: ToolContext) {
-        await ensureMario(repoRoot, false);
-        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
-        await notifyControlSession(
-          ctx,
-          context.sessionID,
-          `mario-devx work session: ${ws.sessionId} (open via /sessions).`,
-        );
-        return [
           `Work session: ${ws.sessionId}`,
-          "Open it via /sessions (look for 'mario-devx (work)').",
+          `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
+          "",
+          `Next: ${next}`,
         ].join("\n");
       },
     }),
@@ -1207,35 +1206,6 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
-    mario_devx_resume: tool({
-      description: "Resume from the last run state",
-      args: {},
-      async execute(_args, context: ToolContext) {
-        const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
-          return notInWork.message;
-        }
-        await ensureMario(repoRoot, false);
-
-        const run = await readRunState(repoRoot);
-        if (run.status === "DOING") {
-          return [
-            `Last run is in progress: ${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}.`,
-            "Next: open /sessions to watch mario-devx (work), or run /mario-devx:status.",
-          ].join("\n");
-        }
-
-        if (run.status === "BLOCKED") {
-          return [
-            `Last run is BLOCKED${run.currentPI ? ` on ${run.currentPI}` : ""}.`,
-            "Read .mario/state/feedback.md, fix issues, then run /mario-devx:run 1.",
-          ].join("\n");
-        }
-
-        return "Run /mario-devx:run 1 to execute the next plan item.";
-      },
-    }),
-
     mario_devx_help: tool({
       description: "Show mario-devx help",
       args: {},
@@ -1246,9 +1216,7 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:run <N>",
           "- /mario-devx:ui-verify",
           "- /mario-devx:status",
-          "- /mario-devx:work",
           "- /mario-devx:doctor",
-          "- /mario-devx:resume",
           "",
           "Note: PRD/plan/build/verifier run in a persistent per-repo work session.",
         ].join("\n");

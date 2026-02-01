@@ -22,8 +22,6 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 /mario-devx:new <idea>
 /mario-devx:run <N>
 /mario-devx:ui-verify
-/mario-devx:work
-/mario-devx:resume
 /mario-devx:doctor
 /mario-devx:status
 ```
@@ -45,13 +43,15 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 
 ## ELI5: get shit done
 
+`/mario-devx:status` prints the current run/iteration state plus the work session id so you can jump straight into `/sessions`. It also tells you the next most likely command to run based on whether you're DOING, BLOCKED, or idle.
+
 ### 0) Understand the sessions (or suffer)
 
 - You run `/mario-devx:*` commands from your normal session ("control session").
 - The actual PRD/plan/build/verifier work runs in a persistent per-repo **work session** called `mario-devx (work)`.
 - Open it via `/sessions` when you want to watch or answer prompts.
 - Most commands are async: you trigger them in the control session, they run in the work session, and you get notified when the work session goes idle.
-- Useful helpers: `/mario-devx:work` (print the work session id), `/mario-devx:resume` (tell you what to do next), `/mario-devx:doctor` (healthcheck + common fixes).
+- Useful helpers: `/mario-devx:doctor` (healthcheck + common fixes), `/mario-devx:status` (what's happening + what to do next).
 
 ### 1) Create a repo
 
@@ -179,7 +179,7 @@ Next actions:
 
 - **Quality Gates failing instantly:** in `.mario/PRD.md` under `## Quality Gates`, only backticked shell commands are executed. Prose bullets will be ignored.
 - **Plan generation looks like slop:** `.mario/IMPLEMENTATION_PLAN.md` must not contain placeholders like `[...]` or `TODO: fill later`. If it does, rerun `/mario-devx:new`.
-- **Where is it running?** open `/sessions` and jump into `mario-devx (work)`, or run `/mario-devx:work` to print the session id.
+- **Where is it running?** open `/sessions` and jump into `mario-devx (work)`, or run `/mario-devx:status`.
 - **UI verify doesn’t run:** run `/mario-devx:ui-verify` to set it up (agent-browser / Playwright) and make sure prerequisites are installed.
 - **Still confused:** run `/mario-devx:doctor` and follow the suggestions.
 
