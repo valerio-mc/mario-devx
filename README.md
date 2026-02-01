@@ -27,6 +27,9 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 /mario-devx:verify
 /mario-devx:auto <N>
 /mario-devx:ui-verify
+/mario-devx:work
+/mario-devx:resume
+/mario-devx:doctor
 /mario-devx:status
 ```
 
@@ -52,6 +55,8 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 - You run `/mario-devx:*` commands from your normal session ("control session").
 - The actual PRD/plan/build/verifier work runs in a persistent per-repo **work session** called `mario-devx (work)`.
 - Open it via `/sessions` when you want to watch or answer prompts.
+- Most commands are async: you trigger them in the control session, they run in the work session, and you get notified when the work session goes idle.
+- Useful helpers: `/mario-devx:work` (print the work session id), `/mario-devx:resume` (tell you what to do next), `/mario-devx:doctor` (healthcheck + common fixes).
 
 ### 1) Create a repo
 
@@ -184,6 +189,14 @@ Next actions:
 - Run it where an overconfident agent can’t ruin your life.
 - Keep plan items small.
 - If it’s stuck: tighten the plan, don’t "add more context" like it’s a cheat code.
+
+## Troubleshooting
+
+- **Quality Gates failing instantly:** in `.mario/PRD.md` under `## Quality Gates`, only backticked shell commands are executed. Prose bullets will be ignored.
+- **Plan generation looks like slop:** `.mario/IMPLEMENTATION_PLAN.md` must not contain placeholders like `[...]` or `TODO: fill later`. If it does, rerun `/mario-devx:plan`.
+- **Where is it running?** open `/sessions` and jump into `mario-devx (work)`, or run `/mario-devx:work` to print the session id.
+- **UI verify doesn’t run:** run `/mario-devx:ui-verify` to set it up (agent-browser / Playwright) and make sure prerequisites are installed.
+- **Still confused:** run `/mario-devx:doctor` and follow the suggestions.
 
 ## Acknowledgements
 
