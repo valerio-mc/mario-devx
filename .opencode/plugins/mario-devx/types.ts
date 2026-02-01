@@ -27,3 +27,21 @@ export type WorkSessionState = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type RunPhase = "prd" | "plan" | "build" | "verify" | "auto";
+
+export type RunStatus = "NONE" | "DOING" | "DONE" | "BLOCKED";
+
+export type RunState = {
+  status: RunStatus;
+  phase: RunPhase;
+  currentPI?: string;
+  workSessionId?: string;
+  baselineMessageId?: string;
+  runDir?: string;
+  lastGate?: "PASS" | "FAIL" | "NONE";
+  lastUI?: "PASS" | "FAIL" | "NONE";
+  lastVerifier?: "PASS" | "FAIL" | "NONE";
+  startedAt?: string;
+  updatedAt: string;
+};
