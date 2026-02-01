@@ -484,6 +484,21 @@ const resetWorkSession = async (
   return ws;
 };
 
+const setWorkSessionTitle = async (
+  ctx: PluginContext,
+  sessionId: string,
+  title: string,
+): Promise<void> => {
+  try {
+    await ctx.client.session.update({
+      path: { id: sessionId },
+      body: { title },
+    });
+  } catch {
+    // Best-effort only.
+  }
+};
+
 const ensureNotInWorkSession = async (
   repoRoot: string,
   context: ToolContext,
@@ -759,6 +774,7 @@ export const createTools = (ctx: PluginContext) => {
         await writeRunArtifacts(runDir, prompt);
 
         const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+        await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${pending.id}`);
 
         await updateRunState(repoRoot, {
           status: "DOING",
@@ -942,6 +958,7 @@ export const createTools = (ctx: PluginContext) => {
         );
 
         const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+        await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - verify${planItemId ? ` ${planItemId}` : ""}`);
         const verifierResponse = await ctx.client.session.prompt({
           path: { id: ws.sessionId },
           body: {
@@ -1067,6 +1084,7 @@ export const createTools = (ctx: PluginContext) => {
 
           // Run build in the persistent work session (reset to baseline first).
           const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+          await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${draft.pending.id}`);
           await updateRunState(repoRoot, {
             status: "DOING",
             phase: "auto",
@@ -1165,15 +1183,30 @@ export const createTools = (ctx: PluginContext) => {
 
           if (!gateResult.ok) {
             await showToast(ctx, `Auto stopped: gates failed on ${draft.pending.id}`, "warning");
+            await notifyControlSession(
+              ctx,
+              context.sessionID,
+              `mario-devx auto stopped: gates failed on ${draft.pending.id}. See ${path.join(runDir, "gates.log")}.`,
+            );
             break;
           }
 
           if (parsed.status !== "PASS" || !parsed.exit) {
             await showToast(ctx, `Auto stopped: verifier failed on ${draft.pending.id}`, "warning");
+            await notifyControlSession(
+              ctx,
+              context.sessionID,
+              `mario-devx auto stopped: verifier failed on ${draft.pending.id}. See ${path.join(runDir, "judge.out")}.`,
+            );
             break;
           }
 
           completed += 1;
+          await notifyControlSession(
+            ctx,
+            context.sessionID,
+            `mario-devx auto: completed ${draft.pending.id} (${completed}/${maxItems}).`,
+          );
         }
 
         const note =
@@ -1202,6 +1235,24 @@ export const createTools = (ctx: PluginContext) => {
           `Work session: ${ws?.sessionId ?? "none"}`,
           `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
           pending.pending ? `Pending plan: ${pending.pending.id} (${getPendingPlanPath(repoRoot)})` : "Pending plan: none",
+        ].join("\n");
+      },
+    }),
+
+    mario_devx_work: tool({
+      description: "Show mario-devx work session",
+      args: {},
+      async execute(_args, context: ToolContext) {
+        await ensureMario(repoRoot, false);
+        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
+        await notifyControlSession(
+          ctx,
+          context.sessionID,
+          `mario-devx work session: ${ws.sessionId} (open via /sessions).`,
+        );
+        return [
+          `Work session: ${ws.sessionId}`,
+          "Open it via /sessions (look for 'mario-devx (work)').",
         ].join("\n");
       },
     }),
@@ -1256,6 +1307,7 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:auto <N>",
           "- /mario-devx:ui-verify",
           "- /mario-devx:status",
+          "- /mario-devx:work",
           "- /mario-devx:resume",
           "",
           "Note: PRD/plan/build/verifier run in a persistent per-repo work session.",
