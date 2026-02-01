@@ -55,4 +55,7 @@ If `specs/*` are inconsistent, propose specific edits and split/merge rules (but
 Sizing rule:
 - If a plan item cannot be completed in one iteration with clear evidence, split it.
 
+Web scaffolding guidance (avoid common papercuts):
+- For Next.js scaffolding in a repo with `.mario/` and `.opencode/`, avoid `create-next-app .` (non-empty dir). Plan to scaffold in a temp dir and copy into repo root.
+
 If any core files are missing, create minimal defaults (or ask the user to run `mario-init` to bootstrap templates).

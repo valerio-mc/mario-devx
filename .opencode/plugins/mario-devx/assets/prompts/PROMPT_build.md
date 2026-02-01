@@ -20,6 +20,14 @@ Rules:
 - Update `IMPLEMENTATION_PLAN.md` to mark the plan item `DONE` and note discoveries.
 - Append a one-line note to `.mario/progress.md` describing what changed.
 
+Next.js scaffolding note (common failure):
+- If you scaffold a Next.js app in a repo that already contains `.mario/` and `.opencode/`, `create-next-app .` often refuses because the directory is not empty.
+- Use a temp directory and copy the scaffold into the repo root instead.
+  - Example:
+    - `tmpdir=$(mktemp -d)`
+    - `npx create-next-app@latest "$tmpdir/app" --yes --typescript --eslint --app`
+    - copy files into repo root (exclude `.mario/` and `.opencode/`)
+
 Commit rules:
 - If `AUTO_COMMIT=1`, commit only after verification passes.
 - Commit messages must start with the plan item ID, e.g. `PI-0007: ...`.
