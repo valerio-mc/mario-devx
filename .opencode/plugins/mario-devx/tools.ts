@@ -94,6 +94,56 @@ const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
   }
 };
 
+const findQualityGatesNonBackticked = (prd: string): string[] => {
+  const lines = prd.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === "## Quality Gates");
+  if (start === -1) {
+    return [];
+  }
+  const offenders: string[] = [];
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const trimmed = line.trim();
+    if (trimmed.startsWith("## ")) {
+      break;
+    }
+    if (!trimmed.startsWith("-")) {
+      continue;
+    }
+    if (trimmed.includes("`") || trimmed.toLowerCase().includes("todo")) {
+      continue;
+    }
+    offenders.push(trimmed);
+  }
+  return offenders;
+};
+
+const findPlanPlaceholders = (plan: string): string[] => {
+  const offenders: string[] = [];
+  const patterns = ["[...", "... existing", "... rest", "(...", "...]"];
+  const lower = plan.toLowerCase();
+  for (const p of patterns) {
+    if (lower.includes(p)) {
+      offenders.push(p);
+    }
+  }
+  return Array.from(new Set(offenders));
+};
+
+const findUnparseablePlanHeaders = (plan: string): string[] => {
+  const bad: string[] = [];
+  for (const line of plan.split(/\r?\n/)) {
+    if (!line.startsWith("### PI-")) {
+      continue;
+    }
+    const ok = /^###\s+PI-\d+\s+-\s+(TODO|DOING|DONE|BLOCKED)\s+-\s+.+$/i.test(line);
+    if (!ok) {
+      bad.push(line.trim());
+    }
+  }
+  return bad;
+};
+
 const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
   const localCandidates = [
     path.join(repoRoot, ".opencode", "skill", "agent-browser", "SKILL.md"),
@@ -1257,6 +1307,101 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
+    mario_devx_doctor: tool({
+      description: "Check mario-devx health",
+      args: {},
+      async execute() {
+        await ensureMario(repoRoot, false);
+
+        const issues: string[] = [];
+        const fixes: string[] = [];
+
+        // PRD gates
+        const prdPath = path.join(repoRoot, ".mario", "PRD.md");
+        const prd = await readTextIfExists(prdPath);
+        if (!prd) {
+          issues.push("Missing .mario/PRD.md");
+          fixes.push("Run /mario-devx:prd <idea>");
+        } else {
+          const offenders = findQualityGatesNonBackticked(prd);
+          if (offenders.length > 0) {
+            issues.push("PRD Quality Gates contains non-backticked bullets (these are not runnable commands).");
+            fixes.push("Edit .mario/PRD.md: in ## Quality Gates, keep commands only and wrap them in backticks.");
+          }
+        }
+
+        // Plan placeholders / headers
+        const plan = await readTextIfExists(planPath(repoRoot));
+        if (!plan) {
+          issues.push("Missing .mario/IMPLEMENTATION_PLAN.md");
+          fixes.push("Run /mario-devx:plan");
+        } else {
+          const placeholders = findPlanPlaceholders(plan);
+          if (placeholders.length > 0) {
+            issues.push(`Implementation plan contains placeholders (${placeholders.join(", ")}).`);
+            fixes.push("Run /mario-devx:plan again; it must write a fully expanded plan (no placeholders).");
+          }
+          const badHeaders = findUnparseablePlanHeaders(plan);
+          if (badHeaders.length > 0) {
+            issues.push(`Found unparseable plan item headers (${badHeaders.length}).`);
+            fixes.push("Fix plan headers to: ### PI-0007 - TODO - Title (or DOING/DONE/BLOCKED).",
+            );
+          }
+        }
+
+        // UI verification prerequisites
+        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
+        const agentsRaw = await readTextIfExists(agentsPath);
+        const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw) : {};
+        const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
+        if (uiVerifyEnabled) {
+          const isWebApp = await isLikelyWebApp(repoRoot);
+          if (!isWebApp) {
+            issues.push("UI_VERIFY=1 but this repo does not look like a Node web app yet.");
+            fixes.push("Either scaffold the web app first, or set UI_VERIFY=0 in .mario/AGENTS.md.");
+          } else {
+            const cliOk = await hasAgentBrowserCli(ctx);
+            const skillOk = await hasAgentBrowserSkill(repoRoot);
+            if (!cliOk || !skillOk) {
+              issues.push(`UI_VERIFY=1 but agent-browser prerequisites missing (${[!cliOk ? "cli" : null, !skillOk ? "skill" : null].filter(Boolean).join(", ")}).`);
+              fixes.push("Run /mario-devx:ui-verify and install missing prerequisites.");
+            }
+          }
+        }
+
+        // Work session sanity
+        const ws = await readWorkSessionState(repoRoot);
+        if (!ws?.sessionId || !ws.baselineMessageId) {
+          issues.push("Work session state missing (will be created on next PRD/plan/approve).");
+        } else {
+          try {
+            await ctx.client.session.get({ path: { id: ws.sessionId } });
+          } catch {
+            issues.push("Work session id in state file does not exist anymore.");
+            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:plan.");
+          }
+          try {
+            await ctx.client.session.message({ path: { id: ws.sessionId, messageID: ws.baselineMessageId } });
+          } catch {
+            issues.push("Work session baseline message id is missing.");
+            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:plan.");
+          }
+        }
+
+        if (issues.length === 0) {
+          return "Doctor: OK (no obvious issues found).";
+        }
+
+        return [
+          "Doctor: issues found",
+          ...issues.map((i) => `- ${i}`),
+          "",
+          "Suggested fixes",
+          ...Array.from(new Set(fixes)).map((f) => `- ${f}`),
+        ].join("\n");
+      },
+    }),
+
     mario_devx_resume: tool({
       description: "Resume from the last run state",
       args: {},
@@ -1308,6 +1453,7 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:ui-verify",
           "- /mario-devx:status",
           "- /mario-devx:work",
+          "- /mario-devx:doctor",
           "- /mario-devx:resume",
           "",
           "Note: PRD/plan/build/verifier run in a persistent per-repo work session.",

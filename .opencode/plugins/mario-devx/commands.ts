@@ -80,6 +80,11 @@ export const createCommands = (): CommandDefinition[] => [
     "Call tool mario_devx_work with no arguments.",
   ),
   command(
+    "doctor",
+    "Check mario-devx health",
+    "Call tool mario_devx_doctor with no arguments.",
+  ),
+  command(
     "resume",
     "Resume from the last run state",
     "Call tool mario_devx_resume with no arguments.",
