@@ -4,9 +4,9 @@ import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { resolveGateCommands, persistGateCommands } from "./gates";
-import { ensureMario, bumpIteration, readIterationState, writeIterationState, readPendingPlan, writePendingPlan, clearPendingPlan, getPendingPlanPath, readWorkSessionState, writeWorkSessionState } from "./state";
+import { ensureMario, bumpIteration, readIterationState, writeIterationState, readPendingPlan, writePendingPlan, clearPendingPlan, getPendingPlanPath, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
 import { marioRoot, marioRunsDir } from "./paths";
-import { PendingPlan } from "./types";
+import { PendingPlan, RunPhase, RunState } from "./types";
 
 type ToolContext = {
   sessionID?: string;
@@ -463,6 +463,42 @@ const ensureNotInWorkSession = async (
   return { ok: true };
 };
 
+const planPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "IMPLEMENTATION_PLAN.md");
+
+const setPlanItemStatus = async (
+  repoRoot: string,
+  planItemId: string,
+  status: "TODO" | "DOING" | "DONE" | "BLOCKED",
+): Promise<void> => {
+  const content = await readTextIfExists(planPath(repoRoot));
+  if (!content) {
+    return;
+  }
+  const lines = content.split(/\r?\n/);
+  const next = lines.map((line) => {
+    const match = line.match(/^###\s+(PI-\d+)\s+-\s+(TODO|DOING|DONE|BLOCKED)\s+-\s+(.*)$/i);
+    if (!match) {
+      return line;
+    }
+    const id = (match[1] ?? "").toUpperCase();
+    if (id !== planItemId.toUpperCase()) {
+      return line;
+    }
+    const title = match[3] ?? "";
+    return `### ${planItemId.toUpperCase()} - ${status} - ${title}`;
+  });
+  await writeText(planPath(repoRoot), next.join("\n"));
+};
+
+const updateRunState = async (repoRoot: string, patch: Partial<RunState>): Promise<void> => {
+  const existing = await readRunState(repoRoot);
+  await writeRunState(repoRoot, {
+    ...existing,
+    ...patch,
+    updatedAt: nowIso(),
+  });
+};
+
 const extractTextFromPromptResponse = (response: unknown): string => {
   if (!response) {
     return "";
@@ -653,6 +689,22 @@ export const createTools = (ctx: PluginContext) => {
         await writeRunArtifacts(runDir, prompt);
 
         const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+
+        await updateRunState(repoRoot, {
+          status: "DOING",
+          phase: "build",
+          currentPI: pending.id,
+          runDir,
+          workSessionId: ws.sessionId,
+          baselineMessageId: ws.baselineMessageId,
+          lastGate: "NONE",
+          lastUI: "NONE",
+          lastVerifier: "NONE",
+          startedAt: nowIso(),
+        });
+
+        await setPlanItemStatus(repoRoot, pending.id, "DOING");
+
         await ctx.client.session.prompt({
           path: { id: ws.sessionId },
           body: {
@@ -752,6 +804,15 @@ export const createTools = (ctx: PluginContext) => {
           ].join("\n");
           await writeText(path.join(runDir, "judge.out"), text);
           await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), text);
+          await updateRunState(repoRoot, {
+            status: "BLOCKED",
+            phase: "verify",
+            currentPI: planItemId ?? undefined,
+            runDir,
+            lastGate: gateResult.ok ? "PASS" : "FAIL",
+            lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
+            lastVerifier: "FAIL",
+          });
           await writeIterationState(repoRoot, {
             ...state,
             lastRunDir: runDir,
@@ -817,6 +878,15 @@ export const createTools = (ctx: PluginContext) => {
         await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), verifierText || "Status: FAIL\nEXIT_SIGNAL: false\n");
 
         const parsed = parseVerifierStatus(verifierText);
+        await updateRunState(repoRoot, {
+          status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
+          phase: "verify",
+          currentPI: planItemId ?? undefined,
+          runDir,
+          lastGate: "PASS",
+          lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
+          lastVerifier: parsed.status,
+        });
         await writeIterationState(repoRoot, {
           ...state,
           lastRunDir: runDir,
@@ -920,6 +990,19 @@ export const createTools = (ctx: PluginContext) => {
 
           // Run build in the persistent work session (reset to baseline first).
           const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+          await updateRunState(repoRoot, {
+            status: "DOING",
+            phase: "auto",
+            currentPI: draft.pending.id,
+            runDir,
+            workSessionId: ws.sessionId,
+            baselineMessageId: ws.baselineMessageId,
+            lastGate: "NONE",
+            lastUI: "NONE",
+            lastVerifier: "NONE",
+            startedAt: nowIso(),
+          });
+          await setPlanItemStatus(repoRoot, draft.pending.id, "DOING");
           await ctx.client.session.prompt({
             path: { id: ws.sessionId },
             body: {
@@ -956,6 +1039,18 @@ export const createTools = (ctx: PluginContext) => {
 
           const parsed = parseVerifierStatus(verifierText);
           await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), verifierText || "Status: FAIL\n");
+
+          await updateRunState(repoRoot, {
+            status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
+            phase: "auto",
+            currentPI: draft.pending.id,
+            runDir,
+            lastGate: gateResult.ok ? "PASS" : "FAIL",
+            lastUI: "NONE",
+            lastVerifier: parsed.status,
+          });
+
+          await setPlanItemStatus(repoRoot, draft.pending.id, parsed.status === "PASS" ? "DONE" : "BLOCKED");
 
           await appendLine(
             path.join(repoRoot, ".mario", "progress.md"),
@@ -999,13 +1094,49 @@ export const createTools = (ctx: PluginContext) => {
         const state = await readIterationState(repoRoot);
         const pending = await readPendingPlan(repoRoot);
         const ws = await readWorkSessionState(repoRoot);
+        const run = await readRunState(repoRoot);
         return [
           `Iteration: ${state.iteration}`,
           `Last mode: ${state.lastMode ?? "none"}`,
           `Last status: ${state.lastStatus ?? "none"}`,
           `Work session: ${ws?.sessionId ?? "none"}`,
+          `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
           pending.pending ? `Pending plan: ${pending.pending.id} (${getPendingPlanPath(repoRoot)})` : "Pending plan: none",
         ].join("\n");
+      },
+    }),
+
+    mario_devx_resume: tool({
+      description: "Resume from the last run state",
+      args: {},
+      async execute(_args, context: ToolContext) {
+        const notInWork = await ensureNotInWorkSession(repoRoot, context);
+        if (!notInWork.ok) {
+          return notInWork.message;
+        }
+        await ensureMario(repoRoot, false);
+
+        const pending = await readPendingPlan(repoRoot);
+        if (pending.pending) {
+          return `Pending plan exists (${pending.pending.id}). Review ${getPendingPlanPath(repoRoot)}, then run /mario-devx:approve.`;
+        }
+
+        const run = await readRunState(repoRoot);
+        if (run.status === "DOING") {
+          return [
+            `Last run is in progress: ${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}.`,
+            "Next: run /mario-devx:verify to evaluate current state.",
+          ].join("\n");
+        }
+
+        if (run.status === "BLOCKED") {
+          return [
+            `Last run is BLOCKED${run.currentPI ? ` on ${run.currentPI}` : ""}.`,
+            "Read .mario/state/feedback.md, then run /mario-devx:build to draft the next iteration (or rerun /mario-devx:verify after fixing).",
+          ].join("\n");
+        }
+
+        return "Run /mario-devx:build to draft the next iteration plan.";
       },
     }),
 
@@ -1025,6 +1156,7 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:auto <N>",
           "- /mario-devx:ui-verify",
           "- /mario-devx:status",
+          "- /mario-devx:resume",
           "",
           "Note: PRD/plan/build/verifier run in a persistent per-repo work session.",
         ].join("\n");
