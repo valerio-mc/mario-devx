@@ -4,9 +4,9 @@ import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { resolveGateCommands, persistGateCommands } from "./gates";
-import { ensureMario, bumpIteration, readIterationState, writeIterationState, readPendingPlan, writePendingPlan, clearPendingPlan, getPendingPlanPath, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
+import { ensureMario, bumpIteration, readIterationState, writeIterationState, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
 import { marioRoot, marioRunsDir } from "./paths";
-import { PendingPlan, RunPhase, RunState } from "./types";
+import { RunPhase, RunState } from "./types";
 import { isPrdReadyForPlan } from "./bootstrap";
 
 type ToolContext = {
@@ -708,39 +708,15 @@ const runInChildSession = async (
   return { sessionID, outputText: extractTextFromPromptResponse(response) };
 };
 
-const draftPendingPlan = async (
-  repoRoot: string,
-  idea: string | undefined,
-): Promise<{ pending: PendingPlan; content: string } | null> => {
-  const planPath = path.join(repoRoot, ".mario", "IMPLEMENTATION_PLAN.md");
-  const planItem = await getNextPlanItem(planPath);
-  if (!planItem) {
-    return null;
-  }
-  const content = [
-    `# Pending Iteration Plan (${planItem.id})`,
+const formatIterationPlan = (planItem: { id: string; title: string; block: string }): string => {
+  return [
+    `# Iteration Plan (${planItem.id})`,
     "",
     `Title: ${planItem.title}`,
-    idea ? `Idea: ${idea}` : null,
     "",
     "Plan item:",
     planItem.block,
-    "",
-    "Proposed steps:",
-    "- ",
-    "- ",
-  ]
-    .filter((line) => line !== null)
-    .join("\n");
-
-  const pending: PendingPlan = {
-    id: planItem.id,
-    title: planItem.title,
-    block: planItem.block,
-    createdAt: nowIso(),
-    idea,
-  };
-  return { pending, content };
+  ].join("\n");
 };
 
 export const createTools = (ctx: PluginContext) => {
@@ -775,7 +751,7 @@ export const createTools = (ctx: PluginContext) => {
           return [
             `Plan is running in work session: ${planWs.sessionId}.`,
             "Open it via /sessions.",
-            "Next: /mario-devx:build",
+            "Next: /mario-devx:run 1",
           ].join("\n");
         }
 
@@ -803,142 +779,26 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
-    mario_devx_build: tool({
-      description: "Draft the next iteration plan (HITL checkpoint)",
+    mario_devx_run: tool({
+      description: "Run next plan items (build + verify, stops on failure)",
       args: {
-        idea: tool.schema.string().optional().describe("Additional idea or hint"),
+        max_items: tool.schema.string().optional().describe("Maximum number of plan items to attempt (default: 1)"),
       },
-      async execute(args) {
-        await ensureMario(repoRoot, false);
-        const draft = await draftPendingPlan(repoRoot, args.idea);
-        if (!draft) {
-          return [
-            "No TODO/DOING plan items found in .mario/IMPLEMENTATION_PLAN.md.",
-            "",
-            "Common causes:",
-            "- The plan contains placeholders like '[... existing ...]' instead of real plan items.",
-            "- Plan item headers are not in the format: '### PI-0003 - TODO - Title'",
-            "",
-            "Fix:",
-            "- Rerun /mario-devx:new and ensure it writes fully-expanded plan items (no placeholders).",
-          ].join("\n");
-        }
-        await writePendingPlan(repoRoot, draft.pending, draft.content);
-        await showToast(ctx, `Pending plan drafted for ${draft.pending.id}.`, "info");
-        return `Drafted pending plan at ${getPendingPlanPath(repoRoot)}. Review it, then run /mario-devx:approve.`;
-      },
-    }),
-
-    mario_devx_approve: tool({
-      description: "Approve and execute the pending iteration",
-      args: {},
-      async execute(_args, context: ToolContext) {
+      async execute(args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
         if (!notInWork.ok) {
           return notInWork.message;
         }
-        const { pending, content } = await readPendingPlan(repoRoot);
-        if (!pending || !content) {
-          return "No pending plan found. Run /mario-devx:build first.";
-        }
-        const state = await bumpIteration(repoRoot, "build");
-        const runDir = path.join(
-          marioRunsDir(repoRoot),
-          `${new Date().toISOString().replace(/[:.]/g, "")}-build-iter${state.iteration}`,
-        );
-        await ensureDir(runDir);
-        const prompt = await buildPrompt(repoRoot, "build", content);
-        await writeRunArtifacts(runDir, prompt);
 
-        const ws = await resetWorkSession(ctx, repoRoot, context.agent);
-        await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${pending.id}`);
-
-        await updateRunState(repoRoot, {
-          status: "DOING",
-          phase: "build",
-          currentPI: pending.id,
-          controlSessionId: context.sessionID,
-          runDir,
-          workSessionId: ws.sessionId,
-          baselineMessageId: ws.baselineMessageId,
-          lastGate: "NONE",
-          lastUI: "NONE",
-          lastVerifier: "NONE",
-          startedAt: nowIso(),
-        });
-
-        await setPlanItemStatus(repoRoot, pending.id, "DOING");
-
-        await ctx.client.session.promptAsync({
-          path: { id: ws.sessionId },
-          body: {
-            ...(context.agent ? { agent: context.agent } : {}),
-            parts: [{ type: "text", text: prompt }],
-          },
-        });
-
-        await clearPendingPlan(repoRoot);
-        await writeIterationState(repoRoot, {
-          ...state,
-          lastRunDir: runDir,
-          lastStatus: "NONE",
-        });
-
-        await showToast(ctx, `Approved ${pending.id}. Build running in work session.`, "info");
-        await notifyControlSession(
-          ctx,
-          context.sessionID,
-          `mario-devx approved ${pending.id}. Build running in work session: ${ws.sessionId}.`,
-        );
-
-        return [
-          `Build started in work session: ${ws.sessionId}`,
-          `Plan item: ${pending.id}`,
-          `Run dir: ${runDir}`,
-          "",
-          "Open the work session via /sessions to watch progress.",
-          "After implementation, run /mario-devx:verify from a control session.",
-        ].join("\n");
-      },
-    }),
-
-    mario_devx_cancel: tool({
-      description: "Cancel pending iteration plan",
-      args: {},
-      async execute() {
-        await clearPendingPlan(repoRoot);
-        return "Pending plan cleared.";
-      },
-    }),
-
-    mario_devx_verify: tool({
-      description: "Run deterministic gates + LLM judge without executing",
-      args: {},
-      async execute(_args, context: ToolContext) {
-        const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
-          return notInWork.message;
-        }
         await ensureMario(repoRoot, false);
-        const current = await readIterationState(repoRoot);
-        const state = current.iteration === 0 ? await bumpIteration(repoRoot, "build") : current;
+        const rawMax = (args.max_items ?? "").trim();
+        const parsed = rawMax.length === 0 ? 1 : Number.parseInt(rawMax, 10);
+        const maxItems = Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 1;
 
-        const runDir =
-          state.lastRunDir && state.lastRunDir.length > 0
-            ? state.lastRunDir
-            : path.join(
-                marioRunsDir(repoRoot),
-                `${new Date().toISOString().replace(/[:.]/g, "")}-verify-iter${state.iteration}`,
-              );
-
-        await ensureDir(runDir);
         const prdPath = path.join(repoRoot, ".mario", "PRD.md");
         const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
         const gateCommands = await resolveGateCommands(repoRoot, prdPath, agentsPath);
         await persistGateCommands(agentsPath, gateCommands);
-        const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
-
-        const planItemId = await readMostRecentPlanItemId(repoRoot);
 
         const agentsRaw = await readTextIfExists(agentsPath);
         const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw) : {};
@@ -951,126 +811,224 @@ export const createTools = (ctx: PluginContext) => {
         const isWebApp = await isLikelyWebApp(repoRoot);
         const cliOk = await hasAgentBrowserCli(ctx);
         const skillOk = await hasAgentBrowserSkill(repoRoot);
-
         const shouldRunUiVerify = uiVerifyEnabled && isWebApp && cliOk && skillOk;
-        const uiResult = shouldRunUiVerify
-          ? await runUiVerification({
-              ctx,
-              runDir,
-              devCmd: uiVerifyCmd,
-              url: uiVerifyUrl,
-            })
-          : null;
 
-        const failEarly = async (reasonLines: string[]): Promise<string> => {
-          const text = [
-            "Status: FAIL",
-            "EXIT_SIGNAL: false",
-            "Reason:",
-            ...reasonLines.map((l) => `- ${l}`),
-            "Next actions:",
-            "- Fix the failing checks, then rerun /mario-devx:verify.",
-          ].join("\n");
-          await writeText(path.join(runDir, "judge.out"), text);
-          await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), text);
+        let attempted = 0;
+        let completed = 0;
+
+        while (attempted < maxItems) {
+          const planItem = await getNextPlanItem(planPath(repoRoot));
+          if (!planItem) {
+            break;
+          }
+          attempted += 1;
+
+          const state = await bumpIteration(repoRoot, "build");
+          const runDir = path.join(
+            marioRunsDir(repoRoot),
+            `${new Date().toISOString().replace(/[:.]/g, "")}-run-iter${state.iteration}`,
+          );
+          await ensureDir(runDir);
+
+          const iterationPlan = formatIterationPlan(planItem);
+          const buildModePrompt = await buildPrompt(repoRoot, "build", iterationPlan);
+          await writeRunArtifacts(runDir, buildModePrompt);
+
+          await showToast(ctx, `Run: started ${planItem.id} (${attempted}/${maxItems})`, "info");
+
+          const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+          await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${planItem.id}`);
           await updateRunState(repoRoot, {
-            status: "BLOCKED",
-            phase: "verify",
-            currentPI: planItemId ?? undefined,
+            status: "DOING",
+            phase: "run",
+            currentPI: planItem.id,
+            controlSessionId: context.sessionID,
             runDir,
-            lastGate: gateResult.ok ? "PASS" : "FAIL",
+            workSessionId: ws.sessionId,
+            baselineMessageId: ws.baselineMessageId,
+            lastGate: "NONE",
+            lastUI: "NONE",
+            lastVerifier: "NONE",
+            startedAt: nowIso(),
+          });
+
+          await setPlanItemStatus(repoRoot, planItem.id, "DOING");
+
+          await ctx.client.session.promptAsync({
+            path: { id: ws.sessionId },
+            body: {
+              ...(context.agent ? { agent: context.agent } : {}),
+              parts: [{ type: "text", text: buildModePrompt }],
+            },
+          });
+
+          const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
+          if (!idle) {
+            const text = [
+              "Status: FAIL",
+              "EXIT_SIGNAL: false",
+              "Reason:",
+              "- Build timed out waiting for the work session to go idle.",
+              "Next actions:",
+              "- Open /sessions -> mario-devx (work) and inspect the current state.",
+            ].join("\n");
+            await writeText(path.join(runDir, "judge.out"), text);
+            await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), text);
+            await setPlanItemStatus(repoRoot, planItem.id, "BLOCKED");
+            await updateRunState(repoRoot, {
+              status: "BLOCKED",
+              phase: "run",
+              currentPI: planItem.id,
+              runDir,
+              lastGate: "NONE",
+              lastUI: "NONE",
+              lastVerifier: "FAIL",
+            });
+            await showToast(ctx, `Run stopped: build timed out on ${planItem.id}`, "warning");
+            break;
+          }
+
+          const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
+          const uiResult = shouldRunUiVerify
+            ? await runUiVerification({
+                ctx,
+                runDir,
+                devCmd: uiVerifyCmd,
+                url: uiVerifyUrl,
+              })
+            : null;
+
+          const failEarly = async (reasonLines: string[]): Promise<void> => {
+            const text = [
+              "Status: FAIL",
+              "EXIT_SIGNAL: false",
+              "Reason:",
+              ...reasonLines.map((l) => `- ${l}`),
+              "Next actions:",
+              "- Fix the failing checks, then rerun /mario-devx:run 1.",
+            ].join("\n");
+            await writeText(path.join(runDir, "judge.out"), text);
+            await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), text);
+            await setPlanItemStatus(repoRoot, planItem.id, "BLOCKED");
+            await updateRunState(repoRoot, {
+              status: "BLOCKED",
+              phase: "run",
+              currentPI: planItem.id,
+              runDir,
+              lastGate: gateResult.ok ? "PASS" : "FAIL",
+              lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
+              lastVerifier: "FAIL",
+            });
+          };
+
+          if (!gateResult.ok) {
+            const failed = gateResult.failed
+              ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
+              : "(unknown command)";
+            await failEarly([
+              `Deterministic gate failed: ${failed}.`,
+              `Evidence: ${path.join(runDir, "gates.log")}`,
+              `Evidence: ${path.join(runDir, "gates.json")}`,
+            ]);
+            await showToast(ctx, `Run stopped: gates failed on ${planItem.id}`, "warning");
+            break;
+          }
+
+          if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk)) {
+            await failEarly([
+              "UI verification is required but agent-browser prerequisites are missing.",
+              `Repo: ${agentBrowserRepo}`,
+              "Install: npx skills add vercel-labs/agent-browser",
+              "Install: npm install -g agent-browser && agent-browser install",
+            ]);
+            await showToast(ctx, `Run stopped: UI prerequisites missing on ${planItem.id}`, "warning");
+            break;
+          }
+
+          if (uiVerifyEnabled && isWebApp && uiVerifyRequired && uiResult && !uiResult.ok) {
+            await failEarly([
+              `UI verification failed (see ${path.join(runDir, "ui-verify.log")}).`,
+            ]);
+            await showToast(ctx, `Run stopped: UI verification failed on ${planItem.id}`, "warning");
+            break;
+          }
+
+          await showToast(
+            ctx,
+            `Gates: PASS${uiResult ? `; UI: ${uiResult.ok ? "PASS" : "FAIL"}` : ""}. Running verifier...`,
+            "info",
+          );
+
+          const verifierPrompt = await buildPrompt(
+            repoRoot,
+            "verify",
+            [
+              `Run artifacts: ${runDir}`,
+              "Deterministic gates: PASS",
+              `Gates log: ${path.join(runDir, "gates.log")}`,
+              `Plan item: ${planItem.id} - ${planItem.title}`,
+              uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
+              uiResult ? `UI log: ${path.join(runDir, "ui-verify.log")}` : "",
+            ]
+              .filter((x) => x)
+              .join("\n"),
+          );
+
+          await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${planItem.id}`);
+          const verifierResponse = await ctx.client.session.prompt({
+            path: { id: ws.sessionId },
+            body: {
+              ...(context.agent ? { agent: context.agent } : {}),
+              parts: [{ type: "text", text: verifierPrompt }],
+            },
+          });
+          const verifierText = extractTextFromPromptResponse(verifierResponse);
+          await writeText(path.join(runDir, "judge.out"), verifierText);
+          await writeText(
+            path.join(marioRoot(repoRoot), "state", "feedback.md"),
+            verifierText || "Status: FAIL\nEXIT_SIGNAL: false\n",
+          );
+
+          const parsed = parseVerifierStatus(verifierText);
+          await updateRunState(repoRoot, {
+            status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
+            phase: "run",
+            currentPI: planItem.id,
+            controlSessionId: context.sessionID,
+            runDir,
+            lastGate: "PASS",
             lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
-            lastVerifier: "FAIL",
+            lastVerifier: parsed.status,
           });
           await writeIterationState(repoRoot, {
             ...state,
             lastRunDir: runDir,
-            lastStatus: "FAIL",
+            lastStatus: parsed.status,
           });
-          await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} result=FAIL`);
-          await showToast(ctx, "Verification: FAIL", "warning");
-          return text;
-        };
 
-        if (!gateResult.ok) {
-          const failed = gateResult.failed
-            ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
-            : "(unknown command)";
-          return failEarly([
-            `Deterministic gate failed: ${failed}.`,
-            `Evidence: ${path.join(runDir, "gates.log")}`,
-            `Evidence: ${path.join(runDir, "gates.json")}`,
-          ]);
+          await setPlanItemStatus(repoRoot, planItem.id, parsed.status === "PASS" ? "DONE" : "BLOCKED");
+          await appendLine(
+            path.join(repoRoot, ".mario", "progress.md"),
+            `- ${nowIso()} run iter=${state.iteration} item=${planItem.id} gates=PASS${uiResult ? ` ui=${uiResult.ok ? "PASS" : "FAIL"}` : ""} judge=${parsed.status}`,
+          );
+
+          if (parsed.status !== "PASS" || !parsed.exit) {
+            await showToast(ctx, `Run stopped: verifier failed on ${planItem.id}`, "warning");
+            break;
+          }
+
+          completed += 1;
+          await showToast(ctx, `Run: completed ${planItem.id} (${completed}/${maxItems})`, "success");
         }
 
-        if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk)) {
-          return failEarly([
-            "UI verification is required but agent-browser prerequisites are missing.",
-            `Repo: ${agentBrowserRepo}`,
-            "Install: npx skills add vercel-labs/agent-browser",
-            "Install: npm install -g agent-browser && agent-browser install",
-          ]);
-        }
+        const note =
+          completed === attempted && attempted === maxItems
+            ? "Reached max_items limit."
+            : completed === attempted
+              ? "No more TODO/DOING plan items found."
+              : "Stopped early due to failure. See .mario/state/feedback.md.";
 
-        if (uiVerifyEnabled && isWebApp && uiVerifyRequired && uiResult && !uiResult.ok) {
-          return failEarly([
-            `UI verification failed (see ${path.join(runDir, "ui-verify.log")}).`,
-          ]);
-        }
-
-        await appendLine(path.join(repoRoot, ".mario", "progress.md"), `- ${nowIso()} verify iter=${state.iteration} gates=PASS${uiResult ? ` ui=${uiResult.ok ? "PASS" : "FAIL"}` : ""}`);
-
-        await showToast(
-          ctx,
-          `Gates: PASS${uiResult ? `; UI: ${uiResult.ok ? "PASS" : "FAIL"}` : ""}. Running verifier...`,
-          "info",
-        );
-
-        const verifierPrompt = await buildPrompt(
-          repoRoot,
-          "verify",
-          [
-            `Run artifacts: ${runDir}`,
-            "Deterministic gates: PASS",
-            `Gates log: ${path.join(runDir, "gates.log")}`,
-            planItemId ? `Plan item: ${planItemId}` : "Plan item: (unknown)",
-            uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
-            uiResult ? `UI log: ${path.join(runDir, "ui-verify.log")}` : "",
-          ].join("\n"),
-        );
-
-        const ws = await resetWorkSession(ctx, repoRoot, context.agent);
-        await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - verify${planItemId ? ` ${planItemId}` : ""}`);
-        const verifierResponse = await ctx.client.session.prompt({
-          path: { id: ws.sessionId },
-          body: {
-            ...(context.agent ? { agent: context.agent } : {}),
-            parts: [{ type: "text", text: verifierPrompt }],
-          },
-        });
-        const verifierText = extractTextFromPromptResponse(verifierResponse);
-        await writeText(path.join(runDir, "judge.out"), verifierText);
-        await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), verifierText || "Status: FAIL\nEXIT_SIGNAL: false\n");
-
-        const parsed = parseVerifierStatus(verifierText);
-        await updateRunState(repoRoot, {
-          status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
-          phase: "verify",
-          currentPI: planItemId ?? undefined,
-          controlSessionId: context.sessionID,
-          runDir,
-          lastGate: "PASS",
-          lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
-          lastVerifier: parsed.status,
-        });
-        await writeIterationState(repoRoot, {
-          ...state,
-          lastRunDir: runDir,
-          lastStatus: parsed.status,
-        });
-
-        await showToast(ctx, `Verifier: ${parsed.status}`, parsed.status === "PASS" ? "success" : "warning");
-        return `Verification complete. Gates: PASS${uiResult ? `; UI: ${uiResult.ok ? "PASS" : "FAIL"}` : ""}. Verifier: ${parsed.status}.`;
+        return `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
       },
     }),
 
@@ -1119,198 +1077,11 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
-    mario_devx_auto: tool({
-      description: "Run up to N plan items automatically (stops on failure)",
-      args: {
-        max_items: tool.schema
-          .number()
-          .min(1)
-          .max(100)
-          .describe("Maximum number of plan items to attempt")
-          .default(1),
-      },
-      async execute(args, context: ToolContext) {
-        const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
-          return notInWork.message;
-        }
-        await ensureMario(repoRoot, false);
-
-        const maxItems = Math.floor(args.max_items);
-        const prdPath = path.join(repoRoot, ".mario", "PRD.md");
-        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-        const gateCommands = await resolveGateCommands(repoRoot, prdPath, agentsPath);
-        await persistGateCommands(agentsPath, gateCommands);
-
-        let attempted = 0;
-        let completed = 0;
-
-        while (attempted < maxItems) {
-          const draft = await draftPendingPlan(repoRoot, undefined);
-          if (!draft) {
-            break;
-          }
-
-          attempted += 1;
-          const state = await bumpIteration(repoRoot, "build");
-          const runDir = path.join(
-            marioRunsDir(repoRoot),
-            `${new Date().toISOString().replace(/[:.]/g, "")}-auto-iter${state.iteration}`,
-          );
-          await ensureDir(runDir);
-
-          const buildModePrompt = await buildPrompt(repoRoot, "build", draft.content);
-          await writeRunArtifacts(runDir, buildModePrompt);
-
-          await showToast(ctx, `Auto: running ${draft.pending.id} (step ${attempted}/${maxItems})`, "info");
-
-          // Run build in the persistent work session (reset to baseline first).
-          const ws = await resetWorkSession(ctx, repoRoot, context.agent);
-          await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${draft.pending.id}`);
-          await updateRunState(repoRoot, {
-            status: "DOING",
-            phase: "auto",
-            currentPI: draft.pending.id,
-            controlSessionId: context.sessionID,
-            runDir,
-            workSessionId: ws.sessionId,
-            baselineMessageId: ws.baselineMessageId,
-            lastGate: "NONE",
-            lastUI: "NONE",
-            lastVerifier: "NONE",
-            startedAt: nowIso(),
-          });
-          await setPlanItemStatus(repoRoot, draft.pending.id, "DOING");
-
-          await notifyControlSession(
-            ctx,
-            context.sessionID,
-            `mario-devx auto: started ${draft.pending.id} in work session ${ws.sessionId} (step ${attempted}/${maxItems}).`,
-          );
-
-          await ctx.client.session.promptAsync({
-            path: { id: ws.sessionId },
-            body: {
-              ...(context.agent ? { agent: context.agent } : {}),
-              parts: [{ type: "text", text: buildModePrompt }],
-            },
-          });
-
-          const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
-          if (!idle) {
-            await updateRunState(repoRoot, {
-              status: "BLOCKED",
-              phase: "auto",
-              currentPI: draft.pending.id,
-              runDir,
-              lastGate: "NONE",
-              lastVerifier: "NONE",
-            });
-            await showToast(ctx, `Auto stopped: build timed out on ${draft.pending.id}`, "warning");
-            break;
-          }
-
-          // Deterministic gates in the plugin process (fast feedback).
-          const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
-
-          // Verifier runs as another child session. It must write feedback to .mario/state/feedback.md.
-          const verifierPrompt = await buildPrompt(
-            repoRoot,
-            "verify",
-            [
-              `Run artifacts: ${runDir}`,
-              `Deterministic gates: ${gateResult.ok ? "PASS" : "FAIL"}`,
-              `Gates log: ${path.join(runDir, "gates.log")}`,
-              `Plan item: ${draft.pending.id} - ${draft.pending.title}`,
-            ].join("\n"),
-          );
-
-          await resetWorkSession(ctx, repoRoot, context.agent);
-          const verifierResponse = await ctx.client.session.prompt({
-            path: { id: ws.sessionId },
-            body: {
-              ...(context.agent ? { agent: context.agent } : {}),
-              parts: [{ type: "text", text: verifierPrompt }],
-            },
-          });
-          const verifierText = extractTextFromPromptResponse(verifierResponse);
-          await writeText(path.join(runDir, "judge.out"), verifierText);
-
-          const parsed = parseVerifierStatus(verifierText);
-          await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), verifierText || "Status: FAIL\n");
-
-          await updateRunState(repoRoot, {
-            status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
-            phase: "auto",
-            currentPI: draft.pending.id,
-            controlSessionId: context.sessionID,
-            runDir,
-            lastGate: gateResult.ok ? "PASS" : "FAIL",
-            lastUI: "NONE",
-            lastVerifier: parsed.status,
-          });
-
-          await setPlanItemStatus(repoRoot, draft.pending.id, parsed.status === "PASS" ? "DONE" : "BLOCKED");
-
-          await appendLine(
-            path.join(repoRoot, ".mario", "progress.md"),
-            `- ${nowIso()} auto iter=${state.iteration} item=${draft.pending.id} gates=${gateResult.ok ? "PASS" : "FAIL"} judge=${parsed.status}`,
-          );
-
-          await writeIterationState(repoRoot, {
-            ...state,
-            lastRunDir: runDir,
-            lastStatus: parsed.status,
-          });
-
-          if (!gateResult.ok) {
-            const failed = gateResult.failed
-              ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
-              : "(unknown command)";
-            await showToast(ctx, `Auto stopped: gates failed on ${draft.pending.id}`, "warning");
-            await notifyControlSession(
-              ctx,
-              context.sessionID,
-              `mario-devx auto stopped: gate failed on ${draft.pending.id}: ${failed}. Evidence: ${path.join(runDir, "gates.log")}`,
-            );
-            break;
-          }
-
-          if (parsed.status !== "PASS" || !parsed.exit) {
-            await showToast(ctx, `Auto stopped: verifier failed on ${draft.pending.id}`, "warning");
-            await notifyControlSession(
-              ctx,
-              context.sessionID,
-              `mario-devx auto stopped: verifier failed on ${draft.pending.id}. See ${path.join(runDir, "judge.out")}.`,
-            );
-            break;
-          }
-
-          completed += 1;
-          await notifyControlSession(
-            ctx,
-            context.sessionID,
-            `mario-devx auto: completed ${draft.pending.id} (${completed}/${maxItems}).`,
-          );
-        }
-
-        const note =
-          completed === attempted && attempted === maxItems
-            ? "Reached max_items limit."
-            : completed === attempted
-              ? "No more TODO plan items found."
-              : "Stopped early due to failure. See .mario/state/feedback.md.";
-
-        return `Auto finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
-      },
-    }),
-
     mario_devx_status: tool({
       description: "Show mario-devx status",
       args: {},
       async execute() {
         const state = await readIterationState(repoRoot);
-        const pending = await readPendingPlan(repoRoot);
         const ws = await readWorkSessionState(repoRoot);
         const run = await readRunState(repoRoot);
         return [
@@ -1319,7 +1090,6 @@ export const createTools = (ctx: PluginContext) => {
           `Last status: ${state.lastStatus ?? "none"}`,
           `Work session: ${ws?.sessionId ?? "none"}`,
           `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
-          pending.pending ? `Pending plan: ${pending.pending.id} (${getPendingPlanPath(repoRoot)})` : "Pending plan: none",
         ].join("\n");
       },
     }),
@@ -1407,7 +1177,7 @@ export const createTools = (ctx: PluginContext) => {
         // Work session sanity
         const ws = await readWorkSessionState(repoRoot);
         if (!ws?.sessionId || !ws.baselineMessageId) {
-          issues.push("Work session state missing (will be created on next /mario-devx:new or /mario-devx:approve).");
+          issues.push("Work session state missing (will be created on next /mario-devx:new or /mario-devx:run).");
         } else {
           try {
             await ctx.client.session.get({ path: { id: ws.sessionId } });
@@ -1447,27 +1217,22 @@ export const createTools = (ctx: PluginContext) => {
         }
         await ensureMario(repoRoot, false);
 
-        const pending = await readPendingPlan(repoRoot);
-        if (pending.pending) {
-          return `Pending plan exists (${pending.pending.id}). Review ${getPendingPlanPath(repoRoot)}, then run /mario-devx:approve.`;
-        }
-
         const run = await readRunState(repoRoot);
         if (run.status === "DOING") {
           return [
             `Last run is in progress: ${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}.`,
-            "Next: run /mario-devx:verify to evaluate current state.",
+            "Next: open /sessions to watch mario-devx (work), or run /mario-devx:status.",
           ].join("\n");
         }
 
         if (run.status === "BLOCKED") {
           return [
             `Last run is BLOCKED${run.currentPI ? ` on ${run.currentPI}` : ""}.`,
-            "Read .mario/state/feedback.md, then run /mario-devx:build to draft the next iteration (or rerun /mario-devx:verify after fixing).",
+            "Read .mario/state/feedback.md, fix issues, then run /mario-devx:run 1.",
           ].join("\n");
         }
 
-        return "Run /mario-devx:build to draft the next iteration plan.";
+        return "Run /mario-devx:run 1 to execute the next plan item.";
       },
     }),
 
@@ -1478,11 +1243,7 @@ export const createTools = (ctx: PluginContext) => {
         return [
           "mario-devx commands:",
           "- /mario-devx:new <idea>",
-          "- /mario-devx:build [idea] (draft pending plan)",
-          "- /mario-devx:approve (execute pending plan)",
-          "- /mario-devx:cancel",
-          "- /mario-devx:verify",
-          "- /mario-devx:auto <N>",
+          "- /mario-devx:run <N>",
           "- /mario-devx:ui-verify",
           "- /mario-devx:status",
           "- /mario-devx:work",

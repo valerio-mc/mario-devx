@@ -6,14 +6,6 @@ export type GateCommand = {
 
 export type IterationMode = "prd" | "plan" | "build";
 
-export type PendingPlan = {
-  id: string;
-  title: string;
-  block: string;
-  createdAt: string;
-  idea?: string;
-};
-
 export type IterationState = {
   iteration: number;
   lastMode: IterationMode | null;
@@ -28,7 +20,7 @@ export type WorkSessionState = {
   updatedAt: string;
 };
 
-export type RunPhase = "prd" | "plan" | "build" | "verify" | "auto";
+export type RunPhase = "prd" | "plan" | "build" | "verify" | "auto" | "run";
 
 export type RunStatus = "NONE" | "DOING" | "DONE" | "BLOCKED";
 

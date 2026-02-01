@@ -30,29 +30,9 @@ export const createCommands = (): CommandDefinition[] => [
     "Call tool mario_devx_new with idea=\"$ARGUMENTS\". Then follow the instructions in the tool output.",
   ),
   command(
-    "build",
-    "Draft next iteration plan (HITL)",
-    "Call tool mario_devx_build with idea=\"$ARGUMENTS\". Do not execute the build. Ask the user to review the pending plan and run /mario-devx:approve.",
-  ),
-  command(
-    "approve",
-    "Approve and execute pending build",
-    "Call tool mario_devx_approve with no arguments. Then follow the instructions in the tool output.",
-  ),
-  command(
-    "cancel",
-    "Cancel pending build",
-    "Call tool mario_devx_cancel with no arguments.",
-  ),
-  command(
-    "verify",
-    "Run deterministic + LLM verification",
-    "Call tool mario_devx_verify with no arguments. Then follow the verifier instructions in the tool output.",
-  ),
-  command(
-    "auto",
-    "Run up to N plan items automatically",
-    "Call tool mario_devx_auto with max_items=$ARGUMENTS. Return the tool result.",
+    "run",
+    "Run next plan items (build + verify)",
+    "Call tool mario_devx_run with max_items=$ARGUMENTS. Return the tool result.",
   ),
   command(
     "ui-verify",
