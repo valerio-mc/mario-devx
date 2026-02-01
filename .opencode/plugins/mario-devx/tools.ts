@@ -234,6 +234,44 @@ const showToast = async (
   });
 };
 
+const notifyControlSession = async (
+  ctx: PluginContext,
+  controlSessionId: string | undefined,
+  message: string,
+): Promise<void> => {
+  if (!controlSessionId) {
+    return;
+  }
+  try {
+    await ctx.client.session.prompt({
+      path: { id: controlSessionId },
+      body: {
+        noReply: true,
+        parts: [{ type: "text", text: message }],
+      },
+    });
+  } catch {
+    // Best-effort only.
+  }
+};
+
+const waitForSessionIdle = async (
+  ctx: PluginContext,
+  sessionId: string,
+  timeoutMs: number,
+): Promise<boolean> => {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const statuses = await ctx.client.session.status();
+    const status = (statuses as Record<string, { type?: string }>)[sessionId];
+    if (!status || status.type === "idle") {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return false;
+};
+
 const getNextPlanItem = async (planPath: string): Promise<{ id: string; title: string; block: string } | null> => {
   const content = await readTextIfExists(planPath);
   if (!content) {
@@ -606,7 +644,7 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         const ws = await resetWorkSession(ctx, repoRoot, context.agent);
         const prompt = await buildPrompt(repoRoot, "prd", args.idea ? `Initial idea: ${args.idea}` : undefined);
-        await ctx.client.session.prompt({
+        await ctx.client.session.promptAsync({
           path: { id: ws.sessionId },
           body: {
             ...(context.agent ? { agent: context.agent } : {}),
@@ -614,6 +652,11 @@ export const createTools = (ctx: PluginContext) => {
           },
         });
         await showToast(ctx, "PRD started in work session (use /sessions to open)", "info");
+        await notifyControlSession(
+          ctx,
+          context.sessionID,
+          `mario-devx PRD started in work session: ${ws.sessionId} (open via /sessions).`,
+        );
         return `PRD is running in work session: ${ws.sessionId}. Use /sessions to open it and answer the questions.`;
       },
     }),
@@ -629,7 +672,7 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         const ws = await resetWorkSession(ctx, repoRoot, context.agent);
         const prompt = await buildPrompt(repoRoot, "plan");
-        await ctx.client.session.prompt({
+        await ctx.client.session.promptAsync({
           path: { id: ws.sessionId },
           body: {
             ...(context.agent ? { agent: context.agent } : {}),
@@ -637,6 +680,11 @@ export const createTools = (ctx: PluginContext) => {
           },
         });
         await showToast(ctx, "Plan started in work session (use /sessions to open)", "info");
+        await notifyControlSession(
+          ctx,
+          context.sessionID,
+          `mario-devx plan started in work session: ${ws.sessionId} (open via /sessions).`,
+        );
         return `Plan is running in work session: ${ws.sessionId}. Use /sessions to open it. Next: /mario-devx:build.`;
       },
     }),
@@ -705,7 +753,7 @@ export const createTools = (ctx: PluginContext) => {
 
         await setPlanItemStatus(repoRoot, pending.id, "DOING");
 
-        await ctx.client.session.prompt({
+        await ctx.client.session.promptAsync({
           path: { id: ws.sessionId },
           body: {
             ...(context.agent ? { agent: context.agent } : {}),
@@ -721,6 +769,11 @@ export const createTools = (ctx: PluginContext) => {
         });
 
         await showToast(ctx, `Approved ${pending.id}. Build running in work session.`, "info");
+        await notifyControlSession(
+          ctx,
+          context.sessionID,
+          `mario-devx approved ${pending.id}. Build running in work session: ${ws.sessionId}.`,
+        );
 
         return [
           `Build started in work session: ${ws.sessionId}`,
@@ -1003,13 +1056,34 @@ export const createTools = (ctx: PluginContext) => {
             startedAt: nowIso(),
           });
           await setPlanItemStatus(repoRoot, draft.pending.id, "DOING");
-          await ctx.client.session.prompt({
+
+          await notifyControlSession(
+            ctx,
+            context.sessionID,
+            `mario-devx auto: started ${draft.pending.id} in work session ${ws.sessionId} (step ${attempted}/${maxItems}).`,
+          );
+
+          await ctx.client.session.promptAsync({
             path: { id: ws.sessionId },
             body: {
               ...(context.agent ? { agent: context.agent } : {}),
               parts: [{ type: "text", text: buildModePrompt }],
             },
           });
+
+          const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
+          if (!idle) {
+            await updateRunState(repoRoot, {
+              status: "BLOCKED",
+              phase: "auto",
+              currentPI: draft.pending.id,
+              runDir,
+              lastGate: "NONE",
+              lastVerifier: "NONE",
+            });
+            await showToast(ctx, `Auto stopped: build timed out on ${draft.pending.id}`, "warning");
+            break;
+          }
 
           // Deterministic gates in the plugin process (fast feedback).
           const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
