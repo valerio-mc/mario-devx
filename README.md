@@ -51,7 +51,9 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 - The actual PRD/plan/build/verifier work runs in a persistent per-repo **work session** called `mario-devx (work)`.
 - Open it via `/sessions` when you want to watch or answer prompts.
 - Most commands are async: you trigger them in the control session, they run in the work session, and you get notified when the work session goes idle.
-- Useful helpers: `/mario-devx:doctor` (healthcheck + common fixes), `/mario-devx:status` (what's happening + what to do next).
+- Useful helpers:
+  - `/mario-devx:status`: Shows the current run/iteration state, the work session id, and the next recommended action. Use it when you’re unsure what’s running or what to do next.
+  - `/mario-devx:doctor`: Runs a healthcheck for common setup/config issues and prints concrete fixes. Use it when something fails “for no reason” or the loop feels stuck.
 
 ### 1) Create a repo
 
