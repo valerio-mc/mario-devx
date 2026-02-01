@@ -25,19 +25,9 @@ const command = (
 
 export const createCommands = (): CommandDefinition[] => [
   command(
-    "init",
-    "Initialize mario-devx state",
-    "Call tool mario_devx_init with no arguments. Return a short confirmation.",
-  ),
-  command(
-    "prd",
-    "Start PRD interview",
-    "Call tool mario_devx_prd with idea=\"$ARGUMENTS\". Then wait for the user to answer questions.",
-  ),
-  command(
-    "plan",
-    "Generate/update implementation plan",
-    "Call tool mario_devx_plan with no arguments. Then follow the instructions in the tool output.",
+    "new",
+    "Bootstrap: init + PRD + plan",
+    "Call tool mario_devx_new with idea=\"$ARGUMENTS\". Then follow the instructions in the tool output.",
   ),
   command(
     "build",

@@ -71,4 +71,5 @@ Interview logic:
 - When you have enough detail, output `[PRD]...[/PRD]` and update the canonical PRD file.
 
 Stop condition:
-- When `.mario/PRD.md` has: explicit Quality Gates, 3-6 user stories with acceptance criteria, and the required integration details above, STOP and tell the user to run `/mario-devx:plan`.
+- When `.mario/PRD.md` has: explicit Quality Gates, 3-6 user stories with acceptance criteria, and the required integration details above, STOP.
+- Tell the user: plan will start automatically; otherwise rerun `/mario-devx:new`.

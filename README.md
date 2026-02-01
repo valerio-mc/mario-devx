@@ -19,9 +19,7 @@ State lives on disk and in git, not in a chat window. Fresh context every iterat
 No bash harness. No "run plan then exit then run build then rerun build" nonsense. Just slash commands.
 
 ```
-/mario-devx:init
-/mario-devx:prd <idea>
-/mario-devx:plan
+/mario-devx:new <idea>
 /mario-devx:build
 /mario-devx:approve
 /mario-devx:verify
@@ -87,23 +85,21 @@ opencode .
 
 You want the loop in the UI, not in your shell history.
 
-### 4) Initialize mario-devx state
+### 4) Bootstrap (init + PRD + plan)
 
 ```
-/mario-devx:init
+/mario-devx:new my brilliant idea
 ```
 
-This creates `.mario/` and seeds the canonical docs/prompts.
+This bootstraps everything:
 
-### 5) Write the PRD (interview)
+- creates `.mario/` (if missing)
+- runs the PRD interview in `mario-devx (work)` (open `/sessions` and jump into it to answer)
+- when PRD looks complete, it automatically starts the plan generation
 
-```
-/mario-devx:prd my brilliant idea
-```
+If you already have a PRD and just want to regenerate the plan, rerun `/mario-devx:new`.
 
-This runs in `mario-devx (work)`; open `/sessions` and jump into it to answer.
-
-### 6) Set Quality Gates
+### 5) Set Quality Gates
 
 Edit `.mario/PRD.md` and put real commands under `## Quality Gates` (commands only, wrap them in backticks).
 
@@ -111,15 +107,9 @@ If this is a web app and you want UI checks too, run `/mario-devx:ui-verify` (ag
 
 If you don’t define “done”, the agent will.
 
-### 7) Generate the plan
+If you edit `.mario/PRD.md` after bootstrapping, rerun `/mario-devx:new` to refresh `.mario/IMPLEMENTATION_PLAN.md`.
 
-```
-/mario-devx:plan
-```
-
-This runs in `mario-devx (work)` and writes `.mario/IMPLEMENTATION_PLAN.md`.
-
-### 8) Draft the next iteration (HITL checkpoint)
+### 6) Draft the next iteration (HITL checkpoint)
 
 ```
 /mario-devx:build
@@ -127,7 +117,7 @@ This runs in `mario-devx (work)` and writes `.mario/IMPLEMENTATION_PLAN.md`.
 
 This drafts `.mario/state/pending_plan.md` so you can fix the inevitable "plan item too big" problem.
 
-### 9) Approve and run the iteration
+### 7) Approve and run the iteration
 
 ```
 /mario-devx:approve
@@ -193,7 +183,7 @@ Next actions:
 ## Troubleshooting
 
 - **Quality Gates failing instantly:** in `.mario/PRD.md` under `## Quality Gates`, only backticked shell commands are executed. Prose bullets will be ignored.
-- **Plan generation looks like slop:** `.mario/IMPLEMENTATION_PLAN.md` must not contain placeholders like `[...]` or `TODO: fill later`. If it does, rerun `/mario-devx:plan`.
+- **Plan generation looks like slop:** `.mario/IMPLEMENTATION_PLAN.md` must not contain placeholders like `[...]` or `TODO: fill later`. If it does, rerun `/mario-devx:new`.
 - **Where is it running?** open `/sessions` and jump into `mario-devx (work)`, or run `/mario-devx:work` to print the session id.
 - **UI verify doesn’t run:** run `/mario-devx:ui-verify` to set it up (agent-browser / Playwright) and make sure prerequisites are installed.
 - **Still confused:** run `/mario-devx:doctor` and follow the suggestions.

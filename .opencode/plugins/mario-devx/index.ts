@@ -1,11 +1,17 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
-import { readRunState, readWorkSessionState } from "./state";
+import { readRunState, readWorkSessionState, writeRunState } from "./state";
+import { buildPrompt } from "./prompt";
+import { readTextIfExists } from "./fs";
+import path from "path";
+import { isPrdReadyForPlan } from "./bootstrap";
 
 const marioDevxPlugin: Plugin = async (ctx) => {
   const tools = createTools(ctx);
   const repoRoot = ctx.worktree ?? ctx.directory ?? process.cwd();
+
+  const nowIso = (): string => new Date().toISOString();
 
   return {
     tool: tools,
@@ -44,6 +50,58 @@ const marioDevxPlugin: Plugin = async (ctx) => {
           parts: [{ type: "text", text: summary }],
         },
       });
+
+      // Bootstrap flow: when PRD is complete, automatically start plan.
+      if (run.flow === "new" && run.flowNext === "plan" && run.phase === "prd") {
+        const prdPath = path.join(repoRoot, ".mario", "PRD.md");
+        const prd = await readTextIfExists(prdPath);
+        if (!prd || !isPrdReadyForPlan(prd)) {
+          return;
+        }
+
+        const ws2 = await readWorkSessionState(repoRoot);
+        if (!ws2?.sessionId || !ws2.baselineMessageId) {
+          return;
+        }
+
+        const nextRun = {
+          ...run,
+          status: "DOING" as const,
+          phase: "plan" as const,
+          flowNext: undefined,
+          startedAt: nowIso(),
+          updatedAt: nowIso(),
+        };
+        await writeRunState(repoRoot, nextRun);
+
+        await ctx.client.session.revert({
+          path: { id: ws2.sessionId },
+          body: { messageID: ws2.baselineMessageId },
+        });
+        await ctx.client.session.update({
+          path: { id: ws2.sessionId },
+          body: { title: "mario-devx (work) - plan" },
+        });
+        const planPrompt = await buildPrompt(repoRoot, "plan");
+        await ctx.client.session.promptAsync({
+          path: { id: ws2.sessionId },
+          body: {
+            parts: [{ type: "text", text: planPrompt }],
+          },
+        });
+        await ctx.client.session.prompt({
+          path: { id: run.controlSessionId },
+          body: {
+            noReply: true,
+            parts: [
+              {
+                type: "text",
+                text: `mario-devx: PRD looks complete; started plan in work session ${ws2.sessionId}.`,
+              },
+            ],
+          },
+        });
+      }
     },
     config: async (config) => {
       config.command = config.command ?? {};

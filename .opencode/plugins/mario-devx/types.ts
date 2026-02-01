@@ -35,6 +35,8 @@ export type RunStatus = "NONE" | "DOING" | "DONE" | "BLOCKED";
 export type RunState = {
   status: RunStatus;
   phase: RunPhase;
+  flow?: "new";
+  flowNext?: "plan";
   currentPI?: string;
   controlSessionId?: string;
   workSessionId?: string;

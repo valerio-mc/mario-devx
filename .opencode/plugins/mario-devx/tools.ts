@@ -7,6 +7,7 @@ import { resolveGateCommands, persistGateCommands } from "./gates";
 import { ensureMario, bumpIteration, readIterationState, writeIterationState, readPendingPlan, writePendingPlan, clearPendingPlan, getPendingPlanPath, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
 import { marioRoot, marioRunsDir } from "./paths";
 import { PendingPlan, RunPhase, RunState } from "./types";
+import { isPrdReadyForPlan } from "./bootstrap";
 
 type ToolContext = {
   sessionID?: string;
@@ -577,6 +578,58 @@ const ensureNotInWorkSession = async (
 
 const planPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "IMPLEMENTATION_PLAN.md");
 
+const startAsyncWorkSessionPrompt = async (params: {
+  ctx: PluginContext;
+  repoRoot: string;
+  context: ToolContext;
+  mode: "prd" | "plan";
+  phase: RunPhase;
+  extra?: string;
+  workTitle?: string;
+  runState?: Partial<RunState>;
+  toast: string;
+  notify: (sessionId: string) => string;
+}): Promise<{ sessionId: string; baselineMessageId: string }> => {
+  const { ctx, repoRoot, context, mode, phase, extra, workTitle, runState, toast, notify } = params;
+  await ensureMario(repoRoot, false);
+  const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+  if (workTitle) {
+    await setWorkSessionTitle(ctx, ws.sessionId, workTitle);
+  }
+  const prompt = await buildPrompt(repoRoot, mode, extra);
+
+  await updateRunState(repoRoot, {
+    status: "DOING",
+    phase,
+    flow: undefined,
+    flowNext: undefined,
+    controlSessionId: context.sessionID,
+    workSessionId: ws.sessionId,
+    baselineMessageId: ws.baselineMessageId,
+    lastGate: "NONE",
+    lastUI: "NONE",
+    lastVerifier: "NONE",
+    startedAt: nowIso(),
+    ...(runState ?? {}),
+  });
+
+  await ctx.client.session.promptAsync({
+    path: { id: ws.sessionId },
+    body: {
+      ...(context.agent ? { agent: context.agent } : {}),
+      parts: [{ type: "text", text: prompt }],
+    },
+  });
+
+  await showToast(ctx, toast, "info");
+  await notifyControlSession(ctx, context.sessionID, notify(ws.sessionId));
+
+  return {
+    sessionId: ws.sessionId,
+    baselineMessageId: ws.baselineMessageId,
+  };
+};
+
 const setPlanItemStatus = async (
   repoRoot: string,
   planItemId: string,
@@ -694,19 +747,8 @@ export const createTools = (ctx: PluginContext) => {
   const repoRoot = getRepoRoot(ctx);
 
   return {
-    mario_devx_init: tool({
-      description: "Initialize mario-devx state files",
-      args: {
-        force: tool.schema.boolean().optional().describe("Overwrite existing files"),
-      },
-      async execute(args) {
-        await ensureMario(repoRoot, Boolean(args.force));
-        return "mario-devx initialized in .mario/";
-      },
-    }),
-
-    mario_devx_prd: tool({
-      description: "Start PRD interview",
+    mario_devx_new: tool({
+      description: "Bootstrap: init (if needed) + PRD + plan",
       args: {
         idea: tool.schema.string().optional().describe("Initial idea"),
       },
@@ -715,73 +757,49 @@ export const createTools = (ctx: PluginContext) => {
         if (!notInWork.ok) {
           return notInWork.message;
         }
-        await ensureMario(repoRoot, false);
-        const ws = await resetWorkSession(ctx, repoRoot, context.agent);
-        const prompt = await buildPrompt(repoRoot, "prd", args.idea ? `Initial idea: ${args.idea}` : undefined);
-        await updateRunState(repoRoot, {
-          status: "DOING",
-          phase: "prd",
-          controlSessionId: context.sessionID,
-          workSessionId: ws.sessionId,
-          baselineMessageId: ws.baselineMessageId,
-          lastGate: "NONE",
-          lastUI: "NONE",
-          lastVerifier: "NONE",
-          startedAt: nowIso(),
-        });
-        await ctx.client.session.promptAsync({
-          path: { id: ws.sessionId },
-          body: {
-            ...(context.agent ? { agent: context.agent } : {}),
-            parts: [{ type: "text", text: prompt }],
-          },
-        });
-        await showToast(ctx, "PRD started in work session (use /sessions to open)", "info");
-        await notifyControlSession(
-          ctx,
-          context.sessionID,
-          `mario-devx PRD started in work session: ${ws.sessionId} (open via /sessions).`,
-        );
-        return `PRD is running in work session: ${ws.sessionId}. Use /sessions to open it and answer the questions.`;
-      },
-    }),
 
-    mario_devx_plan: tool({
-      description: "Generate/update implementation plan",
-      args: {},
-      async execute(_args, context: ToolContext) {
-        const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
-          return notInWork.message;
-        }
         await ensureMario(repoRoot, false);
-        const ws = await resetWorkSession(ctx, repoRoot, context.agent);
-        const prompt = await buildPrompt(repoRoot, "plan");
-        await updateRunState(repoRoot, {
-          status: "DOING",
-          phase: "plan",
-          controlSessionId: context.sessionID,
-          workSessionId: ws.sessionId,
-          baselineMessageId: ws.baselineMessageId,
-          lastGate: "NONE",
-          lastUI: "NONE",
-          lastVerifier: "NONE",
-          startedAt: nowIso(),
-        });
-        await ctx.client.session.promptAsync({
-          path: { id: ws.sessionId },
-          body: {
-            ...(context.agent ? { agent: context.agent } : {}),
-            parts: [{ type: "text", text: prompt }],
-          },
-        });
-        await showToast(ctx, "Plan started in work session (use /sessions to open)", "info");
-        await notifyControlSession(
+        const prdPath = path.join(repoRoot, ".mario", "PRD.md");
+        const prd = await readTextIfExists(prdPath);
+        if (prd && isPrdReadyForPlan(prd)) {
+          const planWs = await startAsyncWorkSessionPrompt({
+            ctx,
+            repoRoot,
+            context,
+            mode: "plan",
+            phase: "plan",
+            workTitle: "mario-devx (work) - plan",
+            toast: "Plan started in work session (use /sessions to open)",
+            notify: (sessionId) => `mario-devx plan started in work session: ${sessionId} (open via /sessions).`,
+          });
+          return [
+            `Plan is running in work session: ${planWs.sessionId}.`,
+            "Open it via /sessions.",
+            "Next: /mario-devx:build",
+          ].join("\n");
+        }
+
+        const ws = await startAsyncWorkSessionPrompt({
           ctx,
-          context.sessionID,
-          `mario-devx plan started in work session: ${ws.sessionId} (open via /sessions).`,
-        );
-        return `Plan is running in work session: ${ws.sessionId}. Use /sessions to open it. Next: /mario-devx:build.`;
+          repoRoot,
+          context,
+          mode: "prd",
+          phase: "prd",
+          extra: args.idea ? `Initial idea: ${args.idea}` : undefined,
+          workTitle: "mario-devx (work) - bootstrap",
+          runState: {
+            flow: "new",
+            flowNext: "plan",
+          },
+          toast: "Bootstrap started in work session (PRD -> plan)",
+          notify: (sessionId) => `mario-devx bootstrap started (PRD -> plan) in work session: ${sessionId} (open via /sessions).`,
+        });
+
+        return [
+          `Bootstrap started in work session: ${ws.sessionId}`,
+          "Open it via /sessions and answer the PRD interview.",
+          "When PRD looks complete, mario-devx will automatically start plan generation in the same work session.",
+        ].join("\n");
       },
     }),
 
@@ -802,7 +820,7 @@ export const createTools = (ctx: PluginContext) => {
             "- Plan item headers are not in the format: '### PI-0003 - TODO - Title'",
             "",
             "Fix:",
-            "- Run /mario-devx:plan again and ensure it writes fully-expanded plan items (no placeholders).",
+            "- Rerun /mario-devx:new and ensure it writes fully-expanded plan items (no placeholders).",
           ].join("\n");
         }
         await writePendingPlan(repoRoot, draft.pending, draft.content);
@@ -1338,7 +1356,7 @@ export const createTools = (ctx: PluginContext) => {
         const prd = await readTextIfExists(prdPath);
         if (!prd) {
           issues.push("Missing .mario/PRD.md");
-          fixes.push("Run /mario-devx:prd <idea>");
+          fixes.push("Run /mario-devx:new <idea>");
         } else {
           const offenders = findQualityGatesNonBackticked(prd);
           if (offenders.length > 0) {
@@ -1351,12 +1369,12 @@ export const createTools = (ctx: PluginContext) => {
         const plan = await readTextIfExists(planPath(repoRoot));
         if (!plan) {
           issues.push("Missing .mario/IMPLEMENTATION_PLAN.md");
-          fixes.push("Run /mario-devx:plan");
+          fixes.push("Run /mario-devx:new <idea>");
         } else {
           const placeholders = findPlanPlaceholders(plan);
           if (placeholders.length > 0) {
             issues.push(`Implementation plan contains placeholders (${placeholders.join(", ")}).`);
-            fixes.push("Run /mario-devx:plan again; it must write a fully expanded plan (no placeholders).");
+            fixes.push("Run /mario-devx:new again; it must write a fully expanded plan (no placeholders).");
           }
           const badHeaders = findUnparseablePlanHeaders(plan);
           if (badHeaders.length > 0) {
@@ -1389,19 +1407,19 @@ export const createTools = (ctx: PluginContext) => {
         // Work session sanity
         const ws = await readWorkSessionState(repoRoot);
         if (!ws?.sessionId || !ws.baselineMessageId) {
-          issues.push("Work session state missing (will be created on next PRD/plan/approve).");
+          issues.push("Work session state missing (will be created on next /mario-devx:new or /mario-devx:approve).");
         } else {
           try {
             await ctx.client.session.get({ path: { id: ws.sessionId } });
           } catch {
             issues.push("Work session id in state file does not exist anymore.");
-            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:plan.");
+            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:new.");
           }
           try {
             await ctx.client.session.message({ path: { id: ws.sessionId, messageID: ws.baselineMessageId } });
           } catch {
             issues.push("Work session baseline message id is missing.");
-            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:plan.");
+            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:new.");
           }
         }
 
@@ -1459,9 +1477,7 @@ export const createTools = (ctx: PluginContext) => {
       async execute() {
         return [
           "mario-devx commands:",
-          "- /mario-devx:init",
-          "- /mario-devx:prd [idea]",
-          "- /mario-devx:plan",
+          "- /mario-devx:new <idea>",
           "- /mario-devx:build [idea] (draft pending plan)",
           "- /mario-devx:approve (execute pending plan)",
           "- /mario-devx:cancel",
