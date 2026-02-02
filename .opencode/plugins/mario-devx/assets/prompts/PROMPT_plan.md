@@ -9,7 +9,6 @@ Path selection:
 
 Inputs you must treat as source of truth:
 - `PRD.md` / `.mario/PRD.md`
-- `specs/*` / `.mario/specs/*`
 
 Persistent state:
 - `IMPLEMENTATION_PLAN.md` / `.mario/IMPLEMENTATION_PLAN.md`
@@ -22,7 +21,7 @@ Rules:
 - Produce a prioritized, plan-item-sized plan in `IMPLEMENTATION_PLAN.md`.
 - Each plan item must be executable in one loop iteration.
 - Single-shot: produce ONE plan update, write the file, then STOP.
-- After writing the plan, tell the user to run `/mario-devx:build`.
+- After writing the plan, tell the user to run `/mario-devx:run 1`.
 - Each plan item must include:
   - Scope (what changes)
   - Done when (explicit verification: tests/lint/typecheck/build)
@@ -46,11 +45,8 @@ Plan item format requirements:
   - then Scope / Done when / Evidence / Notes.
 
 Evidence requirements:
-- For deterministic checks, reference logs under `.mario/state/` or `.mario/runs/<run>/`.
+- For deterministic checks, reference logs under `.mario/runs/<run>/` (and use `.mario/state/state.json` to find the latest run dir).
 - If completion requires human judgment, set `HITL_REQUIRED=1` in AGENTS and describe the checklist.
-
-If `specs/*` are missing, create 3-8 high-signal specs under `.mario/specs/` derived from the PRD (one topic per file, one sentence without "and").
-If `specs/*` are inconsistent, propose specific edits and split/merge rules (but do not invent requirements).
 
 Sizing rule:
 - If a plan item cannot be completed in one iteration with clear evidence, split it.
