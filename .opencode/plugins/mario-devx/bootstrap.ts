@@ -20,6 +20,11 @@ export const isPrdReadyForPlan = (prd: string): boolean => {
     return false;
   }
 
+  // Require an explicit marker so UI defaults don't depend on heuristics.
+  if (!prd.match(/^Frontend:\s*(yes|no)\b/im)) {
+    return false;
+  }
+
   const lines = prd.split(/\r?\n/);
   const start = lines.findIndex((line) => line.trim() === "## Quality Gates");
   if (start === -1) {

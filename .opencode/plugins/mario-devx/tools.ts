@@ -4,7 +4,7 @@ import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { resolveGateCommands, persistGateCommands } from "./gates";
-import { ensureMario, bumpIteration, readIterationState, writeIterationState, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
+import { ensureMario, bumpIteration, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
 import { marioRoot, marioRunsDir } from "./paths";
 import { RunPhase, RunState } from "./types";
 import { isFrontendProject, isPrdReadyForPlan } from "./bootstrap";
@@ -709,26 +709,6 @@ const parseVerifierStatus = (text: string): { status: "PASS" | "FAIL"; exit: boo
   return { status: "FAIL", exit: false };
 };
 
-const runInChildSession = async (
-  ctx: PluginContext,
-  agent: string | undefined,
-  prompt: string,
-): Promise<{ sessionID: string; outputText: string }> => {
-  const created = await ctx.client.session.create();
-  const sessionID = (created as { data?: { id?: string } }).data?.id;
-  if (!sessionID) {
-    return { sessionID: "", outputText: "" };
-  }
-  const response = await ctx.client.session.prompt({
-    path: { id: sessionID },
-    body: {
-      agent,
-      parts: [{ type: "text", text: prompt }],
-    },
-  });
-  return { sessionID, outputText: extractTextFromPromptResponse(response) };
-};
-
 const formatIterationPlan = (planItem: { id: string; title: string; block: string }): string => {
   return [
     `# Iteration Plan (${planItem.id})`,
@@ -820,7 +800,10 @@ export const createTools = (ctx: PluginContext) => {
         const prdPath = path.join(repoRoot, ".mario", "PRD.md");
         const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
         const gateCommands = await resolveGateCommands(repoRoot, prdPath, agentsPath);
-        await persistGateCommands(agentsPath, gateCommands);
+        // Only persist auto-detected gates to avoid PRD/AGENTS drift.
+        if (gateCommands.some((c) => c.source === "auto")) {
+          await persistGateCommands(agentsPath, gateCommands);
+        }
 
         const agentsRaw = await readTextIfExists(agentsPath);
         const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw) : {};
@@ -845,7 +828,7 @@ export const createTools = (ctx: PluginContext) => {
           }
           attempted += 1;
 
-          const state = await bumpIteration(repoRoot, "build");
+          const state = await bumpIteration(repoRoot);
           const runDir = path.join(
             marioRunsDir(repoRoot),
             `${new Date().toISOString().replace(/[:.]/g, "")}-run-iter${state.iteration}`,
@@ -901,6 +884,7 @@ export const createTools = (ctx: PluginContext) => {
               phase: "run",
               currentPI: planItem.id,
               runDir,
+              latestVerdictPath: path.join(runDir, "judge.out"),
               lastGate: "NONE",
               lastUI: "NONE",
               lastVerifier: "FAIL",
@@ -935,6 +919,7 @@ export const createTools = (ctx: PluginContext) => {
               phase: "run",
               currentPI: planItem.id,
               runDir,
+              latestVerdictPath: path.join(runDir, "judge.out"),
               lastGate: gateResult.ok ? "PASS" : "FAIL",
               lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
               lastVerifier: "FAIL",
@@ -1006,20 +991,17 @@ export const createTools = (ctx: PluginContext) => {
           await writeText(path.join(runDir, "judge.out"), verifierText);
 
           const parsed = parseVerifierStatus(verifierText);
+          const verdictPath = path.join(runDir, "judge.out");
           await updateRunState(repoRoot, {
             status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
             phase: "run",
             currentPI: planItem.id,
             controlSessionId: context.sessionID,
             runDir,
+            latestVerdictPath: verdictPath,
             lastGate: "PASS",
             lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
             lastVerifier: parsed.status,
-          });
-          await writeIterationState(repoRoot, {
-            ...state,
-            lastRunDir: runDir,
-            lastStatus: parsed.status,
           });
 
           await setPlanItemStatus(repoRoot, planItem.id, parsed.status === "PASS" ? "DONE" : "BLOCKED");
@@ -1050,7 +1032,6 @@ export const createTools = (ctx: PluginContext) => {
       args: {},
       async execute(_args, context: ToolContext) {
         await ensureMario(repoRoot, false);
-        const state = await readIterationState(repoRoot);
         const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const run = await readRunState(repoRoot);
 
@@ -1068,11 +1049,10 @@ export const createTools = (ctx: PluginContext) => {
         );
 
         return [
-          `Iteration: ${state.iteration}`,
-          `Last mode: ${state.lastMode ?? "none"}`,
-          `Last status: ${state.lastStatus ?? "none"}`,
+          `Iteration: ${run.iteration}`,
           `Work session: ${ws.sessionId}`,
           `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
+          run.latestVerdictPath ? `Latest verdict: ${run.latestVerdictPath}` : "Latest verdict: (none)",
           "",
           `Next: ${next}`,
         ].join("\n");

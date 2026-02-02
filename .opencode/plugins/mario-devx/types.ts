@@ -4,15 +4,6 @@ export type GateCommand = {
   source: "prd" | "agents" | "auto";
 };
 
-export type IterationMode = "build";
-
-export type IterationState = {
-  iteration: number;
-  lastMode: IterationMode | null;
-  lastRunDir?: string;
-  lastStatus?: "PASS" | "FAIL" | "NONE";
-};
-
 export type WorkSessionState = {
   sessionId: string;
   baselineMessageId: string;
@@ -25,6 +16,7 @@ export type RunPhase = "prd" | "plan" | "run";
 export type RunStatus = "NONE" | "DOING" | "DONE" | "BLOCKED";
 
 export type RunState = {
+  iteration: number;
   status: RunStatus;
   phase: RunPhase;
   flow?: "new";
@@ -34,6 +26,7 @@ export type RunState = {
   workSessionId?: string;
   baselineMessageId?: string;
   runDir?: string;
+  latestVerdictPath?: string;
   lastGate?: "PASS" | "FAIL" | "NONE";
   lastUI?: "PASS" | "FAIL" | "NONE";
   lastVerifier?: "PASS" | "FAIL" | "NONE";

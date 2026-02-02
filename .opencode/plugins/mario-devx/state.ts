@@ -1,27 +1,21 @@
 import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
 import { marioStateDir, marioRunsDir } from "./paths";
-import { IterationState, RunState, WorkSessionState } from "./types";
+import { RunState, WorkSessionState } from "./types";
 import { seedMarioAssets } from "./assets";
 
 const stateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "state.json");
 
 type MarioState = {
   version: 1;
-  iteration?: IterationState;
   run?: RunState;
   workSession?: WorkSessionState;
 };
 
-const defaultIterationState = (): IterationState => ({
-  iteration: 0,
-  lastMode: null,
-  lastStatus: "NONE",
-});
-
 const defaultRunState = (): RunState => ({
+  iteration: 0,
   status: "NONE",
-  phase: "build",
+  phase: "run",
   updatedAt: new Date().toISOString(),
 });
 
@@ -54,33 +48,6 @@ export const ensureMario = async (repoRoot: string, force = false): Promise<void
   await ensureDir(marioRunsDir(repoRoot));
 };
 
-export const readIterationState = async (repoRoot: string): Promise<IterationState> => {
-  const state = await readState(repoRoot);
-  return state.iteration ?? defaultIterationState();
-};
-
-export const writeIterationState = async (
-  repoRoot: string,
-  state: IterationState,
-): Promise<void> => {
-  const current = await readState(repoRoot);
-  await writeState(repoRoot, { ...current, iteration: state });
-};
-
-export const bumpIteration = async (
-  repoRoot: string,
-  mode: IterationState["lastMode"],
-): Promise<IterationState> => {
-  const current = await readIterationState(repoRoot);
-  const next = {
-    ...current,
-    iteration: current.iteration + 1,
-    lastMode: mode,
-  };
-  await writeIterationState(repoRoot, next);
-  return next;
-};
-
 export const readWorkSessionState = async (repoRoot: string): Promise<WorkSessionState | null> => {
   const state = await readState(repoRoot);
   const ws = state.workSession;
@@ -106,4 +73,15 @@ export const readRunState = async (repoRoot: string): Promise<RunState> => {
 export const writeRunState = async (repoRoot: string, state: RunState): Promise<void> => {
   const current = await readState(repoRoot);
   await writeState(repoRoot, { ...current, run: state });
+};
+
+export const bumpIteration = async (repoRoot: string): Promise<RunState> => {
+  const run = await readRunState(repoRoot);
+  const next: RunState = {
+    ...run,
+    iteration: (run.iteration ?? 0) + 1,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeRunState(repoRoot, next);
+  return next;
 };
