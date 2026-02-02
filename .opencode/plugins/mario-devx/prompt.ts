@@ -9,7 +9,9 @@ export const buildPrompt = async (
   const templatePath =
     mode === "verify"
       ? getPromptTemplatePath("verify_llm")
-      : getPromptTemplatePath(mode);
+      : mode === "build"
+        ? getPromptTemplatePath("run_build")
+        : getPromptTemplatePath(mode);
   const template = await readText(templatePath);
 
   const header = [
