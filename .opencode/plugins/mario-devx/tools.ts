@@ -489,7 +489,7 @@ const getBaselineText = (repoRoot: string): string => {
     "- PRD: .mario/PRD.md",
     "- Plan: .mario/IMPLEMENTATION_PLAN.md",
     "- Agent config: .mario/AGENTS.md",
-    "- Feedback: .mario/state/feedback.md",
+    "- State: .mario/state/state.json",
     "- Runs: .mario/runs/*",
     "",
     `Repo: ${repoRoot}`,
@@ -895,7 +895,6 @@ export const createTools = (ctx: PluginContext) => {
               "- Open /sessions -> mario-devx (work) and inspect the current state.",
             ].join("\n");
             await writeText(path.join(runDir, "judge.out"), text);
-            await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), text);
             await setPlanItemStatus(repoRoot, planItem.id, "BLOCKED");
             await updateRunState(repoRoot, {
               status: "BLOCKED",
@@ -930,7 +929,6 @@ export const createTools = (ctx: PluginContext) => {
               "- Fix the failing checks, then rerun /mario-devx:run 1.",
             ].join("\n");
             await writeText(path.join(runDir, "judge.out"), text);
-            await writeText(path.join(marioRoot(repoRoot), "state", "feedback.md"), text);
             await setPlanItemStatus(repoRoot, planItem.id, "BLOCKED");
             await updateRunState(repoRoot, {
               status: "BLOCKED",
@@ -1006,10 +1004,6 @@ export const createTools = (ctx: PluginContext) => {
           });
           const verifierText = extractTextFromPromptResponse(verifierResponse);
           await writeText(path.join(runDir, "judge.out"), verifierText);
-          await writeText(
-            path.join(marioRoot(repoRoot), "state", "feedback.md"),
-            verifierText || "Status: FAIL\nEXIT_SIGNAL: false\n",
-          );
 
           const parsed = parseVerifierStatus(verifierText);
           await updateRunState(repoRoot, {
@@ -1045,7 +1039,7 @@ export const createTools = (ctx: PluginContext) => {
             ? "Reached max_items limit."
             : completed === attempted
               ? "No more TODO/DOING plan items found."
-              : "Stopped early due to failure. See .mario/state/feedback.md.";
+              : "Stopped early due to failure. See .mario/runs/<latest>/judge.out.";
 
         return `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
       },
@@ -1064,7 +1058,7 @@ export const createTools = (ctx: PluginContext) => {
           run.status === "DOING"
             ? "Open /sessions to watch mario-devx (work)."
             : run.status === "BLOCKED"
-              ? "Read .mario/state/feedback.md, fix issues, then run /mario-devx:run 1."
+              ? "Read the last judge.out in .mario/runs/* (see state/state.json for runDir), fix issues, then run /mario-devx:run 1."
               : "Run /mario-devx:run 1 to execute the next plan item.";
 
         await notifyControlSession(

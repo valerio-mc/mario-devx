@@ -36,10 +36,6 @@ const templateAssets: AssetCopy[] = [
   { source: "templates/mario.gitignore", destination: ".gitignore" },
 ];
 
-const stateAssets: AssetCopy[] = [
-  { source: "templates/state/feedback.md", destination: "state/feedback.md" },
-];
-
 
 const copyAsset = async (
   repoRoot: string,
@@ -65,10 +61,6 @@ export const seedMarioAssets = async (
   await ensureDir(marioStateDir(repoRoot));
 
   for (const asset of templateAssets) {
-    await copyAsset(repoRoot, asset, force);
-  }
-
-  for (const asset of stateAssets) {
     await copyAsset(repoRoot, asset, force);
   }
 

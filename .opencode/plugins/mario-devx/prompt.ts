@@ -22,7 +22,8 @@ export const buildPrompt = async (
     "- PRD: .mario/PRD.md",
     "- Plan: .mario/IMPLEMENTATION_PLAN.md",
     "- Agent config: .mario/AGENTS.md",
-    "- Feedback (read first): .mario/state/feedback.md",
+    "- State: .mario/state/state.json",
+    "- Latest verdict: .mario/runs/<latest>/judge.out (see state.json for runDir)",
     "",
   ];
 
