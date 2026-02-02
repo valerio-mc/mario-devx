@@ -21,10 +21,6 @@ export const marioRunsDir = (repoRoot: string): string => {
   return path.join(marioRoot(repoRoot), "runs");
 };
 
-export const marioPromptsDir = (repoRoot: string): string => {
-  return path.join(marioRoot(repoRoot), "prompts");
-};
-
 export const assetsDir = (): string => {
   return path.join(import.meta.dir, "assets");
 };

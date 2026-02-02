@@ -8,8 +8,8 @@ export const buildPrompt = async (
 ): Promise<string> => {
   const templatePath =
     mode === "verify"
-      ? getPromptTemplatePath(repoRoot, "verify_llm")
-      : getPromptTemplatePath(repoRoot, mode);
+      ? getPromptTemplatePath("verify_llm")
+      : getPromptTemplatePath(mode);
   const template = await readText(templatePath);
 
   const header = [

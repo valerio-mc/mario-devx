@@ -1,30 +1,11 @@
 import path from "path";
 import { ensureDir, fileExists, readText, writeText } from "./fs";
-import { assetsDir, marioPromptsDir, marioRoot, marioStateDir } from "./paths";
+import { assetsDir, marioRoot, marioStateDir } from "./paths";
 
 type AssetCopy = {
   source: string;
   destination: string;
 };
-
-const promptAssets: AssetCopy[] = [
-  {
-    source: "prompts/PROMPT_prd.md",
-    destination: "prompts/PROMPT_prd.md",
-  },
-  {
-    source: "prompts/PROMPT_plan.md",
-    destination: "prompts/PROMPT_plan.md",
-  },
-  {
-    source: "prompts/PROMPT_build.md",
-    destination: "prompts/PROMPT_build.md",
-  },
-  {
-    source: "prompts/PROMPT_verify_llm.md",
-    destination: "prompts/PROMPT_verify_llm.md",
-  },
-];
 
 const templateAssets: AssetCopy[] = [
   { source: "templates/PRD.md", destination: "PRD.md" },
@@ -57,18 +38,13 @@ export const seedMarioAssets = async (
   force = false,
 ): Promise<void> => {
   await ensureDir(marioRoot(repoRoot));
-  await ensureDir(marioPromptsDir(repoRoot));
   await ensureDir(marioStateDir(repoRoot));
 
   for (const asset of templateAssets) {
     await copyAsset(repoRoot, asset, force);
   }
-
-  for (const asset of promptAssets) {
-    await copyAsset(repoRoot, asset, force);
-  }
 };
 
-export const getPromptTemplatePath = (repoRoot: string, mode: string): string => {
-  return path.join(marioPromptsDir(repoRoot), `PROMPT_${mode}.md`);
+export const getPromptTemplatePath = (mode: string): string => {
+  return path.join(assetsDir(), `prompts/PROMPT_${mode}.md`);
 };
