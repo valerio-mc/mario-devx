@@ -6,13 +6,6 @@ import { seedMarioAssets } from "./assets";
 
 const stateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "state.json");
 
-// Legacy files (pre state.json). Kept for migration reads only.
-const legacyIterationFile = (repoRoot: string): string =>
-  path.join(marioStateDir(repoRoot), "iteration.json");
-const legacyWorkSessionFile = (repoRoot: string): string =>
-  path.join(marioStateDir(repoRoot), "work_session.json");
-const legacyRunStateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "run.json");
-
 type MarioState = {
   version: 1;
   iteration?: IterationState;
@@ -48,36 +41,7 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
     }
   }
 
-  // Best-effort migration from legacy files.
-  const [iterRaw, runRaw, wsRaw] = await Promise.all([
-    readTextIfExists(legacyIterationFile(repoRoot)),
-    readTextIfExists(legacyRunStateFile(repoRoot)),
-    readTextIfExists(legacyWorkSessionFile(repoRoot)),
-  ]);
-
-  let migrated: MarioState = { version: 1 };
-  try {
-    if (iterRaw) migrated.iteration = JSON.parse(iterRaw) as IterationState;
-  } catch {
-    // ignore
-  }
-  try {
-    if (runRaw) migrated.run = JSON.parse(runRaw) as RunState;
-  } catch {
-    // ignore
-  }
-  try {
-    if (wsRaw) migrated.workSession = JSON.parse(wsRaw) as WorkSessionState;
-  } catch {
-    // ignore
-  }
-
-  if (migrated.iteration || migrated.run || migrated.workSession) {
-    await ensureDir(marioStateDir(repoRoot));
-    await writeText(stateFile(repoRoot), JSON.stringify(migrated, null, 2));
-  }
-
-  return migrated;
+  return { version: 1 };
 };
 
 const writeState = async (repoRoot: string, next: MarioState): Promise<void> => {
