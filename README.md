@@ -131,11 +131,14 @@ In your project:
 
 ```text
 .mario/
-  PRD.md
-  IMPLEMENTATION_PLAN.md
-  AGENTS.md
-  state/feedback.md
-  runs/*
+  PRD.md                    # product spec + quality gates + Frontend: yes|no
+  IMPLEMENTATION_PLAN.md     # the execution queue (PI-0001...); /run picks from here
+  AGENTS.md                  # harness knobs (UI_VERIFY*, CMD_*, etc)
+  state/feedback.md          # latest judge output (read this first when BLOCKED)
+  state/iteration.json       # iteration counter + last status (internal)
+  state/run.json             # last run status/phase + run dir pointer (internal)
+  state/work_session.json    # persistent work session ids (internal)
+  runs/*                     # per-iteration evidence (gates.log/json, judge.out, optional ui-verify.log)
 ```
 
 In this repo:
