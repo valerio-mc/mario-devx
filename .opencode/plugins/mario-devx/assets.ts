@@ -14,7 +14,6 @@ const templateAssets: AssetCopy[] = [
     source: "templates/IMPLEMENTATION_PLAN.md",
     destination: "IMPLEMENTATION_PLAN.md",
   },
-  { source: "templates/mario.gitignore", destination: ".gitignore" },
 ];
 
 

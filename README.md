@@ -171,6 +171,15 @@ Next actions:
 - Keep plan items small.
 - If it’s stuck: tighten the plan, don’t "add more context" like it’s a cheat code.
 
+## Git Hygiene
+
+If you don’t want run artifacts or internal state in git, add this to your repo `.gitignore`:
+
+```gitignore
+.mario/runs/
+.mario/state/
+```
+
 ## Troubleshooting
 
 - **Quality Gates failing instantly:** in `.mario/PRD.md` under `## Quality Gates`, only backticked shell commands are executed. Prose bullets will be ignored.
