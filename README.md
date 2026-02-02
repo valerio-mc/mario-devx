@@ -117,7 +117,7 @@ This:
 - picks the next `TODO` (or resumes `DOING`) plan item from `.mario/IMPLEMENTATION_PLAN.md`
 - runs the builder in `mario-devx (work)`
 - runs deterministic gates (+ optional UI verify)
-- runs the judge and writes feedback to `.mario/state/feedback.md`
+- runs the judge and writes verdict to `.mario/runs/*/judge.out` (latest run dir is in `state/state.json`)
 
 To keep going:
 
@@ -134,7 +134,6 @@ In your project:
   PRD.md                    # product spec + quality gates + Frontend: yes|no
   IMPLEMENTATION_PLAN.md     # the execution queue (PI-0001...); /run picks from here
   AGENTS.md                  # harness knobs (UI_VERIFY*, CMD_*, etc)
-  state/feedback.md          # latest judge output (read this first when BLOCKED)
   state/state.json           # internal state (iteration counter, last run status, work session ids)
   runs/*                     # per-iteration evidence (gates.log/json, judge.out, optional ui-verify.log)
 ```
@@ -155,7 +154,7 @@ In this repo:
 
 ## Verifier output (strict on purpose)
 
-The judge writes to `.mario/state/feedback.md` using this format:
+The judge writes to `.mario/runs/*/judge.out` using this format:
 
 ```text
 Status: PASS|FAIL
