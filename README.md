@@ -7,7 +7,6 @@ Named after Super Mario because (1) it never stops running, (2) it repeatedly sm
 **Mario DevX** is an OpenCode plugin that runs Ralph-style, file-based, deterministic agent loops inside the OpenCode TUI.
 
 - PRD interview -> `.mario/PRD.md`
-- Split into specs -> `.mario/specs/*.md`
 - Planning loop -> `.mario/IMPLEMENTATION_PLAN.md` (plan items with stable IDs)
 - Build loop -> implement exactly one plan item per iteration
 - Backpressure -> deterministic checks + an LLM verifier that can fail the iteration
@@ -133,14 +132,9 @@ In your project:
 ```text
 .mario/
   PRD.md
-  specs/*.md
   IMPLEMENTATION_PLAN.md
   AGENTS.md
   state/feedback.md
-  progress.md
-  guardrails.md
-  activity.log
-  errors.log
   runs/*
 ```
 
