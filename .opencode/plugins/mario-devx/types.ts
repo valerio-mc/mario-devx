@@ -4,7 +4,7 @@ export type GateCommand = {
   source: "prd" | "agents" | "auto";
 };
 
-export type IterationMode = "prd" | "plan" | "build";
+export type IterationMode = "build";
 
 export type IterationState = {
   iteration: number;
@@ -20,7 +20,7 @@ export type WorkSessionState = {
   updatedAt: string;
 };
 
-export type RunPhase = "prd" | "plan" | "build" | "verify" | "auto" | "run";
+export type RunPhase = "prd" | "plan" | "run";
 
 export type RunStatus = "NONE" | "DOING" | "DONE" | "BLOCKED";
 
