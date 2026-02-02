@@ -487,7 +487,6 @@ const getBaselineText = (repoRoot: string): string => {
     "",
     "Canonical files:",
     "- PRD: .mario/PRD.md",
-    "- Specs: .mario/specs/*",
     "- Plan: .mario/IMPLEMENTATION_PLAN.md",
     "- Agent config: .mario/AGENTS.md",
     "- Feedback: .mario/state/feedback.md",
@@ -1030,10 +1029,7 @@ export const createTools = (ctx: PluginContext) => {
           });
 
           await setPlanItemStatus(repoRoot, planItem.id, parsed.status === "PASS" ? "DONE" : "BLOCKED");
-          await appendLine(
-            path.join(repoRoot, ".mario", "progress.md"),
-            `- ${nowIso()} run iter=${state.iteration} item=${planItem.id} gates=PASS${uiResult ? ` ui=${uiResult.ok ? "PASS" : "FAIL"}` : ""} judge=${parsed.status}`,
-          );
+        // History lives in .mario/runs/* (gates.log/gates.json/judge.out and optional UI artifacts).
 
           if (parsed.status !== "PASS" || !parsed.exit) {
             await showToast(ctx, `Run stopped: verifier failed on ${planItem.id}`, "warning");

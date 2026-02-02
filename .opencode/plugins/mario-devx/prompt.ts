@@ -20,14 +20,9 @@ export const buildPrompt = async (
     "",
     "Canonical files (use these paths):",
     "- PRD: .mario/PRD.md",
-    "- Specs: .mario/specs/*",
     "- Plan: .mario/IMPLEMENTATION_PLAN.md",
     "- Agent config: .mario/AGENTS.md",
     "- Feedback (read first): .mario/state/feedback.md",
-    "- Progress log: .mario/progress.md",
-    "- Guardrails: .mario/guardrails.md",
-    "- Activity log: .mario/activity.log",
-    "- Errors log: .mario/errors.log",
     "",
   ];
 
