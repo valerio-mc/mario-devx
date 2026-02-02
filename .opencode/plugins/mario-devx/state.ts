@@ -1,17 +1,89 @@
 import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
-import { marioRoot, marioStateDir, marioRunsDir } from "./paths";
+import { marioStateDir, marioRunsDir } from "./paths";
 import { IterationState, RunState, WorkSessionState } from "./types";
 import { seedMarioAssets } from "./assets";
 
-const iterationFile = (repoRoot: string): string =>
+const stateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "state.json");
+
+// Legacy files (pre state.json). Kept for migration reads only.
+const legacyIterationFile = (repoRoot: string): string =>
   path.join(marioStateDir(repoRoot), "iteration.json");
-
-const workSessionFile = (repoRoot: string): string =>
+const legacyWorkSessionFile = (repoRoot: string): string =>
   path.join(marioStateDir(repoRoot), "work_session.json");
+const legacyRunStateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "run.json");
 
-const runStateFile = (repoRoot: string): string =>
-  path.join(marioStateDir(repoRoot), "run.json");
+type MarioState = {
+  version: 1;
+  iteration?: IterationState;
+  run?: RunState;
+  workSession?: WorkSessionState;
+};
+
+const defaultIterationState = (): IterationState => ({
+  iteration: 0,
+  lastMode: null,
+  lastStatus: "NONE",
+});
+
+const defaultRunState = (): RunState => ({
+  status: "NONE",
+  phase: "build",
+  updatedAt: new Date().toISOString(),
+});
+
+const readState = async (repoRoot: string): Promise<MarioState> => {
+  const raw = await readTextIfExists(stateFile(repoRoot));
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<MarioState>;
+      return {
+        version: 1,
+        iteration: parsed.iteration,
+        run: parsed.run,
+        workSession: parsed.workSession,
+      };
+    } catch {
+      return { version: 1 };
+    }
+  }
+
+  // Best-effort migration from legacy files.
+  const [iterRaw, runRaw, wsRaw] = await Promise.all([
+    readTextIfExists(legacyIterationFile(repoRoot)),
+    readTextIfExists(legacyRunStateFile(repoRoot)),
+    readTextIfExists(legacyWorkSessionFile(repoRoot)),
+  ]);
+
+  let migrated: MarioState = { version: 1 };
+  try {
+    if (iterRaw) migrated.iteration = JSON.parse(iterRaw) as IterationState;
+  } catch {
+    // ignore
+  }
+  try {
+    if (runRaw) migrated.run = JSON.parse(runRaw) as RunState;
+  } catch {
+    // ignore
+  }
+  try {
+    if (wsRaw) migrated.workSession = JSON.parse(wsRaw) as WorkSessionState;
+  } catch {
+    // ignore
+  }
+
+  if (migrated.iteration || migrated.run || migrated.workSession) {
+    await ensureDir(marioStateDir(repoRoot));
+    await writeText(stateFile(repoRoot), JSON.stringify(migrated, null, 2));
+  }
+
+  return migrated;
+};
+
+const writeState = async (repoRoot: string, next: MarioState): Promise<void> => {
+  await ensureDir(marioStateDir(repoRoot));
+  await writeText(stateFile(repoRoot), JSON.stringify({ ...next, version: 1 }, null, 2));
+};
 
 export const ensureMario = async (repoRoot: string, force = false): Promise<void> => {
   await seedMarioAssets(repoRoot, force);
@@ -19,23 +91,16 @@ export const ensureMario = async (repoRoot: string, force = false): Promise<void
 };
 
 export const readIterationState = async (repoRoot: string): Promise<IterationState> => {
-  const raw = await readTextIfExists(iterationFile(repoRoot));
-  if (!raw) {
-    return { iteration: 0, lastMode: null, lastStatus: "NONE" };
-  }
-  try {
-    return JSON.parse(raw) as IterationState;
-  } catch {
-    return { iteration: 0, lastMode: null, lastStatus: "NONE" };
-  }
+  const state = await readState(repoRoot);
+  return state.iteration ?? defaultIterationState();
 };
 
 export const writeIterationState = async (
   repoRoot: string,
   state: IterationState,
 ): Promise<void> => {
-  await ensureDir(marioStateDir(repoRoot));
-  await writeText(iterationFile(repoRoot), JSON.stringify(state, null, 2));
+  const current = await readState(repoRoot);
+  await writeState(repoRoot, { ...current, iteration: state });
 };
 
 export const bumpIteration = async (
@@ -53,42 +118,28 @@ export const bumpIteration = async (
 };
 
 export const readWorkSessionState = async (repoRoot: string): Promise<WorkSessionState | null> => {
-  const raw = await readTextIfExists(workSessionFile(repoRoot));
-  if (!raw) {
+  const state = await readState(repoRoot);
+  const ws = state.workSession;
+  if (!ws?.sessionId || !ws.baselineMessageId) {
     return null;
   }
-  try {
-    const parsed = JSON.parse(raw) as WorkSessionState;
-    if (!parsed.sessionId || !parsed.baselineMessageId) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+  return ws;
 };
 
 export const writeWorkSessionState = async (
   repoRoot: string,
   state: WorkSessionState,
 ): Promise<void> => {
-  await ensureDir(marioStateDir(repoRoot));
-  await writeText(workSessionFile(repoRoot), JSON.stringify(state, null, 2));
+  const current = await readState(repoRoot);
+  await writeState(repoRoot, { ...current, workSession: state });
 };
 
 export const readRunState = async (repoRoot: string): Promise<RunState> => {
-  const raw = await readTextIfExists(runStateFile(repoRoot));
-  if (!raw) {
-    return { status: "NONE", phase: "build", updatedAt: new Date().toISOString() };
-  }
-  try {
-    return JSON.parse(raw) as RunState;
-  } catch {
-    return { status: "NONE", phase: "build", updatedAt: new Date().toISOString() };
-  }
+  const state = await readState(repoRoot);
+  return state.run ?? defaultRunState();
 };
 
 export const writeRunState = async (repoRoot: string, state: RunState): Promise<void> => {
-  await ensureDir(marioStateDir(repoRoot));
-  await writeText(runStateFile(repoRoot), JSON.stringify(state, null, 2));
+  const current = await readState(repoRoot);
+  await writeState(repoRoot, { ...current, run: state });
 };

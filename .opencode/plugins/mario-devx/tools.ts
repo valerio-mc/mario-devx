@@ -1158,13 +1158,13 @@ export const createTools = (ctx: PluginContext) => {
             await ctx.client.session.get({ path: { id: ws.sessionId } });
           } catch {
             issues.push("Work session id in state file does not exist anymore.");
-            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:new.");
+            fixes.push("Delete .mario/state/state.json and rerun /mario-devx:new.");
           }
           try {
             await ctx.client.session.message({ path: { id: ws.sessionId, messageID: ws.baselineMessageId } });
           } catch {
             issues.push("Work session baseline message id is missing.");
-            fixes.push("Delete .mario/state/work_session.json and rerun /mario-devx:new.");
+            fixes.push("Delete .mario/state/state.json and rerun /mario-devx:new.");
           }
         }
 
