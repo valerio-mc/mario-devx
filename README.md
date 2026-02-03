@@ -88,6 +88,8 @@ If it stops, the answer is in the latest verdict.
 /mario-devx:status
 ```
 
+Note: nothing runs code until you call `/mario-devx:run`.
+
 ## What gets created
 
 In your project:

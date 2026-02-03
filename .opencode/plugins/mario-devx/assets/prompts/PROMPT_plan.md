@@ -16,12 +16,15 @@ Persistent state:
 
 Rules:
 - Plan only. Do not implement.
+- Do not run shell commands.
+- Do not modify files outside `.mario/`.
 - Do not assume missing functionality; search the codebase first.
 - Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
 - Produce a prioritized, plan-item-sized plan in `IMPLEMENTATION_PLAN.md`.
 - Each plan item must be executable in one loop iteration.
 - Single-shot: produce ONE plan update, write the file, then STOP.
 - After writing the plan, tell the user to run `/mario-devx:run 1`.
+- Then STOP. Do not start implementation.
 - Each plan item must include:
   - Scope (what changes)
   - Done when (explicit verification: tests/lint/typecheck/build)
@@ -54,4 +57,4 @@ Sizing rule:
 Web scaffolding guidance (avoid common papercuts):
 - For Next.js scaffolding in a repo with `.mario/` and `.opencode/`, avoid `create-next-app .` (non-empty dir). Plan to scaffold in a temp dir and copy into repo root.
 
-If any core files are missing, create minimal defaults (or ask the user to run `mario-init` to bootstrap templates).
+If any core files are missing, write a note in the plan item under Notes/risks and keep going.

@@ -9,6 +9,8 @@ Path selection:
 
 Rules:
 - Do not implement anything.
+- Do not run shell commands.
+- Do not create or modify files outside `.mario/`.
 - If no PRD exists, create one at `.mario/PRD.md` (preferred) or `PRD.md` (legacy root mode).
 - Ask questions in small rounds (3-5 per round).
 - Every question must offer lettered options (A/B/C/D) so the user can answer compactly.
@@ -17,6 +19,7 @@ Rules:
 - In `## Quality Gates`, include runnable shell commands ONLY, wrapped in backticks (example: `npm run lint && npm run build`).
 - Put any prose about verification in another section (not under Quality Gates).
 - After EACH round of answers, update the canonical PRD file immediately (even if partial).
+- After updating the PRD for a round, STOP and wait for the user's next reply. Do not continue until the user replies.
 - Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
 
 Required integration details (do not hand-wave):
@@ -73,5 +76,6 @@ Interview logic:
 - When you have enough detail, output `[PRD]...[/PRD]` and update the canonical PRD file.
 
 Stop condition:
-- When `.mario/PRD.md` has: explicit Quality Gates, 3-6 user stories with acceptance criteria, and the required integration details above, STOP.
-- Tell the user: plan will start automatically; otherwise rerun `/mario-devx:new`.
+- When `.mario/PRD.md` has: explicit Quality Gates, Frontend: yes|no, and 3-6 user stories with verifiable acceptance criteria, STOP.
+- Output `[PRD]...[/PRD]` once, then stop talking.
+- Wait for the harness to start planning.
