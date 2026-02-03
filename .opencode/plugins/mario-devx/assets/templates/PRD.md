@@ -2,7 +2,7 @@
 
 ## Overview
 
-- Frontend: no
+Frontend: no
 
 ## Goals
 

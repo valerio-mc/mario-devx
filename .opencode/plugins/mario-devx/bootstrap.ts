@@ -21,7 +21,7 @@ export const isPrdReadyForPlan = (prd: string): boolean => {
   }
 
   // Require an explicit marker so UI defaults don't depend on heuristics.
-  if (!prd.match(/^Frontend:\s*(yes|no)\b/im)) {
+  if (!prd.match(/^\s*-?\s*Frontend:\s*(yes|no)\b/im)) {
     return false;
   }
 
@@ -61,7 +61,7 @@ export const isFrontendProject = (prd: string): boolean => {
   }
 
   // Prefer an explicit marker.
-  const explicit = prd.match(/^Frontend:\s*(yes|no)\b/im);
+  const explicit = prd.match(/^\s*-?\s*Frontend:\s*(yes|no)\b/im);
   if (explicit) {
     return (explicit[1] ?? "").toLowerCase() === "yes";
   }

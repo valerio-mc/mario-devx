@@ -10,6 +10,7 @@ Path selection:
 Rules:
 - Do not implement anything.
 - Do not run shell commands.
+- Do not call any tools.
 - Do not create or modify files outside `.mario/`.
 - If no PRD exists, create one at `.mario/PRD.md` (preferred) or `PRD.md` (legacy root mode).
 - Ask questions in small rounds (3-5 per round).
@@ -32,6 +33,7 @@ Required integration details (do not hand-wave):
 Frontends / web apps:
 - Ask explicitly whether the project includes a frontend.
 - Add a single explicit marker line in the PRD: `Frontend: yes|no`.
+  - Prefer a standalone line exactly `Frontend: yes` or `Frontend: no` (no bullet), but accept `- Frontend: yes|no` if the repo already uses bullets.
 - If `Frontend: yes`, UI verification is enabled by default (best-effort): set `UI_VERIFY=1` and `UI_VERIFY_REQUIRED=0` in `.mario/AGENTS.md`.
 - Explain that UI verification uses Vercel's `agent-browser` (Playwright-based) to interact with the app in a real browser.
 - Do not call any tools to set this up; the user can install prerequisites later (skill + CLI) and/or adjust `.mario/AGENTS.md` manually.
