@@ -59,6 +59,8 @@ opencode .
 
 Open `/sessions` and jump into `mario-devx (work)` to answer the PRD interview.
 
+When the PRD is complete, mario-devx starts planning in the same work session. Wait for the work session to go idle before running `/mario-devx:run`.
+
 ## Usage
 
 ### Sessions (or suffer)
@@ -75,6 +77,8 @@ Open `/sessions` and jump into `mario-devx (work)` to answer the PRD interview.
 ```
 /mario-devx:run 1
 ```
+
+If planning is still running (or the plan is still a template), `/mario-devx:run` will refuse to execute.
 
 To keep going:
 

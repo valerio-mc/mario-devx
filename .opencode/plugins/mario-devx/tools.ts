@@ -143,7 +143,7 @@ const findQualityGatesNonBackticked = (prd: string): string[] => {
 
 const findPlanPlaceholders = (plan: string): string[] => {
   const offenders: string[] = [];
-  const patterns = ["[...", "... existing", "... rest", "(...", "...]"];
+  const patterns = ["<title>", "[...", "... existing", "... rest", "(...", "...]"];
   const lower = plan.toLowerCase();
   for (const p of patterns) {
     if (lower.includes(p)) {
@@ -752,7 +752,7 @@ export const createTools = (ctx: PluginContext) => {
           return [
             `Plan is running in work session: ${planWs.sessionId}.`,
             "Open it via /sessions.",
-            "Next: /mario-devx:run 1",
+            "Wait for planning to finish, then run: /mario-devx:run 1",
           ].join("\n");
         }
 
@@ -792,6 +792,25 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         await ensureMario(repoRoot, false);
+
+        const currentRun = await readRunState(repoRoot);
+        if (currentRun.status === "DOING") {
+          return `A mario-devx run is already in progress (${currentRun.phase}). Open /sessions and wait, then rerun /mario-devx:status.`;
+        }
+
+        const planRaw = await readTextIfExists(planPath(repoRoot));
+        if (!planRaw) {
+          return "Missing .mario/IMPLEMENTATION_PLAN.md. Run /mario-devx:new <idea> first.";
+        }
+        const placeholders = findPlanPlaceholders(planRaw);
+        if (placeholders.length > 0) {
+          return `Implementation plan still contains placeholders (${placeholders.join(", ")}). Wait for planning to finish or rerun /mario-devx:new.`;
+        }
+        const badHeaders = findUnparseablePlanHeaders(planRaw);
+        if (badHeaders.length > 0) {
+          return `Implementation plan has unparseable PI headers (${badHeaders.length}). Fix .mario/IMPLEMENTATION_PLAN.md, then rerun /mario-devx:run.`;
+        }
+
         await ensureUiVerifyDefault(repoRoot);
         const rawMax = (args.max_items ?? "").trim();
         const parsed = rawMax.length === 0 ? 1 : Number.parseInt(rawMax, 10);
@@ -1037,7 +1056,9 @@ export const createTools = (ctx: PluginContext) => {
 
         const next =
           run.status === "DOING"
-            ? "Open /sessions to watch mario-devx (work)."
+            ? run.phase === "plan"
+              ? "Planning is in progress. Open /sessions and wait for mario-devx (work) to go idle."
+              : "Open /sessions to watch mario-devx (work)."
             : run.status === "BLOCKED"
               ? "Read the last judge.out in .mario/runs/* (see state/state.json for runDir), fix issues, then run /mario-devx:run 1."
               : "Run /mario-devx:run 1 to execute the next plan item.";

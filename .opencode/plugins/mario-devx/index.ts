@@ -7,6 +7,18 @@ import { readTextIfExists, writeText } from "./fs";
 import path from "path";
 import { isFrontendProject, isPrdReadyForPlan } from "./bootstrap";
 
+const planLooksReady = (plan: string): boolean => {
+  if (!plan || plan.trim().length === 0) {
+    return false;
+  }
+  if (plan.toLowerCase().includes("<title>")) {
+    return false;
+  }
+  // At least one non-placeholder plan item header.
+  const okHeader = /^###\s+PI-\d+\s+-\s+TODO\s+-\s+(?!<title>).+$/im;
+  return okHeader.test(plan);
+};
+
 const marioDevxPlugin: Plugin = async (ctx) => {
   const tools = createTools(ctx);
   const repoRoot = ctx.worktree ?? ctx.directory ?? process.cwd();
@@ -50,6 +62,27 @@ const marioDevxPlugin: Plugin = async (ctx) => {
           parts: [{ type: "text", text: summary }],
         },
       });
+
+      // Mark planning complete when the work session goes idle.
+      if (run.phase === "plan" && run.status === "DOING") {
+        const planPath = path.join(repoRoot, ".mario", "IMPLEMENTATION_PLAN.md");
+        const plan = await readTextIfExists(planPath);
+        if (plan && planLooksReady(plan)) {
+          await writeRunState(repoRoot, {
+            ...run,
+            status: "DONE" as const,
+            updatedAt: nowIso(),
+          });
+          await ctx.client.session.prompt({
+            path: { id: run.controlSessionId },
+            body: {
+              noReply: true,
+              parts: [{ type: "text", text: "mario-devx: planning complete. Next: /mario-devx:run 1" }],
+            },
+          });
+        }
+        return;
+      }
 
       // Bootstrap flow: when PRD is complete, automatically start plan.
       if (run.flow === "new" && run.flowNext === "plan" && run.phase === "prd") {
