@@ -36,7 +36,7 @@ No bash harness. No "run plan then exit then run build then rerun build" nonsens
 - **Write it down:** the only memory is what you put in `.mario/` and git.
 - **Steering (patterns + backpressure):** keep prompts/files stable upstream, then let gates bully the output downstream.
 - **Gates are law:** if tests don’t pass, you’re not done (shocking).
-- **Workflow (3 steps):** PRD -> Plan -> Build (one plan item per iteration, repeat until `EXIT_SIGNAL: true`).
+- **Workflow (3 steps):** PRD -> Plan -> Run (one plan item per iteration, repeat until `EXIT_SIGNAL: true`).
 - **One command loop:** `/mario-devx:run <N>` executes the next plan item(s) and stops on failure.
 
 ## ELI5: get shit done
@@ -117,7 +117,7 @@ This:
 - picks the next `TODO` (or resumes `DOING`) plan item from `.mario/IMPLEMENTATION_PLAN.md`
 - runs the builder in `mario-devx (work)`
 - runs deterministic gates (+ optional UI verify)
-- runs the judge and writes verdict to `.mario/runs/*/judge.out` (latest run dir is in `state/state.json`)
+- runs the judge and writes verdict to `.mario/runs/*/judge.out` (latest verdict path is persisted in `state/state.json`)
 
 To keep going:
 
@@ -134,7 +134,7 @@ In your project:
   PRD.md                    # product spec + quality gates + Frontend: yes|no
   IMPLEMENTATION_PLAN.md     # the execution queue (PI-0001...); /run picks from here
   AGENTS.md                  # harness knobs (UI_VERIFY*, CMD_*, etc)
-  state/state.json           # internal state (iteration counter, last run status, work session ids)
+  state/state.json           # internal state (iteration, last run status, work session ids, latest verdict path)
   runs/*                     # per-iteration evidence (gates.log/json, judge.out, optional ui-verify.log)
 ```
 
@@ -147,7 +147,7 @@ In this repo:
 ## Backpressure (a.k.a. definition of done)
 
 - Source of truth: `## Quality Gates` in `.mario/PRD.md`.
-- Fallback: if you forgot, mario-devx auto-detects common scripts (Node) and a few sane defaults (Go/Rust/Python), then persists them to `.mario/AGENTS.md`.
+- Fallback: if you forgot, mario-devx auto-detects common scripts (Node) and a few sane defaults (Go/Rust/Python), and only persists them to `.mario/AGENTS.md` when they were auto-detected.
 - UI backpressure (frontends): if your PRD says `Frontend: yes`, mario-devx enables best-effort UI verification by default (`UI_VERIFY=1`, `UI_VERIFY_REQUIRED=0`). You can always change these flags in `.mario/AGENTS.md`.
 - It runs Vercel's `agent-browser` (Playwright-based) against your app by starting your dev server (`UI_VERIFY_CMD`) and driving a real browser at `UI_VERIFY_URL`.
 - `agent-browser` interacts with the UI like a user (navigate, click, type) and records evidence (logs + screenshots) under `.mario/runs/*` (see `ui-verify.log` when present). If the prerequisites aren't installed, UI verify is skipped unless you make it required by setting `UI_VERIFY_REQUIRED=1`.
