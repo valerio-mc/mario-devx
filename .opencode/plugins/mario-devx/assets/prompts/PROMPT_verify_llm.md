@@ -8,18 +8,18 @@ Rules:
 - You MUST write the verifier output to the current run's `judge.out` under `.mario/runs/*`.
 - Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
 
-Path selection:
-- If `.mario/PRD.md` exists, treat `.mario/` as canonical.
-- Else if `PRD.md` exists, treat repo root as canonical.
-- Otherwise, default to `.mario/`.
+Canonical files:
+- `.mario/prd.json` (requirements + task list + quality gates)
+- `.mario/state/state.json` (internal state)
+- `.mario/runs/*` (evidence)
 
 Goal:
-- Decide if the most recent plan item is complete.
+- Decide if the most recent task is complete.
 - If incomplete, produce precise feedback that the builder can act on in the next iteration.
 
 Rules:
 - Be strict: if verification evidence is missing, fail.
-- Only accept completion if the plan item's "Done when" conditions are satisfied.
+- Only accept completion if the task's "doneWhen" conditions are satisfied.
 
 Output format (write exactly this to `judge.out` in the run artifacts directory):
 
@@ -31,5 +31,5 @@ Next actions:
 - <bullets>
 
 Additional rules:
-- If (and only if) the plan item is truly complete, set `Status: PASS` and `EXIT_SIGNAL: true`.
+- If (and only if) the task is truly complete, set `Status: PASS` and `EXIT_SIGNAL: true`.
 - Otherwise set `Status: FAIL` and `EXIT_SIGNAL: false`.

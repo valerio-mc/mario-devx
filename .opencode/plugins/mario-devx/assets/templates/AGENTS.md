@@ -40,12 +40,12 @@ MARIO_NO_PROGRESS_LIMIT=3
 MARIO_REPEAT_FAIL_LIMIT=5
 
 # Backpressure commands (optional overrides)
-# Source of truth is `## Quality Gates` in PRD.md.
-# If PRD has no quality gates yet, the harness will attempt to auto-detect and persist `CMD_*` here.
+# Source of truth is `qualityGates` in `.mario/prd.json`.
+# If empty, the harness may attempt to auto-detect and persist `CMD_*` here.
 CMD_LINT=
 CMD_TYPECHECK=
 CMD_TEST=
 CMD_BUILD=
 
 # Notes
-# Keep this file operational. Requirements and planning belong in PRD.md / IMPLEMENTATION_PLAN.md.
+# Keep this file operational. Requirements and tasks belong in `.mario/prd.json`.

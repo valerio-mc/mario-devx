@@ -3,15 +3,10 @@ import { getPromptTemplatePath } from "./assets";
 
 export const buildPrompt = async (
   repoRoot: string,
-  mode: "prd" | "plan" | "build" | "verify",
+  mode: "build" | "verify",
   extra?: string,
 ): Promise<string> => {
-  const templatePath =
-    mode === "verify"
-      ? getPromptTemplatePath("verify_llm")
-      : mode === "build"
-        ? getPromptTemplatePath("run_build")
-        : getPromptTemplatePath(mode);
+  const templatePath = mode === "verify" ? getPromptTemplatePath("verify_llm") : getPromptTemplatePath("run_build");
   const template = await readText(templatePath);
 
   const header = [
@@ -21,8 +16,7 @@ export const buildPrompt = async (
     `Repo: ${repoRoot}`,
     "",
     "Canonical files (use these paths):",
-    "- PRD: .mario/PRD.md",
-    "- Plan: .mario/IMPLEMENTATION_PLAN.md",
+    "- PRD + tasks: .mario/prd.json",
     "- Agent config: .mario/AGENTS.md",
     "- State: .mario/state/state.json",
     "- Latest verdict: .mario/runs/<latest>/judge.out (see state.json for runDir)",
