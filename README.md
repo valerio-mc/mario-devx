@@ -15,6 +15,10 @@ Mario DevX forces the only kind of memory that actually helps:
 2. Ship in small slices (one task per iteration).
 3. Add backpressure (quality gates + strict judge) so the loop stops when it should.
 
+<br clear="right" />
+
+---
+
 ## Commands
 
 ```
