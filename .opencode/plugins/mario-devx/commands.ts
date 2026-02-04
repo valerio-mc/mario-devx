@@ -26,12 +26,12 @@ const command = (
 export const createCommands = (): CommandDefinition[] => [
   command(
     "new",
-    "Bootstrap: init + PRD + plan",
+    "PRD wizard (writes .mario/prd.json)",
     "Call tool mario_devx_new with idea=\"$ARGUMENTS\". Then follow the instructions in the tool output.",
   ),
   command(
     "run",
-    "Run next plan items (build + verify)",
+    "Run next tasks (build + verify)",
     "Call tool mario_devx_run with max_items=$ARGUMENTS. Return the tool result.",
   ),
   command(

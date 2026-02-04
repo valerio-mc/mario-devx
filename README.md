@@ -12,14 +12,14 @@ Coding agents are great until the chat becomes the product: long threads, stale 
 
 Mario DevX forces the only kind of memory that actually helps:
 1. Put the truth on disk (`.mario/`), not in the chat.
-2. Ship in small slices (one plan item per iteration).
+2. Ship in small slices (one task per iteration).
 3. Add backpressure (quality gates + strict judge) so the loop stops when it should.
 
 ## Commands
 
 ```
-/mario-devx:new <idea>    # PRD interview -> plan
-/mario-devx:run <N>       # build + gates + judge for the next N plan items
+/mario-devx:new <idea>    # PRD wizard -> seeds .mario/prd.json (requirements + tasks)
+/mario-devx:run <N>       # build + gates + judge for the next N tasks
 /mario-devx:status        # what's running + latest verdict path + next action
 /mario-devx:doctor        # healthcheck + concrete fixes
 ```
@@ -57,28 +57,23 @@ opencode .
 /mario-devx:new my brilliant idea
 ```
 
-Open `/sessions` and jump into `mario-devx (work)` to answer the PRD interview.
-
-When the PRD is complete, mario-devx starts planning in the same work session. Wait for the work session to go idle before running `/mario-devx:run`.
+Answer the PRD wizard questions in your current session (rerun `/mario-devx:new` with A/B/C/D until complete).
 
 ## Usage
 
-### Sessions (or suffer)
+### Sessions
 
 - You run `/mario-devx:*` in your normal session (control session).
-- The PRD/planning/build/judge work runs in a persistent per-repo work session: `mario-devx (work)`.
-- Most work is async: trigger in the control session, open `/sessions` to watch.
+- The build/judge runs in a persistent per-repo work session internally; you generally do not need to open it.
 
 ### The loop
 
-1) Set your Quality Gates in `.mario/PRD.md` under `## Quality Gates` (commands only, wrap them in backticks).
+1) Set your Quality Gates in `.mario/prd.json` under `qualityGates` (commands only).
 2) Run one iteration:
 
 ```
 /mario-devx:run 1
 ```
-
-If planning is still running (or the plan is still a template), `/mario-devx:run` will refuse to execute.
 
 To keep going:
 
@@ -100,8 +95,7 @@ In your project:
 
 ```text
 .mario/
-  PRD.md                    # product spec + Quality Gates + Frontend: yes|no
-  IMPLEMENTATION_PLAN.md     # execution queue (PI-0001...) with TODO/DOING/DONE/BLOCKED
+  prd.json                   # requirements + tasks + Quality Gates
   AGENTS.md                  # harness knobs (UI_VERIFY*, CMD_*, etc)
   state/state.json           # internal state (iteration, run status, work session ids, latestVerdictPath)
   runs/*                     # evidence per run (gates.log/json, judge.out, optional ui-verify.log)
@@ -115,7 +109,7 @@ In this repo:
 
 ## Backpressure (definition of done)
 
-- Source of truth: `## Quality Gates` in `.mario/PRD.md`.
+- Source of truth: `qualityGates` in `.mario/prd.json`.
 - Fallback: if you forgot, mario-devx auto-detects common scripts (Node) and a few sane defaults (Go/Rust/Python), and only persists them to `.mario/AGENTS.md` when they were auto-detected.
 
 ### UI verification (frontends)
@@ -154,9 +148,7 @@ If you don't want run artifacts or internal state in git, add this to your repo 
 
 ## Troubleshooting
 
-- Quality Gates failing instantly: in `.mario/PRD.md` under `## Quality Gates`, only backticked commands are executed.
-- Plan generation looks like slop: `.mario/IMPLEMENTATION_PLAN.md` must not contain placeholders like `[...]` or `TODO: fill later`. Rerun `/mario-devx:new`.
-- Where is it running: open `/sessions` and jump into `mario-devx (work)`.
+- Quality Gates failing instantly: verify `.mario/prd.json` has runnable commands under `qualityGates`.
 - UI verify doesn't run: install prerequisites (`npx skills add vercel-labs/agent-browser`, and `npm install -g agent-browser && agent-browser install`) and check `.mario/AGENTS.md`.
 - Still confused: run `/mario-devx:doctor`.
 
