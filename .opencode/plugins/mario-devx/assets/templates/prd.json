@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "idea": "",
+  "frontend": null,
+  "stack": null,
+  "qualityGates": [],
+  "llm": {
+    "provider": "",
+    "model": ""
+  },
+  "env": {
+    "keyFile": "",
+    "keyVar": ""
+  },
+  "tasks": []
+}

@@ -9,6 +9,7 @@ type AssetCopy = {
 
 const templateAssets: AssetCopy[] = [
   { source: "templates/PRD.md", destination: "PRD.md" },
+  { source: "templates/prd.json", destination: "prd.json" },
   { source: "templates/AGENTS.md", destination: "AGENTS.md" },
   {
     source: "templates/IMPLEMENTATION_PLAN.md",
