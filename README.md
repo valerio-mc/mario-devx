@@ -6,6 +6,8 @@ Named after Super Mario because (1) it never stops running, (2) it repeatedly sm
 
 **Mario DevX** is an OpenCode plugin that runs Ralph-style, file-based, deterministic agent loops inside the OpenCode TUI.
 
+<br clear="right" />
+
 ## Motivations
 
 Coding agents are great until the chat becomes the product: long threads, stale assumptions, and "it passed on vibes".
