@@ -4,6 +4,9 @@
 
 Named after Super Mario because (1) it never stops running, (2) it repeatedly smashes its face into the same level until it learns where the invisible blocks are, and (3) because Italians always do it better 🇮🇹.
 
+It does not "have a conversation" about shipping. It ships, fails a gate, reads the receipt, and tries again.
+If you're looking for vibes, inspirational essays, or a 200-message thread that ends with "should work," you're in the wrong repo.
+
 **Mario DevX** is an OpenCode plugin that runs Ralph-style, file-based, deterministic agent loops inside the OpenCode TUI.
 
 <br clear="right" />
