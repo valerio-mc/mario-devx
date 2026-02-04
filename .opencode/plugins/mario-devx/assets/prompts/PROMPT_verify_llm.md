@@ -19,7 +19,14 @@ Goal:
 
 Rules:
 - Be strict: if verification evidence is missing, fail.
-- Only accept completion if the task's "doneWhen" conditions are satisfied.
+- Only accept completion if the task's `doneWhen` conditions are satisfied.
+- Evidence-based: every bullet must cite a concrete artifact path (prefer `.mario/runs/<run>/...`) and/or a repo file path (example: `src/auth.ts`).
+- No-magic: reject vague claims like "looks good" or "should work". If you cannot point to evidence, fail.
+
+Task completion checklist (all required unless task explicitly says otherwise):
+- Deterministic gates: PASS (from `.mario/runs/<run>/gates.json` and `.mario/runs/<run>/gates.log`).
+- `doneWhen`: each item is either satisfied with evidence or called out as unmet.
+- Scope sanity: changes align with the task scope; no unrelated changes.
 
 Output format (write exactly this to `judge.out` in the run artifacts directory):
 

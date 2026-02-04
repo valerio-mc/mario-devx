@@ -114,7 +114,7 @@ In this repo:
 
 ### UI verification (frontends)
 
-If your PRD includes `Frontend: yes`, mario-devx enables best-effort UI verification by default:
+If `.mario/prd.json` has `frontend: true`, mario-devx enables best-effort UI verification by default:
 - `UI_VERIFY=1`
 - `UI_VERIFY_REQUIRED=0`
 
