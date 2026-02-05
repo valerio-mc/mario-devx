@@ -28,6 +28,8 @@ type ToolContext = {
 type PluginContext = Parameters<Plugin>[0];
 
 const nowIso = (): string => new Date().toISOString();
+const MAX_TASK_REPAIR_MS = 25 * 60 * 1000;
+const MAX_NO_PROGRESS_STREAK = 3;
 
 const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
 
@@ -1526,8 +1528,63 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-              const gateResult = await runGateCommands(gateCommands, ctx.$);
-              const uiResult = shouldRunUiVerify
+              const taskRepairStartedAt = Date.now();
+              let noProgressStreak = 0;
+              let lastGateFailureSig: string | null = null;
+              let gateResult = await runGateCommands(gateCommands, ctx.$);
+
+              const failSigFromGate = (): string => {
+                const failed = gateResult.failed;
+                return failed ? `${failed.command}:${failed.exitCode}` : "unknown";
+              };
+
+              while (!gateResult.ok) {
+                const currentSig = failSigFromGate();
+                const elapsedMs = Date.now() - taskRepairStartedAt;
+                if (lastGateFailureSig === currentSig) {
+                  noProgressStreak += 1;
+                } else {
+                  noProgressStreak = 0;
+                }
+                lastGateFailureSig = currentSig;
+
+                if (elapsedMs >= MAX_TASK_REPAIR_MS || noProgressStreak >= MAX_NO_PROGRESS_STREAK) {
+                  break;
+                }
+
+                const failedGate = gateResult.failed
+                  ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
+                  : "(unknown command)";
+                const repairPrompt = [
+                  `Task ${task.id} failed deterministic gate: ${failedGate}.`,
+                  "Fix the repository so all deterministic gates pass.",
+                  "Do not ask questions. Apply edits and stop when done.",
+                ].join("\n");
+
+                await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - repair ${task.id}`);
+                await ctx.client.session.promptAsync({
+                  path: { id: ws.sessionId },
+                  body: {
+                    ...(context.agent ? { agent: context.agent } : {}),
+                    parts: [{ type: "text", text: repairPrompt }],
+                  },
+                });
+
+                if (!(await heartbeatRunLock(repoRoot))) {
+                  await blockForHeartbeatFailure("during-auto-repair");
+                  await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+                  break;
+                }
+
+                const repairIdle = await waitForSessionIdle(ctx, ws.sessionId, 15 * 60 * 1000);
+                if (!repairIdle) {
+                  break;
+                }
+
+                gateResult = await runGateCommands(gateCommands, ctx.$);
+              }
+
+              const uiResult = gateResult.ok && shouldRunUiVerify
                 ? await runUiVerification({
                     ctx,
                     devCmd: uiVerifyCmd,
@@ -1583,8 +1640,10 @@ export const createTools = (ctx: PluginContext) => {
               ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
               : "(unknown command)";
             const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
+            const elapsedMs = Date.now() - taskRepairStartedAt;
             await failEarly([
               `Deterministic gate failed: ${failed}.`,
+              `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s (no-progress or time budget reached).`,
             ], scaffoldHint
               ? [
                   "Scaffold artifacts are missing; choose any valid scaffold approach for this stack.",
