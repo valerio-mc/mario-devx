@@ -73,10 +73,15 @@ const acquireRunLock = async (
           };
         }
       } catch {
-        return {
-          ok: false,
-          message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
-        };
+        // Corrupt lock file; treat as stale.
+        try {
+          await unlink(lockPath);
+        } catch {
+          return {
+            ok: false,
+            message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
+          };
+        }
       }
     }
   } catch {
@@ -148,8 +153,13 @@ const parseWizardInput = (raw: string): { choice: "A" | "B" | "C" | "D"; extra: 
   if (first !== "A" && first !== "B" && first !== "C" && first !== "D") {
     return null;
   }
-  const rest = trimmed.slice(1).trimStart();
-  const extra = rest.startsWith(":" ) ? rest.slice(1).trimStart() : rest;
+  let rest = trimmed.slice(1).trimStart();
+  // Accept common separators: "A: ...", "A) ...", "A. ...", "A - ..."
+  if (rest.startsWith(":")) rest = rest.slice(1);
+  else if (rest.startsWith(")")) rest = rest.slice(1);
+  else if (rest.startsWith(".")) rest = rest.slice(1);
+  else if (rest.startsWith("-")) rest = rest.slice(1);
+  const extra = rest.trimStart();
   return { choice: first, extra } as { choice: "A" | "B" | "C" | "D"; extra: string };
 };
 
@@ -205,6 +215,8 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   const lines = text.split(/\r?\n/);
 
   let status: "PASS" | "FAIL" = "FAIL";
+  let statusSeen: "PASS" | "FAIL" | null = null;
+  let statusConflict = false;
   let exitSignal = false;
   let section: "none" | "reason" | "next" = "none";
   const reason: string[] = [];
@@ -217,7 +229,12 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
     }
     const sm = line.match(/^Status:\s*(PASS|FAIL)\s*$/i);
     if (sm) {
-      status = (sm[1] ?? "FAIL").toUpperCase() as "PASS" | "FAIL";
+      const next = (sm[1] ?? "FAIL").toUpperCase() as "PASS" | "FAIL";
+      if (statusSeen && statusSeen !== next) {
+        statusConflict = true;
+      }
+      statusSeen = statusSeen ?? next;
+      status = next;
       continue;
     }
     const em = line.match(/^EXIT_SIGNAL:\s*(true|false)\s*$/i);
@@ -233,18 +250,39 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
       section = "next";
       continue;
     }
-    if (!line.startsWith("-")) {
+
+    const isBullet = line.startsWith("-");
+    const content = isBullet ? line.replace(/^[-\s]+/, "").trim() : line;
+    if (!content) {
       continue;
     }
-    const bullet = line.replace(/^[-\s]+/, "").trim();
-    if (!bullet) {
-      continue;
-    }
+
     if (section === "reason") {
-      reason.push(bullet);
-    } else if (section === "next") {
-      nextActions.push(bullet);
+      if (isBullet || reason.length === 0) {
+        reason.push(content);
+      } else {
+        reason[reason.length - 1] = `${reason[reason.length - 1]} ${content}`;
+      }
+      continue;
     }
+    if (section === "next") {
+      if (isBullet || nextActions.length === 0) {
+        nextActions.push(content);
+      } else {
+        nextActions[nextActions.length - 1] = `${nextActions[nextActions.length - 1]} ${content}`;
+      }
+      continue;
+    }
+  }
+
+  if (statusConflict) {
+    return {
+      status: "FAIL",
+      exitSignal: false,
+      reason: ["Verifier output invalid: conflicting Status lines found."],
+      nextActions: ["Fix the verifier output to include exactly one Status line, then rerun /mario-devx:run 1."],
+      rawText: text,
+    };
   }
 
   const normalizedReason = reason.length > 0 ? reason : ["Verifier did not provide a parsable Reason list."];
@@ -1796,6 +1834,7 @@ export const createTools = (ctx: PluginContext) => {
           "- /mario-devx:run <N>",
           "- /mario-devx:status",
           "- /mario-devx:doctor",
+          "- /mario-devx:help",
           "",
           "Note: build/verifier run in a persistent per-repo work session.",
         ].join("\n");
