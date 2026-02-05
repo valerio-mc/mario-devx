@@ -39,4 +39,4 @@ Next.js scaffolding note (common failure):
     - `npx create-next-app@latest "$tmpdir/app" --yes --typescript --eslint --app`
     - copy files into repo root (exclude `.mario/` and `.opencode/`)
 
-If any core files are missing, create minimal defaults (or ask the user to run `mario-init` to bootstrap templates).
+If any core files are missing, ask the user to rerun `/mario-devx:new` (or run `/mario-devx:new` in a clean repo) so the plugin can seed `.mario/prd.json` and `.mario/AGENTS.md`.
