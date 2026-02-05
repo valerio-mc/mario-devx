@@ -221,6 +221,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   let section: "none" | "reason" | "next" = "none";
   const reason: string[] = [];
   const nextActions: string[] = [];
+  const unmatched: string[] = [];
 
   for (const raw of lines) {
     const line = raw.trim();
@@ -242,11 +243,11 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
       exitSignal = (em[1] ?? "false").toLowerCase() === "true";
       continue;
     }
-    if (/^Reason:\s*$/i.test(line)) {
+    if (/^(Reason|Reasons):\s*$/i.test(line)) {
       section = "reason";
       continue;
     }
-    if (/^Next actions:\s*$/i.test(line)) {
+    if (/^(Next actions|Next steps):\s*$/i.test(line)) {
       section = "next";
       continue;
     }
@@ -273,6 +274,9 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
       }
       continue;
     }
+
+    // Preserve unmatched non-empty lines as fallback context.
+    unmatched.push(content);
   }
 
   if (statusConflict) {
@@ -285,7 +289,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
     };
   }
 
-  const normalizedReason = reason.length > 0 ? reason : ["Verifier did not provide a parsable Reason list."];
+  const normalizedReason = reason.length > 0 ? reason : unmatched.length > 0 ? unmatched : ["Verifier did not provide a parsable Reason list."];
   const normalizedNext = nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."];
 
   if (status === "PASS" && exitSignal !== true) {
@@ -840,42 +844,6 @@ const wizardQuestionFor = (params: { repoRoot: string; prd: PrdJson; step: numbe
       };
     case 5:
       return {
-        id: "persistence",
-        title: "Persistence",
-        prompt: "Do you need a database?",
-        options: [
-          { key: "A", label: "None" },
-          { key: "B", label: "SQLite" },
-          { key: "C", label: "Postgres" },
-          { key: "D", label: "Supabase/Managed" },
-        ],
-      };
-    case 6:
-      return {
-        id: "auth",
-        title: "Auth",
-        prompt: "Authentication approach?",
-        options: [
-          { key: "A", label: "None" },
-          { key: "B", label: "Password" },
-          { key: "C", label: "OAuth" },
-          { key: "D", label: "Magic link" },
-        ],
-      };
-    case 7:
-      return {
-        id: "deploy",
-        title: "Deploy",
-        prompt: "Target deployment?",
-        options: [
-          { key: "A", label: "Local only" },
-          { key: "B", label: "Vercel" },
-          { key: "C", label: "Docker" },
-          { key: "D", label: "Fly/Other" },
-        ],
-      };
-    case 8:
-      return {
         id: "qualityGates",
         title: "Quality Gates",
         prompt:
@@ -887,31 +855,7 @@ const wizardQuestionFor = (params: { repoRoot: string; prd: PrdJson; step: numbe
           { key: "D", label: "I will edit prd.json manually" },
         ],
       };
-    case 9:
-      return {
-        id: "users",
-        title: "Users",
-        prompt: "Who is the primary user?",
-        options: [
-          { key: "A", label: "Internal team" },
-          { key: "B", label: "Consumers" },
-          { key: "C", label: "Developers" },
-          { key: "D", label: "Other (D: ...)" },
-        ],
-      };
-    case 10:
-      return {
-        id: "problem",
-        title: "Problem",
-        prompt: "What problem category are you solving?",
-        options: [
-          { key: "A", label: "Automation" },
-          { key: "B", label: "Data/UI" },
-          { key: "C", label: "LLM assistant" },
-          { key: "D", label: "Other (D: ...)" },
-        ],
-      };
-    case 11:
+    case 6:
     default:
       return {
         id: "features",
@@ -1033,18 +977,6 @@ const applyWizardAnswer = async (params: {
       next.framework = extra.trim();
       return advance();
     }
-    case "persistence": {
-      next.persistence = choice === "A" ? "none" : choice === "B" ? "sqlite" : choice === "C" ? "postgres" : "supabase";
-      return advance();
-    }
-    case "auth": {
-      next.auth = choice === "A" ? "none" : choice === "B" ? "password" : choice === "C" ? "oauth" : "magic_link";
-      return advance();
-    }
-    case "deploy": {
-      next.deploy = choice === "A" ? "local" : choice === "B" ? "vercel" : choice === "C" ? "docker" : "other";
-      return advance();
-    }
     case "qualityGates": {
       if (choice === "A") {
         next.qualityGates = await detectNodeQualityGates(repoRoot);
@@ -1069,20 +1001,6 @@ const applyWizardAnswer = async (params: {
         return { prd: next, advanced: false, error: "No commands found. Use C: `npm test` `npm run lint`" };
       }
       next.qualityGates = cmds;
-      return advance();
-    }
-    case "users": {
-      next.product = {
-        ...next.product,
-        users: choice === "A" ? "internal team" : choice === "B" ? "consumers" : choice === "C" ? "developers" : extra.trim() || "other",
-      };
-      return advance();
-    }
-    case "problem": {
-      next.product = {
-        ...next.product,
-        problem: choice === "A" ? "automation" : choice === "B" ? "data/ui" : choice === "C" ? "llm assistant" : extra.trim() || "other",
-      };
       return advance();
     }
     case "features": {
@@ -1182,11 +1100,11 @@ export const createTools = (ctx: PluginContext) => {
             const doneWhen = prd.qualityGates ?? [];
             if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
               await writePrdJson(repoRoot, prd);
-              const qg = wizardQuestionFor({ repoRoot, prd, step: 8 });
+              const qg = wizardQuestionFor({ repoRoot, prd, step: 5 });
               return [
                 "PRD wizard: qualityGates is empty; at least one gate is required to run.",
                 "",
-                renderWizardQuestion(qg, 8, prd.wizard.totalSteps),
+                renderWizardQuestion(qg, 5, prd.wizard.totalSteps),
               ].join("\n");
             }
             if (prd.tasks.length === 0) {
@@ -1258,7 +1176,7 @@ export const createTools = (ctx: PluginContext) => {
               ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
               updatedAt: nowIso(),
             });
-            return "Failed to update run.lock heartbeat. Check disk space/permissions, then rerun /mario-devx:run 1.";
+            return `Failed to update run.lock heartbeat during run preflight (${runLockPath(repoRoot)}). Check disk space/permissions, then rerun /mario-devx:run 1.`;
           }
           const currentRun = await readRunState(repoRoot);
           if (currentRun.status === "DOING") {
@@ -1327,6 +1245,9 @@ export const createTools = (ctx: PluginContext) => {
             const raw = (await readTextIfExists(agentsPath)) ?? "";
             const parsed = parseAgentsEnv(raw);
             const env = parsed.env;
+            if (parsed.warnings.length > 0) {
+              await showToast(ctx, `Run warning: AGENTS.md parse warnings (${parsed.warnings.length})`, "warning");
+            }
             if (env.UI_VERIFY !== "1") {
               let next = raw;
               next = upsertAgentsKey(next, "UI_VERIFY", "1");
@@ -1349,7 +1270,11 @@ export const createTools = (ctx: PluginContext) => {
         }));
 
         const agentsRaw = await readTextIfExists(agentsPath);
-        const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw).env : {};
+        const agentsParsed = agentsRaw ? parseAgentsEnv(agentsRaw) : { env: {}, warnings: [] };
+        const agentsEnv = agentsParsed.env;
+        if (agentsParsed.warnings.length > 0) {
+          await showToast(ctx, `Run warning: AGENTS.md parse warnings (${agentsParsed.warnings.length})`, "warning");
+        }
         const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
         const uiVerifyCmd = agentsEnv.UI_VERIFY_CMD || "npm run dev";
         const uiVerifyUrl = agentsEnv.UI_VERIFY_URL || "http://localhost:3000";
@@ -1392,15 +1317,15 @@ export const createTools = (ctx: PluginContext) => {
 
           await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
-           const blockForHeartbeatFailure = async (): Promise<void> => {
-             const gates: PrdGatesAttempt = { ok: false, commands: [] };
-             const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-             const judge: PrdJudgeAttempt = {
-               status: "FAIL",
-               exitSignal: false,
-               reason: ["Failed to update run.lock heartbeat."],
-               nextActions: ["Check disk space/permissions, then rerun /mario-devx:run 1."],
-             };
+           const blockForHeartbeatFailure = async (phase: string): Promise<void> => {
+              const gates: PrdGatesAttempt = { ok: false, commands: [] };
+              const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+              const judge: PrdJudgeAttempt = {
+                status: "FAIL",
+                exitSignal: false,
+                reason: [`Failed to update run.lock heartbeat during ${phase} (${runLockPath(repoRoot)}).`],
+                nextActions: ["Check disk space/permissions for .mario/state/run.lock, then rerun /mario-devx:run 1."],
+              };
              const lastAttempt: PrdTaskAttempt = {
                at: attemptAt,
                iteration: state.iteration,
@@ -1419,7 +1344,7 @@ export const createTools = (ctx: PluginContext) => {
            };
 
             if (!(await heartbeatRunLock(repoRoot))) {
-              await blockForHeartbeatFailure();
+              await blockForHeartbeatFailure("pre-work-session-reset");
               await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
               break;
             }
@@ -1438,7 +1363,7 @@ export const createTools = (ctx: PluginContext) => {
 
             try {
               if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure();
+                await blockForHeartbeatFailure("before-build-prompt");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
@@ -1451,7 +1376,7 @@ export const createTools = (ctx: PluginContext) => {
               });
 
               if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure();
+                await blockForHeartbeatFailure("after-build-prompt");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
@@ -1486,7 +1411,7 @@ export const createTools = (ctx: PluginContext) => {
               }
 
               if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure();
+                await blockForHeartbeatFailure("after-build-idle");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
@@ -1501,7 +1426,7 @@ export const createTools = (ctx: PluginContext) => {
                 : null;
 
               if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure();
+                await blockForHeartbeatFailure("after-gates-ui");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
@@ -1612,7 +1537,7 @@ export const createTools = (ctx: PluginContext) => {
                 },
               });
               if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure();
+                await blockForHeartbeatFailure("after-judge");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }

@@ -70,13 +70,8 @@ export type PrdJson = {
   frontend: boolean | null;
   language: "typescript" | "python" | "go" | "rust" | "other" | null;
   framework: string | null;
-  persistence: "none" | "sqlite" | "postgres" | "supabase" | "other" | null;
-  auth: "none" | "password" | "oauth" | "magic_link" | "other" | null;
-  deploy: "local" | "vercel" | "docker" | "fly" | "other" | null;
   qualityGates: string[];
   product: {
-    users: string;
-    problem: string;
     mustHaveFeatures: string[];
   };
   tasks: PrdTask[];
@@ -87,7 +82,7 @@ export const prdJsonPath = (repoRoot: string): string => path.join(repoRoot, ".m
 const defaultWizard = (): PrdWizard => ({
   status: "in_progress",
   step: 0,
-  totalSteps: 12,
+  totalSteps: 7,
   lastQuestionId: null,
   answers: {},
 });
@@ -103,13 +98,8 @@ export const defaultPrdJson = (): PrdJson => {
     frontend: null,
     language: null,
     framework: null,
-    persistence: null,
-    auth: null,
-    deploy: null,
     qualityGates: [],
     product: {
-      users: "",
-      problem: "",
       mustHaveFeatures: [],
     },
     tasks: [],
