@@ -44,9 +44,4 @@ export const createCommands = (): CommandDefinition[] => [
     "Check mario-devx health",
     "Call tool mario_devx_doctor with no arguments.",
   ),
-  command(
-    "help",
-    "Show mario-devx help",
-    "Call tool mario_devx_help with no arguments.",
-  ),
 ];

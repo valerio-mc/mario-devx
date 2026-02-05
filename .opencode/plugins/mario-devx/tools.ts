@@ -1824,21 +1824,5 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
-    mario_devx_help: tool({
-      description: "Show mario-devx help",
-      args: {},
-      async execute() {
-        return [
-          "mario-devx commands:",
-          "- /mario-devx:new <idea>",
-          "- /mario-devx:run <N>",
-          "- /mario-devx:status",
-          "- /mario-devx:doctor",
-          "- /mario-devx:help",
-          "",
-          "Note: build/verifier run in a persistent per-repo work session.",
-        ].join("\n");
-      },
-    }),
   };
 };
