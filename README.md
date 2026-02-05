@@ -86,7 +86,7 @@ To keep going:
 /mario-devx:run 5
 ```
 
-If it stops, the answer is in the latest verdict.
+If it stops, the answer is in the focus task's `lastAttempt` verdict.
 
 ```
 /mario-devx:status
