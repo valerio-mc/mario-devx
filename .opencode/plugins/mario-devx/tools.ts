@@ -967,7 +967,12 @@ const applyWizardAnswer = async (params: {
         return advance();
       }
       if (choice === "D") {
-        return advance();
+        return {
+          prd: next,
+          advanced: false,
+          error:
+            "If you want to edit gates manually, update .mario/prd.json:qualityGates and then answer this question with A/B/C.",
+        };
       }
       const cmds = parseCustomGateCommands(extra);
       if (cmds.length === 0) {
