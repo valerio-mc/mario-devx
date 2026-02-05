@@ -1,11 +1,6 @@
 import path from "path";
 
-export type PluginContext = {
-  directory?: string;
-  worktree?: string;
-};
-
-export const getRepoRoot = (ctx: PluginContext): string => {
+export const getRepoRoot = (ctx: { directory?: string; worktree?: string }): string => {
   return ctx.worktree ?? ctx.directory ?? process.cwd();
 };
 

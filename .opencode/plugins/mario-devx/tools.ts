@@ -5,6 +5,7 @@ import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { ensureMario, bumpIteration, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
 import { RunState } from "./types";
+import { getRepoRoot } from "./paths";
 import {
   defaultPrdJson,
   readPrdJsonIfExists,
@@ -147,8 +148,6 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   };
 };
 
-const getRepoRoot = (ctx: PluginContext): string => ctx.worktree ?? ctx.directory ?? process.cwd();
-
 const getXdgConfigHome = (): string => {
   return process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? "", ".config");
 };
@@ -222,30 +221,6 @@ const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
   } catch {
     return false;
   }
-};
-
-const findQualityGatesNonBackticked = (prd: string): string[] => {
-  const lines = prd.split(/\r?\n/);
-  const start = lines.findIndex((line) => line.trim() === "## Quality Gates");
-  if (start === -1) {
-    return [];
-  }
-  const offenders: string[] = [];
-  for (let i = start + 1; i < lines.length; i += 1) {
-    const line = lines[i] ?? "";
-    const trimmed = line.trim();
-    if (trimmed.startsWith("## ")) {
-      break;
-    }
-    if (!trimmed.startsWith("-")) {
-      continue;
-    }
-    if (trimmed.includes("`") || trimmed.toLowerCase().includes("todo")) {
-      continue;
-    }
-    offenders.push(trimmed);
-  }
-  return offenders;
 };
 
 const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
@@ -326,12 +301,6 @@ const runUiVerification = async (params: {
   // Stop server.
   await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
   return { ok: true, note: "UI verification completed." };
-};
-
-const appendLine = async (filePath: string, line: string): Promise<void> => {
-  const existing = await readTextIfExists(filePath);
-  const next = existing ? `${existing.trimEnd()}\n${line}\n` : `${line}\n`;
-  await writeText(filePath, next);
 };
 
 const showToast = async (
@@ -460,16 +429,6 @@ const runGateCommands = async (
     results,
     ...(failed ? { failed } : {}),
   };
-};
-
-const formatPromptResult = (title: string, prompt: string): string => {
-  return [
-    title,
-    "",
-    "---",
-    "",
-    prompt,
-  ].join("\n");
 };
 
 const getBaselineText = (repoRoot: string): string => {
@@ -615,15 +574,6 @@ const extractTextFromPromptResponse = (response: unknown): string => {
     .filter((part) => part.type === "text")
     .map((part) => part.text ?? "")
     .join("\n");
-};
-
-const parseVerifierStatus = (text: string): { status: "PASS" | "FAIL"; exit: boolean } => {
-  const status: "PASS" | "FAIL" = text.includes("Status: PASS") ? "PASS" : "FAIL";
-  const exit = text.includes("EXIT_SIGNAL: true");
-  if (status === "PASS" && exit) {
-    return { status: "PASS", exit: true };
-  }
-  return { status: "FAIL", exit: false };
 };
 
 const parseCustomGateCommands = (raw: string): string[] => {

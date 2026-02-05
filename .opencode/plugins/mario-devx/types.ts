@@ -1,9 +1,3 @@
-export type GateCommand = {
-  name: string;
-  command: string;
-  source: "prd" | "agents" | "auto";
-};
-
 export type WorkSessionState = {
   sessionId: string;
   baselineMessageId: string;

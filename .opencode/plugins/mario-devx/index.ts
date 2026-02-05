@@ -2,12 +2,11 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
 import { readRunState, readWorkSessionState } from "./state";
+import { getRepoRoot } from "./paths";
 
 const marioDevxPlugin: Plugin = async (ctx) => {
   const tools = createTools(ctx);
-  const repoRoot = ctx.worktree ?? ctx.directory ?? process.cwd();
-
-  const nowIso = (): string => new Date().toISOString();
+  const repoRoot = getRepoRoot(ctx);
 
   return {
     tool: tools,
