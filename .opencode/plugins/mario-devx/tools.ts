@@ -64,8 +64,6 @@ const linesFromExtra = (extra: string): string[] => {
     .filter((l) => l.length > 0);
 };
 
-const tasksEvidenceDefaults = (): string[] => [];
-
 const normalizeTaskId = (n: number): string => `T-${String(n).padStart(4, "0")}`;
 
 const makeTask = (params: {
@@ -83,7 +81,7 @@ const makeTask = (params: {
     title: params.title,
     scope: params.scope ?? ["**/*"],
     doneWhen: params.doneWhen,
-    evidence: params.evidence ?? tasksEvidenceDefaults(),
+    evidence: params.evidence ?? [],
     ...(params.notes ? { notes: params.notes } : {}),
   };
 };

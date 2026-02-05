@@ -19,22 +19,6 @@ const defaultRunState = (): RunState => ({
   updatedAt: new Date().toISOString(),
 });
 
-const normalizeRunState = (value: unknown): RunState => {
-  const v = value as Partial<RunState> | undefined;
-  const base = defaultRunState();
-  return {
-    iteration: typeof v?.iteration === "number" ? v.iteration : base.iteration,
-    status: v?.status ?? base.status,
-    phase: "run",
-    ...(v?.currentPI ? { currentPI: v.currentPI } : {}),
-    ...(v?.controlSessionId ? { controlSessionId: v.controlSessionId } : {}),
-    ...(v?.workSessionId ? { workSessionId: v.workSessionId } : {}),
-    ...(v?.baselineMessageId ? { baselineMessageId: v.baselineMessageId } : {}),
-    ...(v?.startedAt ? { startedAt: v.startedAt } : {}),
-    updatedAt: v?.updatedAt ?? base.updatedAt,
-  };
-};
-
 const readState = async (repoRoot: string): Promise<MarioState> => {
   const raw = await readTextIfExists(stateFile(repoRoot));
   if (raw) {
@@ -82,7 +66,7 @@ export const writeWorkSessionState = async (
 
 export const readRunState = async (repoRoot: string): Promise<RunState> => {
   const state = await readState(repoRoot);
-  return state.run ? normalizeRunState(state.run) : defaultRunState();
+  return state.run ?? defaultRunState();
 };
 
 export const writeRunState = async (repoRoot: string, state: RunState): Promise<void> => {

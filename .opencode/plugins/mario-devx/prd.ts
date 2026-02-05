@@ -59,56 +59,6 @@ export type PrdWizard = {
   answers: Record<string, string>;
 };
 
-export type PrdJsonV1 = {
-  version: 1;
-  idea: string;
-  frontend: boolean | null;
-  stack: string | null;
-  qualityGates: string[];
-  llm: {
-    provider: string;
-    model: string;
-  };
-  env: {
-    keyFile: string;
-    keyVar: string;
-  };
-  tasks: PrdTask[];
-};
-
-export type PrdJsonV2 = {
-  version: 2;
-  meta: {
-    createdAt: string;
-    updatedAt: string;
-  };
-  wizard: PrdWizard;
-  idea: string;
-  platform: "web" | "api" | "cli" | "library" | null;
-  frontend: boolean | null;
-  language: "typescript" | "python" | "go" | "rust" | "other" | null;
-  framework: string | null;
-  persistence: "none" | "sqlite" | "postgres" | "supabase" | "other" | null;
-  auth: "none" | "password" | "oauth" | "magic_link" | "other" | null;
-  deploy: "local" | "vercel" | "docker" | "fly" | "other" | null;
-  stack: string | null;
-  qualityGates: string[];
-  llm: {
-    provider: string;
-    model: string;
-  };
-  env: {
-    keyFile: string;
-    keyVar: string;
-  };
-  product: {
-    users: string;
-    problem: string;
-    mustHaveFeatures: string[];
-  };
-  tasks: PrdTask[];
-};
-
 export type PrdJson = {
   version: 3;
   meta: {
@@ -181,48 +131,6 @@ export const defaultPrdJson = (): PrdJson => {
   };
 };
 
-const upgradeV1ToV2 = (v1: PrdJsonV1): PrdJsonV2 => {
-  const base = defaultPrdJson();
-  const now = nowIso();
-  return {
-    ...(base as unknown as PrdJsonV2),
-    meta: { createdAt: now, updatedAt: now },
-    idea: v1.idea ?? "",
-    frontend: v1.frontend ?? null,
-    stack: v1.stack ?? null,
-    qualityGates: Array.isArray(v1.qualityGates) ? v1.qualityGates : [],
-    llm: v1.llm?.provider && v1.llm?.model ? v1.llm : base.llm,
-    env: v1.env?.keyFile && v1.env?.keyVar ? v1.env : base.env,
-    tasks: Array.isArray(v1.tasks) ? v1.tasks : [],
-  };
-};
-
-const upgradeV2ToV3 = (v2: PrdJsonV2): PrdJson => {
-  const base = defaultPrdJson();
-  return {
-    ...base,
-    meta: {
-      createdAt: v2.meta?.createdAt?.trim() ? v2.meta.createdAt : base.meta.createdAt,
-      updatedAt: base.meta.updatedAt,
-    },
-    wizard: v2.wizard ?? base.wizard,
-    idea: v2.idea ?? base.idea,
-    platform: v2.platform ?? base.platform,
-    frontend: v2.frontend ?? base.frontend,
-    language: v2.language ?? base.language,
-    framework: v2.framework ?? base.framework,
-    persistence: v2.persistence ?? base.persistence,
-    auth: v2.auth ?? base.auth,
-    deploy: v2.deploy ?? base.deploy,
-    stack: v2.stack ?? base.stack,
-    qualityGates: Array.isArray(v2.qualityGates) ? v2.qualityGates : base.qualityGates,
-    llm: v2.llm?.provider && v2.llm?.model ? v2.llm : base.llm,
-    env: v2.env?.keyFile && v2.env?.keyVar ? v2.env : base.env,
-    product: v2.product ?? base.product,
-    tasks: Array.isArray(v2.tasks) ? v2.tasks : [],
-  };
-};
-
 export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | null> => {
   const raw = await readTextIfExists(prdJsonPath(repoRoot));
   if (!raw) {
@@ -234,21 +142,14 @@ export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | n
       return null;
     }
     const v = (parsed as { version?: unknown }).version;
-    if (v === 3) {
-      const prd = parsed as PrdJson;
-      if (!Array.isArray(prd.tasks)) {
-        return null;
-      }
-      return prd;
+    if (v !== 3) {
+      return null;
     }
-    if (v === 1) {
-      const v2 = upgradeV1ToV2(parsed as PrdJsonV1);
-      return upgradeV2ToV3(v2);
+    const prd = parsed as PrdJson;
+    if (!Array.isArray(prd.tasks)) {
+      return null;
     }
-    if (v === 2) {
-      return upgradeV2ToV3(parsed as PrdJsonV2);
-    }
-    return null;
+    return prd;
   } catch {
     return null;
   }
