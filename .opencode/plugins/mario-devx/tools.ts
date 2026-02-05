@@ -223,6 +223,14 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   };
 };
 
+const getXdgConfigHome = (): string => {
+  return process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? "", ".config");
+};
+
+const getGlobalSkillPath = (skillName: string): string => {
+  return path.join(getXdgConfigHome(), "opencode", "skill", skillName, "SKILL.md");
+};
+
 const parseEnvValue = (value: string): string => {
   const trimmed = value.trim();
   if (
@@ -300,6 +308,10 @@ const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
     if ((await readTextIfExists(candidate)) !== null) {
       return true;
     }
+  }
+  // Many OpenCode setups install skills globally under XDG_CONFIG_HOME.
+  if ((await readTextIfExists(getGlobalSkillPath("agent-browser"))) !== null) {
+    return true;
   }
   return false;
 };
@@ -426,18 +438,13 @@ const waitForSessionIdle = async (
   return false;
 };
 
-const tail = (input: string, maxChars: number): string => {
-  if (input.length <= maxChars) return input;
-  return input.slice(input.length - maxChars);
-};
-
 const runGateCommands = async (
   commands: { name: string; command: string }[],
   $: PluginContext["$"] | undefined,
 ): Promise<{
   ok: boolean;
   failed?: { name: string; command: string; exitCode: number };
-  results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number; outputTail?: string }>;
+  results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number }>;
   note?: string;
 }> => {
   if (commands.length === 0) {
@@ -447,7 +454,7 @@ const runGateCommands = async (
     return { ok: false, note: "Bun shell not available to run gates.", results: [] };
   }
 
-  const results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number; outputTail?: string }> = [];
+  const results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number }> = [];
   let ok = true;
   let failed: { name: string; command: string; exitCode: number } | undefined;
 
@@ -455,7 +462,7 @@ const runGateCommands = async (
     const cmd = command.command.trim();
     if (cmd.length === 0) {
       ok = false;
-      results.push({ name: command.name, command: "", ok: false, exitCode: 1, durationMs: 0, outputTail: "ERROR: empty gate command" });
+      results.push({ name: command.name, command: "", ok: false, exitCode: 1, durationMs: 0 });
       break;
     }
 
@@ -467,7 +474,6 @@ const runGateCommands = async (
         ok: false,
         exitCode: 1,
         durationMs: 0,
-        outputTail: "ERROR: gate command contains newline characters (refusing to run)",
       });
       break;
     }
@@ -475,18 +481,13 @@ const runGateCommands = async (
     const startedAt = Date.now();
     const result = await $`sh -c ${cmd}`.nothrow();
     const durationMs = Date.now() - startedAt;
-    const stdout = result.stdout.toString();
-    const stderr = result.stderr.toString();
-    const combined = [stdout, stderr].filter((x) => x.trim().length > 0).join("\n");
     const isOk = result.exitCode === 0;
-    const outputTail = isOk ? "" : tail(combined, 2000);
     results.push({
       name: command.name,
       command: cmd,
       ok: isOk,
       exitCode: result.exitCode,
       durationMs,
-      ...(outputTail.trim().length > 0 ? { outputTail } : {}),
     });
 
     if (result.exitCode !== 0) {
@@ -1353,7 +1354,6 @@ export const createTools = (ctx: PluginContext) => {
               ok: r.ok,
               exitCode: r.exitCode,
               durationMs: r.durationMs,
-              ...(r.outputTail ? { outputTail: r.outputTail } : {}),
             })),
           };
           const ui: PrdUiAttempt = uiResult

@@ -8,7 +8,6 @@ export type PrdGateAttempt = {
   ok: boolean;
   exitCode: number;
   durationMs: number;
-  outputTail?: string;
 };
 
 export type PrdGatesAttempt = {
