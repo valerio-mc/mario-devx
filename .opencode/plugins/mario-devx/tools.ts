@@ -472,6 +472,8 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- Ask direct natural-language questions; do NOT use A/B/C/D multiple-choice formatting.",
     "- Ask about ONE missing field only; do not combine multiple fields in one question.",
     "- Keep question short (max 22 words), concrete, and answerable in one message.",
+    "- For boolean fields, ask yes/no in plain language (never ask for true/false literals).",
+    "- Do not re-ask fields that are already satisfied in the readiness checklist.",
     "- qualityGates must be explicit runnable commands (eg: npm run lint).",
     "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
     "- Do not mark done=true unless ALL required fields pass the criteria above.",
