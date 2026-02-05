@@ -4,6 +4,18 @@ import { createTools } from "./tools";
 import { readRunState, readWorkSessionState } from "./state";
 import { getRepoRoot } from "./paths";
 
+const getIdleSessionId = (event: unknown): string | null => {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  const e = event as { type?: unknown; properties?: unknown };
+  if (e.type !== "session.idle") {
+    return null;
+  }
+  const props = e.properties as { sessionID?: unknown } | undefined;
+  return typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : null;
+};
+
 const marioDevxPlugin: Plugin = async (ctx) => {
   const tools = createTools(ctx);
   const repoRoot = getRepoRoot(ctx);
@@ -12,10 +24,7 @@ const marioDevxPlugin: Plugin = async (ctx) => {
     tool: tools,
     event: async ({ event }) => {
       // Notify control session when the work session becomes idle.
-      if ((event as any)?.type !== "session.idle") {
-        return;
-      }
-      const sessionID = (event as any)?.properties?.sessionID as string | undefined;
+      const sessionID = getIdleSessionId(event);
       if (!sessionID) {
         return;
       }
