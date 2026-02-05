@@ -202,6 +202,17 @@ const hasDiverseQualityGates = (gates: string[]): boolean => {
   return hasTest && hasStatic;
 };
 
+const looksLikeUiChoiceArtifact = (input: string): boolean => {
+  const s = input.trim();
+  if (!s) {
+    return false;
+  }
+  if (/^answer in my own words/i.test(s)) {
+    return true;
+  }
+  return /(single-choice|multi-choice|free-text|show current status|stop for now|hardcoded|fixed questions|generate 3 questions)/i.test(s);
+};
+
 const isPrdComplete = (prd: PrdJson): boolean => {
   return (
     hasNonEmpty(prd.idea)
@@ -1065,6 +1076,15 @@ export const createTools = (ctx: PluginContext) => {
             `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
             cachedQuestion,
             "Reply with your answer in natural language.",
+          ].join("\n");
+        }
+
+        if (hasAnswer && looksLikeUiChoiceArtifact(rawInput)) {
+          const questionText = cachedQuestion || fallbackQuestion(prd);
+          return [
+            `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
+            questionText,
+            "Please answer directly in your own words (the last input looked like a menu/option label).",
           ].join("\n");
         }
 
