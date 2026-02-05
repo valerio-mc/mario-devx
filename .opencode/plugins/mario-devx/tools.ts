@@ -223,14 +223,6 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   };
 };
 
-const getXdgConfigHome = (): string => {
-  return process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? "", ".config");
-};
-
-const getGlobalSkillPath = (skillName: string): string => {
-  return path.join(getXdgConfigHome(), "opencode", "skill", skillName, "SKILL.md");
-};
-
 const parseEnvValue = (value: string): string => {
   const trimmed = value.trim();
   if (
@@ -308,9 +300,6 @@ const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
     if ((await readTextIfExists(candidate)) !== null) {
       return true;
     }
-  }
-  if ((await readTextIfExists(getGlobalSkillPath("agent-browser"))) !== null) {
-    return true;
   }
   return false;
 };
