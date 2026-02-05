@@ -456,12 +456,28 @@ const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
   return tasks.find((t) => t.status === "open") ?? null;
 };
 
-const missingNpmScriptForCommand = async (repoRoot: string, command: string): Promise<string | null> => {
-  const m = command.match(/^npm\s+run\s+([a-zA-Z0-9:_-]+)$/);
-  if (!m) {
+const extractScriptFromCommand = (command: string): string | null => {
+  const trimmed = command.trim();
+  const npm = trimmed.match(/^npm\s+run\s+([a-zA-Z0-9:_-]+)$/);
+  if (npm) return npm[1] ?? null;
+  const pnpmRun = trimmed.match(/^pnpm\s+run\s+([a-zA-Z0-9:_-]+)$/);
+  if (pnpmRun) return pnpmRun[1] ?? null;
+  const pnpmDirect = trimmed.match(/^pnpm\s+([a-zA-Z0-9:_-]+)$/);
+  if (pnpmDirect && !["install", "add", "dlx", "exec"].includes((pnpmDirect[1] ?? "").toLowerCase())) return pnpmDirect[1] ?? null;
+  const yarnRun = trimmed.match(/^yarn\s+run\s+([a-zA-Z0-9:_-]+)$/);
+  if (yarnRun) return yarnRun[1] ?? null;
+  const yarnDirect = trimmed.match(/^yarn\s+([a-zA-Z0-9:_-]+)$/);
+  if (yarnDirect && !["install", "add", "dlx", "exec"].includes((yarnDirect[1] ?? "").toLowerCase())) return yarnDirect[1] ?? null;
+  const bunRun = trimmed.match(/^bun\s+run\s+([a-zA-Z0-9:_-]+)$/);
+  if (bunRun) return bunRun[1] ?? null;
+  return null;
+};
+
+const missingPackageScriptForCommand = async (repoRoot: string, command: string): Promise<string | null> => {
+  const scriptName = extractScriptFromCommand(command);
+  if (!scriptName) {
     return null;
   }
-  const scriptName = m[1];
   const pkgRaw = await readTextIfExists(path.join(repoRoot, "package.json"));
   if (!pkgRaw) {
     return scriptName;
@@ -1580,7 +1596,7 @@ export const createTools = (ctx: PluginContext) => {
                   : "(unknown command)";
                 const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
                 const missingScript = gateResult.failed
-                  ? await missingNpmScriptForCommand(repoRoot, gateResult.failed.command)
+                  ? await missingPackageScriptForCommand(repoRoot, gateResult.failed.command)
                   : null;
                 const repairPrompt = [
                   `Task ${task.id} failed deterministic gate: ${failedGate}.`,
@@ -1676,7 +1692,7 @@ export const createTools = (ctx: PluginContext) => {
               : "(unknown command)";
             const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
             const missingScript = gateResult.failed
-              ? await missingNpmScriptForCommand(repoRoot, gateResult.failed.command)
+              ? await missingPackageScriptForCommand(repoRoot, gateResult.failed.command)
               : null;
             const elapsedMs = Date.now() - taskRepairStartedAt;
             await failEarly([
