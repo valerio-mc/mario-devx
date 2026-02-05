@@ -30,16 +30,13 @@ Mario DevX forces the only kind of memory that actually helps:
 ```
 
 ## First run
-
-Important: do this inside a git repo.
-
-1) Create a repo
+1) **Create a repo**
 
 ```bash
 mkdir my-project && cd my-project && git init
 ```
 
-2) Copy the plugin into your project
+2) **Copy the plugin into your project**
 
 ```bash
 mkdir -p .opencode/plugins
@@ -50,13 +47,13 @@ tmpdir="$(mktemp -d)" && \
   cp "$tmpdir"/mario-devx-main/.opencode/package.json ./.opencode/
 ```
 
-3) Start OpenCode
+3) **Start OpenCode**
 
 ```bash
 opencode .
 ```
 
-4) Bootstrap
+4) **Bootstrap**
 
 ```
 /mario-devx:new my brilliant idea
@@ -65,6 +62,15 @@ opencode .
 Answer the PRD interview questions in your current session using natural language.
 The interviewer is intentionally strict: it will probe for target users, concrete problems, measurable success metrics, constraints, non-goals, and runnable quality gates before it marks the PRD complete.
 You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
+
+5) **Run the loop**
+
+```
+/mario-devx:run <N>
+```
+
+`N` is the maximum number of tasks to attempt in this run.
+Use `/mario-devx:run 1` for tight control (recommended), or a larger number to let it continue across multiple tasks until one fails or it reaches the limit.
 
 ## Usage
 
