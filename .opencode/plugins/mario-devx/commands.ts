@@ -27,7 +27,7 @@ export const createCommands = (): CommandDefinition[] => [
   command(
     "new",
     "Interactive PRD interview (writes .mario/prd.json)",
-    "Call tool mario_devx_new with idea=\"$ARGUMENTS\". If the result starts with 'PRD interview (', ask the question using the question tool (header: 'PRD Interview') with these options: 'Answer in my own words' (recommended), 'Show current status', 'Stop for now'. Keep custom input enabled. If user chooses 'Show current status', call mario_devx_status and return its output. If user chooses 'Stop for now', return 'PRD interview paused.'. Otherwise, treat the user's custom answer (or selected label text) as the next answer and call mario_devx_new again with idea=<that answer>. Return only the final question/completion text.",
+    "Call tool mario_devx_new with idea=\"$ARGUMENTS\". If the result starts with 'PRD interview (', extract the interview question text and generate 3 concise suggested answers that are plausible and specific for this project context. Then ask the question tool (header: 'PRD Interview') with exactly these options in order: (1) suggestion 1 (recommended), (2) suggestion 2, (3) suggestion 3, (4) Show current status, (5) Stop for now. Keep custom input enabled so the user can freely type their own answer. If user chooses 'Show current status', call mario_devx_status and return its output. If user chooses 'Stop for now', return 'PRD interview paused.'. Otherwise, if user typed custom text use that; if user selected one of the 3 suggestions use that selected suggestion text. Call mario_devx_new again with idea=<chosen answer>. Return only the final question/completion text.",
   ),
   command(
     "run",
