@@ -72,7 +72,12 @@ export type PrdJson = {
   framework: string | null;
   qualityGates: string[];
   product: {
+    targetUsers: string[];
+    userProblems: string[];
     mustHaveFeatures: string[];
+    nonGoals: string[];
+    successMetrics: string[];
+    constraints: string[];
   };
   tasks: PrdTask[];
 };
@@ -82,7 +87,7 @@ export const prdJsonPath = (repoRoot: string): string => path.join(repoRoot, ".m
 const defaultWizard = (): PrdWizard => ({
   status: "in_progress",
   step: 0,
-  totalSteps: 7,
+  totalSteps: 12,
   lastQuestionId: null,
   answers: {},
 });
@@ -100,7 +105,12 @@ export const defaultPrdJson = (): PrdJson => {
     framework: null,
     qualityGates: [],
     product: {
+      targetUsers: [],
+      userProblems: [],
       mustHaveFeatures: [],
+      nonGoals: [],
+      successMetrics: [],
+      constraints: [],
     },
     tasks: [],
   };

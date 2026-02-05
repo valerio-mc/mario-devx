@@ -63,6 +63,7 @@ opencode .
 ```
 
 Answer the PRD interview questions in your current session using natural language.
+The interviewer is intentionally strict: it will probe for target users, concrete problems, measurable success metrics, constraints, non-goals, and runnable quality gates before it marks the PRD complete.
 You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
 
 ## Usage

@@ -132,8 +132,23 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
   const existing = await readPrdJsonIfExists(repoRoot);
   if (existing) {
     const createdAt = existing.meta?.createdAt?.trim() ? existing.meta.createdAt : nowIso();
-    if (createdAt !== existing.meta.createdAt) {
-      const repaired: PrdJson = { ...existing, meta: { ...existing.meta, createdAt } };
+    const repaired: PrdJson = {
+      ...existing,
+      meta: { ...existing.meta, createdAt },
+      wizard: {
+        ...existing.wizard,
+        totalSteps: Math.max(existing.wizard?.totalSteps ?? 0, 12),
+      },
+      product: {
+        targetUsers: Array.isArray(existing.product?.targetUsers) ? existing.product.targetUsers : [],
+        userProblems: Array.isArray(existing.product?.userProblems) ? existing.product.userProblems : [],
+        mustHaveFeatures: Array.isArray(existing.product?.mustHaveFeatures) ? existing.product.mustHaveFeatures : [],
+        nonGoals: Array.isArray(existing.product?.nonGoals) ? existing.product.nonGoals : [],
+        successMetrics: Array.isArray(existing.product?.successMetrics) ? existing.product.successMetrics : [],
+        constraints: Array.isArray(existing.product?.constraints) ? existing.product.constraints : [],
+      },
+    };
+    if (JSON.stringify(repaired) !== JSON.stringify(existing)) {
       await writePrdJson(repoRoot, repaired);
       return repaired;
     }
@@ -150,8 +165,13 @@ type InterviewUpdates = {
   frontend?: boolean;
   language?: "typescript" | "python" | "go" | "rust" | "other";
   framework?: string | null;
+  targetUsers?: string[];
+  userProblems?: string[];
   qualityGates?: string[];
   mustHaveFeatures?: string[];
+  nonGoals?: string[];
+  successMetrics?: string[];
+  constraints?: string[];
 };
 
 type InterviewEnvelope = {
@@ -160,10 +180,27 @@ type InterviewEnvelope = {
   next_question?: string;
 };
 
-const WIZARD_TOTAL_STEPS = 7;
+const WIZARD_TOTAL_STEPS = 12;
 const LAST_QUESTION_KEY = "__last_question";
+const MIN_FEATURES = 3;
+const MIN_QUALITY_GATES = 2;
 
 const hasNonEmpty = (value: string | null | undefined): boolean => typeof value === "string" && value.trim().length > 0;
+
+const normalizeTextArray = (value: string[] | undefined): string[] => {
+  return Array.isArray(value)
+    ? Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)))
+    : [];
+};
+
+const hasMeaningfulList = (value: string[] | undefined, min = 1): boolean => normalizeTextArray(value).length >= min;
+
+const hasDiverseQualityGates = (gates: string[]): boolean => {
+  const normalized = normalizeTextArray(gates);
+  const hasTest = normalized.some((gate) => /(\btest\b|pytest|vitest|jest|playwright|cypress|go test|cargo test)/i.test(gate));
+  const hasStatic = normalized.some((gate) => /(lint|typecheck|mypy|ruff|flake8|eslint|tsc|build|check|fmt --check)/i.test(gate));
+  return hasTest && hasStatic;
+};
 
 const isPrdComplete = (prd: PrdJson): boolean => {
   return (
@@ -172,10 +209,14 @@ const isPrdComplete = (prd: PrdJson): boolean => {
     && typeof prd.frontend === "boolean"
     && prd.language !== null
     && hasNonEmpty(prd.framework)
-    && Array.isArray(prd.qualityGates)
-    && prd.qualityGates.length > 0
-    && Array.isArray(prd.product.mustHaveFeatures)
-    && prd.product.mustHaveFeatures.length > 0
+    && hasMeaningfulList(prd.product.targetUsers)
+    && hasMeaningfulList(prd.product.userProblems)
+    && hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)
+    && hasMeaningfulList(prd.product.nonGoals)
+    && hasMeaningfulList(prd.product.successMetrics)
+    && hasMeaningfulList(prd.product.constraints)
+    && hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES)
+    && hasDiverseQualityGates(prd.qualityGates)
   );
 };
 
@@ -186,8 +227,13 @@ const deriveWizardStep = (prd: PrdJson): number => {
   if (typeof prd.frontend === "boolean") step = 3;
   if (prd.language !== null) step = 4;
   if (hasNonEmpty(prd.framework)) step = 5;
-  if (Array.isArray(prd.qualityGates) && prd.qualityGates.length > 0) step = 6;
-  if (Array.isArray(prd.product.mustHaveFeatures) && prd.product.mustHaveFeatures.length > 0) step = 7;
+  if (hasMeaningfulList(prd.product.targetUsers)) step = 6;
+  if (hasMeaningfulList(prd.product.userProblems)) step = 7;
+  if (hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 8;
+  if (hasMeaningfulList(prd.product.nonGoals)) step = 9;
+  if (hasMeaningfulList(prd.product.successMetrics)) step = 10;
+  if (hasMeaningfulList(prd.product.constraints)) step = 11;
+  if (hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates)) step = 12;
   return Math.min(WIZARD_TOTAL_STEPS, step);
 };
 
@@ -197,8 +243,13 @@ const firstMissingField = (prd: PrdJson): string => {
   if (typeof prd.frontend !== "boolean") return "frontend";
   if (prd.language === null) return "language";
   if (!hasNonEmpty(prd.framework)) return "framework";
-  if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) return "qualityGates";
-  if (!Array.isArray(prd.product.mustHaveFeatures) || prd.product.mustHaveFeatures.length === 0) return "mustHaveFeatures";
+  if (!hasMeaningfulList(prd.product.targetUsers)) return "targetUsers";
+  if (!hasMeaningfulList(prd.product.userProblems)) return "userProblems";
+  if (!hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) return "mustHaveFeatures";
+  if (!hasMeaningfulList(prd.product.nonGoals)) return "nonGoals";
+  if (!hasMeaningfulList(prd.product.successMetrics)) return "successMetrics";
+  if (!hasMeaningfulList(prd.product.constraints)) return "constraints";
+  if (!hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) || !hasDiverseQualityGates(prd.qualityGates)) return "qualityGates";
   return "done";
 };
 
@@ -215,10 +266,20 @@ const fallbackQuestion = (prd: PrdJson): string => {
       return "What is the primary language: TypeScript, Python, Go, Rust, or other?";
     case "framework":
       return "Which framework/runtime should be the default?";
-    case "qualityGates":
-      return "List the quality gate commands to run (one command per line, for example: npm run lint).";
+    case "targetUsers":
+      return "Who are the primary target users? List user segments explicitly.";
+    case "userProblems":
+      return "What concrete user problems are we solving for those users?";
     case "mustHaveFeatures":
-      return "List the must-have features to implement first.";
+      return `List at least ${MIN_FEATURES} must-have features for V1.`;
+    case "nonGoals":
+      return "What is explicitly out of scope for V1?";
+    case "successMetrics":
+      return "How will success be measured? List measurable metrics.";
+    case "constraints":
+      return "List constraints: technical, timeline, budget, compliance, or deployment constraints.";
+    case "qualityGates":
+      return `List at least ${MIN_QUALITY_GATES} quality gate commands, including both test and static checks.`;
     default:
       return "Anything else I should capture before we run the first iteration?";
   }
@@ -293,19 +354,39 @@ const setPrdTaskLastAttempt = (prd: PrdJson, taskId: string, lastAttempt: PrdTas
 };
 
 const interviewPrompt = (prd: PrdJson, input: string): string => {
+  const readiness = {
+    idea: hasNonEmpty(prd.idea),
+    platform: prd.platform !== null,
+    frontend: typeof prd.frontend === "boolean",
+    language: prd.language !== null,
+    framework: hasNonEmpty(prd.framework),
+    targetUsers: hasMeaningfulList(prd.product.targetUsers),
+    userProblems: hasMeaningfulList(prd.product.userProblems),
+    mustHaveFeatures: hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES),
+    nonGoals: hasMeaningfulList(prd.product.nonGoals),
+    successMetrics: hasMeaningfulList(prd.product.successMetrics),
+    constraints: hasMeaningfulList(prd.product.constraints),
+    qualityGates: hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates),
+  };
   const current = {
     idea: prd.idea,
     platform: prd.platform,
     frontend: prd.frontend,
     language: prd.language,
     framework: prd.framework,
+    targetUsers: prd.product.targetUsers,
+    userProblems: prd.product.userProblems,
     qualityGates: prd.qualityGates,
     mustHaveFeatures: prd.product.mustHaveFeatures,
+    nonGoals: prd.product.nonGoals,
+    successMetrics: prd.product.successMetrics,
+    constraints: prd.product.constraints,
     step: prd.wizard.step,
   };
   return [
     "You are mario-devx's PRD interviewer.",
-    "Ask ONE concise follow-up question that helps complete the PRD.",
+    "Conduct a deep PRD interview. Ask ONE concise but high-leverage follow-up question per turn.",
+    "The question should force specificity, remove ambiguity, and improve implementation readiness.",
     "You must return BOTH:",
     "1) a JSON envelope between <MARIO_JSON> tags",
     "2) the next question between <MARIO_QUESTION> tags",
@@ -316,17 +397,28 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- frontend (true/false)",
     "- language (typescript|python|go|rust|other)",
     "- framework (string)",
-    "- qualityGates (non-empty string[] of runnable commands)",
-    "- mustHaveFeatures (non-empty string[])",
+    "- targetUsers (non-empty string[])",
+    "- userProblems (non-empty string[])",
+    `- mustHaveFeatures (at least ${MIN_FEATURES} string items)`,
+    "- nonGoals (non-empty string[])",
+    "- successMetrics (non-empty string[])",
+    "- constraints (non-empty string[])",
+    `- qualityGates (at least ${MIN_QUALITY_GATES} runnable commands including both test and static checks)`,
     "",
     "Envelope schema:",
-    '{"done": boolean, "updates": {idea?, platform?, frontend?, language?, framework?, qualityGates?, mustHaveFeatures?}, "next_question": string}',
+    '{"done": boolean, "updates": {idea?, platform?, frontend?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
     "",
     "Rules:",
     "- updates MUST include only fields changed by this answer.",
+    "- Ask probing follow-ups until requirements are testable and implementation-ready.",
     "- qualityGates must be explicit runnable commands (eg: npm run lint).",
+    "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
+    "- Do not mark done=true unless ALL required fields pass the criteria above.",
     "- if unsure, ask a question and keep done=false.",
     "- no markdown except the two required tags.",
+    "",
+    "Readiness checklist:",
+    JSON.stringify(readiness, null, 2),
     "",
     "Current PRD state:",
     JSON.stringify(current, null, 2),
@@ -368,14 +460,29 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   if (typeof updates.frontend === "boolean") next.frontend = updates.frontend;
   if (updates.language) next.language = updates.language;
   if (typeof updates.framework === "string" || updates.framework === null) next.framework = updates.framework;
+  if (Array.isArray(updates.targetUsers)) {
+    next.product = { ...next.product, targetUsers: normalizeTextArray(updates.targetUsers) };
+  }
+  if (Array.isArray(updates.userProblems)) {
+    next.product = { ...next.product, userProblems: normalizeTextArray(updates.userProblems) };
+  }
   if (Array.isArray(updates.qualityGates)) {
-    next.qualityGates = updates.qualityGates.map((x) => String(x).trim()).filter(Boolean);
+    next.qualityGates = normalizeTextArray(updates.qualityGates);
   }
   if (Array.isArray(updates.mustHaveFeatures)) {
     next.product = {
       ...next.product,
-      mustHaveFeatures: updates.mustHaveFeatures.map((x) => String(x).trim()).filter(Boolean),
+      mustHaveFeatures: normalizeTextArray(updates.mustHaveFeatures),
     };
+  }
+  if (Array.isArray(updates.nonGoals)) {
+    next.product = { ...next.product, nonGoals: normalizeTextArray(updates.nonGoals) };
+  }
+  if (Array.isArray(updates.successMetrics)) {
+    next.product = { ...next.product, successMetrics: normalizeTextArray(updates.successMetrics) };
+  }
+  if (Array.isArray(updates.constraints)) {
+    next.product = { ...next.product, constraints: normalizeTextArray(updates.constraints) };
   }
   if (next.platform && next.platform !== "web") {
     next.frontend = false;
@@ -997,22 +1104,6 @@ export const createTools = (ctx: PluginContext) => {
         };
 
         if (done) {
-          if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
-            prd = {
-              ...prd,
-              wizard: {
-                ...prd.wizard,
-                status: "in_progress",
-                step: Math.min(deriveWizardStep(prd), WIZARD_TOTAL_STEPS),
-                lastQuestionId: "qualityGates",
-              },
-            };
-            await writePrdJson(repoRoot, prd);
-            return [
-              "PRD interview: quality gates are still empty.",
-              "Add at least one runnable command (for example: npm run test).",
-            ].join("\n");
-          }
           prd = seedTasksFromPrd(prd);
           prd = {
             ...prd,

@@ -7,7 +7,7 @@
   "wizard": {
     "status": "in_progress",
     "step": 0,
-    "totalSteps": 7,
+    "totalSteps": 12,
     "lastQuestionId": null,
     "answers": {}
   },
@@ -18,7 +18,12 @@
   "framework": null,
   "qualityGates": [],
   "product": {
-    "mustHaveFeatures": []
+    "targetUsers": [],
+    "userProblems": [],
+    "mustHaveFeatures": [],
+    "nonGoals": [],
+    "successMetrics": [],
+    "constraints": []
   },
   "tasks": []
 }
