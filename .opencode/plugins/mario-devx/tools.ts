@@ -1529,6 +1529,7 @@ export const createTools = (ctx: PluginContext) => {
               }
 
               const taskRepairStartedAt = Date.now();
+              let repairAttempts = 0;
               let noProgressStreak = 0;
               let lastGateFailureSig: string | null = null;
               let gateResult = await runGateCommands(gateCommands, ctx.$);
@@ -1548,15 +1549,20 @@ export const createTools = (ctx: PluginContext) => {
                 }
                 lastGateFailureSig = currentSig;
 
-                if (elapsedMs >= MAX_TASK_REPAIR_MS || noProgressStreak >= MAX_NO_PROGRESS_STREAK) {
+                if (repairAttempts > 0 && (elapsedMs >= MAX_TASK_REPAIR_MS || noProgressStreak >= MAX_NO_PROGRESS_STREAK)) {
                   break;
                 }
 
                 const failedGate = gateResult.failed
                   ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
                   : "(unknown command)";
+                const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
                 const repairPrompt = [
                   `Task ${task.id} failed deterministic gate: ${failedGate}.`,
+                  gateResult.failed?.command?.includes("package.json")
+                    ? "If project scaffold is missing, scaffold the app first before feature edits."
+                    : "",
+                  scaffoldHint ? `Optional scaffold default: ${scaffoldHint}` : "",
                   "Fix the repository so all deterministic gates pass.",
                   "Do not ask questions. Apply edits and stop when done.",
                 ].join("\n");
@@ -1581,6 +1587,7 @@ export const createTools = (ctx: PluginContext) => {
                   break;
                 }
 
+                repairAttempts += 1;
                 gateResult = await runGateCommands(gateCommands, ctx.$);
               }
 
@@ -1643,7 +1650,7 @@ export const createTools = (ctx: PluginContext) => {
             const elapsedMs = Date.now() - taskRepairStartedAt;
             await failEarly([
               `Deterministic gate failed: ${failed}.`,
-              `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s (no-progress or time budget reached).`,
+              `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s across ${repairAttempts} attempt(s) (no-progress or time budget reached).`,
             ], scaffoldHint
               ? [
                   "Scaffold artifacts are missing; choose any valid scaffold approach for this stack.",
