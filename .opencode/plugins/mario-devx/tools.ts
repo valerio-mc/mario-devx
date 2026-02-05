@@ -31,7 +31,26 @@ const nowIso = (): string => new Date().toISOString();
 
 const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
 
-const acquireRunLock = async (repoRoot: string, controlSessionId: string | undefined): Promise<{ ok: true } | { ok: false; message: string }> => {
+const pidLooksAlive = (pid: unknown): boolean | null => {
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) {
+    return null;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "ESRCH") {
+      return false;
+    }
+    return null;
+  }
+};
+
+const acquireRunLock = async (
+  repoRoot: string,
+  controlSessionId: string | undefined,
+): Promise<{ ok: true } | { ok: false; message: string }> => {
   const lockPath = runLockPath(repoRoot);
   await mkdir(path.dirname(lockPath), { recursive: true });
 
@@ -42,10 +61,23 @@ const acquireRunLock = async (repoRoot: string, controlSessionId: string | undef
       await unlink(lockPath);
     } else {
       const existing = await readFile(lockPath, "utf8");
-      return {
-        ok: false,
-        message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
-      };
+      try {
+        const parsed = JSON.parse(existing) as { pid?: unknown };
+        const alive = pidLooksAlive(parsed.pid);
+        if (alive === false) {
+          await unlink(lockPath);
+        } else {
+          return {
+            ok: false,
+            message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
+          };
+        }
+      } catch {
+        return {
+          ok: false,
+          message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
+        };
+      }
     }
   } catch {
     // No lock.
@@ -68,15 +100,17 @@ const acquireRunLock = async (repoRoot: string, controlSessionId: string | undef
   return { ok: true };
 };
 
-const heartbeatRunLock = async (repoRoot: string): Promise<void> => {
+const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
   const lockPath = runLockPath(repoRoot);
   try {
     const raw = await readFile(lockPath, "utf8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const next = { ...parsed, heartbeatAt: nowIso() };
     await writeFile(lockPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8" });
+    return true;
   } catch {
     // Best-effort only.
+    return false;
   }
 };
 
@@ -254,25 +288,30 @@ const parseEnvValue = (value: string): string => {
   return trimmed;
 };
 
-const parseAgentsEnv = (content: string): Record<string, string> => {
+const parseAgentsEnv = (content: string): { env: Record<string, string>; warnings: string[] } => {
   const env: Record<string, string> = {};
-  for (const rawLine of content.split(/\r?\n/)) {
+  const warnings: string[] = [];
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const rawLine = lines[i] ?? "";
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) {
       continue;
     }
     const idx = line.indexOf("=");
     if (idx === -1) {
+      warnings.push(`Line ${i + 1}: ignored (missing '='): ${line}`);
       continue;
     }
     const key = line.slice(0, idx).trim();
     const value = line.slice(idx + 1);
     if (!key) {
+      warnings.push(`Line ${i + 1}: ignored (empty key): ${line}`);
       continue;
     }
     env[key] = parseEnvValue(value);
   }
-  return env;
+  return { env, warnings };
 };
 
 const upsertAgentsKey = (content: string, key: string, value: string): string => {
@@ -899,7 +938,7 @@ const applyWizardAnswer = async (params: {
   switch (q.id) {
     case "idea": {
       if (choice === "A") {
-        next.idea = path.basename(repoRoot);
+        next.idea = extra.trim() ? extra.trim() : path.basename(repoRoot);
         return advance();
       }
       if (choice === "B") {
@@ -1173,7 +1212,16 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         try {
-          await heartbeatRunLock(repoRoot);
+          if (!(await heartbeatRunLock(repoRoot))) {
+            await writeRunState(repoRoot, {
+              iteration: (await readRunState(repoRoot)).iteration,
+              status: "BLOCKED",
+              phase: "run",
+              ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
+              updatedAt: nowIso(),
+            });
+            return "Failed to update run.lock heartbeat. Check disk space/permissions, then rerun /mario-devx:run 1.";
+          }
           const currentRun = await readRunState(repoRoot);
           if (currentRun.status === "DOING") {
             return `A mario-devx run is already in progress (${currentRun.phase}). Wait for it to finish, then rerun /mario-devx:status.`;
@@ -1221,8 +1269,8 @@ export const createTools = (ctx: PluginContext) => {
             ...prd,
             tasks: (prd.tasks ?? []).map((t) => (ids.has(t.id) ? { ...t, status: "blocked" as const } : t)),
           };
-          if (focus) {
-            prd = setPrdTaskLastAttempt(prd, focus.id, lastAttempt);
+          for (const t of inProgress) {
+            prd = setPrdTaskLastAttempt(prd, t.id, lastAttempt);
           }
           await writePrdJson(repoRoot, prd);
           await writeRunState(repoRoot, {
@@ -1236,20 +1284,21 @@ export const createTools = (ctx: PluginContext) => {
           return judge.reason.concat(["", "See tasks[].lastAttempt.judge.nextActions in .mario/prd.json."]).join("\n");
         }
 
-        if (prd.frontend === true) {
-          const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-          const raw = (await readTextIfExists(agentsPath)) ?? "";
-          const env = parseAgentsEnv(raw);
-          if (env.UI_VERIFY !== "1") {
-            let next = raw;
-            next = upsertAgentsKey(next, "UI_VERIFY", "1");
-            next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", "0");
-            if (!env.UI_VERIFY_CMD) next = upsertAgentsKey(next, "UI_VERIFY_CMD", "npm run dev");
-            if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
-            if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
-            await writeText(agentsPath, next);
+          if (prd.frontend === true) {
+            const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
+            const raw = (await readTextIfExists(agentsPath)) ?? "";
+            const parsed = parseAgentsEnv(raw);
+            const env = parsed.env;
+            if (env.UI_VERIFY !== "1") {
+              let next = raw;
+              next = upsertAgentsKey(next, "UI_VERIFY", "1");
+              next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", "0");
+              if (!env.UI_VERIFY_CMD) next = upsertAgentsKey(next, "UI_VERIFY_CMD", "npm run dev");
+              if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
+              if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
+              await writeText(agentsPath, next);
+            }
           }
-        }
 
         const rawMax = (args.max_items ?? "").trim();
         const parsed = rawMax.length === 0 ? 1 : Number.parseInt(rawMax, 10);
@@ -1262,7 +1311,7 @@ export const createTools = (ctx: PluginContext) => {
         }));
 
         const agentsRaw = await readTextIfExists(agentsPath);
-        const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw) : {};
+        const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw).env : {};
         const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
         const uiVerifyCmd = agentsEnv.UI_VERIFY_CMD || "npm run dev";
         const uiVerifyUrl = agentsEnv.UI_VERIFY_URL || "http://localhost:3000";
@@ -1305,7 +1354,37 @@ export const createTools = (ctx: PluginContext) => {
 
           await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
-            await heartbeatRunLock(repoRoot);
+           const blockForHeartbeatFailure = async (): Promise<void> => {
+             const gates: PrdGatesAttempt = { ok: false, commands: [] };
+             const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+             const judge: PrdJudgeAttempt = {
+               status: "FAIL",
+               exitSignal: false,
+               reason: ["Failed to update run.lock heartbeat."],
+               nextActions: ["Check disk space/permissions, then rerun /mario-devx:run 1."],
+             };
+             const lastAttempt: PrdTaskAttempt = {
+               at: attemptAt,
+               iteration: state.iteration,
+               gates,
+               ui,
+               judge,
+             };
+             prd = setPrdTaskStatus(prd, task.id, "blocked");
+             prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
+             await writePrdJson(repoRoot, prd);
+             await updateRunState(repoRoot, {
+               status: "BLOCKED",
+               phase: "run",
+               currentPI: task.id,
+             });
+           };
+
+            if (!(await heartbeatRunLock(repoRoot))) {
+              await blockForHeartbeatFailure();
+              await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+              break;
+            }
             const ws = await resetWorkSession(ctx, repoRoot, context.agent);
             await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
             await updateRunState(repoRoot, {
@@ -1320,7 +1399,11 @@ export const createTools = (ctx: PluginContext) => {
 
 
             try {
-              await heartbeatRunLock(repoRoot);
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure();
+                await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+                break;
+              }
               await ctx.client.session.promptAsync({
                 path: { id: ws.sessionId },
                 body: {
@@ -1329,7 +1412,11 @@ export const createTools = (ctx: PluginContext) => {
                 },
               });
 
-              await heartbeatRunLock(repoRoot);
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure();
+                await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+                break;
+              }
 
               const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
               if (!idle) {
@@ -1360,7 +1447,11 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-              await heartbeatRunLock(repoRoot);
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure();
+                await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+                break;
+              }
 
               const gateResult = await runGateCommands(gateCommands, ctx.$);
               const uiResult = shouldRunUiVerify
@@ -1371,7 +1462,11 @@ export const createTools = (ctx: PluginContext) => {
                   })
                 : null;
 
-              await heartbeatRunLock(repoRoot);
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure();
+                await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+                break;
+              }
 
           const gates: PrdGatesAttempt = {
             ok: gateResult.ok,
@@ -1478,7 +1573,11 @@ export const createTools = (ctx: PluginContext) => {
                   parts: [{ type: "text", text: verifierPrompt }],
                 },
               });
-              await heartbeatRunLock(repoRoot);
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure();
+                await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+                break;
+              }
           const verifierText = extractTextFromPromptResponse(verifierResponse);
           const judge = parseJudgeAttemptFromText(verifierText);
           const lastAttempt: PrdTaskAttempt = {
@@ -1630,7 +1729,12 @@ export const createTools = (ctx: PluginContext) => {
         // UI verification prerequisites
         const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
         const agentsRaw = await readTextIfExists(agentsPath);
-        const agentsEnv = agentsRaw ? parseAgentsEnv(agentsRaw) : {};
+        const agentsParsed = agentsRaw ? parseAgentsEnv(agentsRaw) : { env: {}, warnings: [] };
+        const agentsEnv = agentsParsed.env;
+        if (agentsParsed.warnings.length > 0) {
+          issues.push(`AGENTS.md parse warnings (${agentsParsed.warnings.length}).`);
+          fixes.push("Fix malformed lines in .mario/AGENTS.md (must be KEY=VALUE; use # for comments)." );
+        }
         const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
         if (uiVerifyEnabled) {
           const isWebApp = await isLikelyWebApp(repoRoot);
