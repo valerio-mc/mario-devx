@@ -35,7 +35,7 @@ const acquireRunLock = async (repoRoot: string, controlSessionId: string | undef
   const lockPath = runLockPath(repoRoot);
   await mkdir(path.dirname(lockPath), { recursive: true });
 
-  const staleAfterMs = 2 * 60 * 60 * 1000;
+  const staleAfterMs = 12 * 60 * 60 * 1000;
   try {
     const s = await stat(lockPath);
     if (Date.now() - s.mtimeMs > staleAfterMs) {
@@ -66,6 +66,18 @@ const acquireRunLock = async (repoRoot: string, controlSessionId: string | undef
     };
   }
   return { ok: true };
+};
+
+const heartbeatRunLock = async (repoRoot: string): Promise<void> => {
+  const lockPath = runLockPath(repoRoot);
+  try {
+    const raw = await readFile(lockPath, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const next = { ...parsed, heartbeatAt: nowIso() };
+    await writeFile(lockPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8" });
+  } catch {
+    // Best-effort only.
+  }
 };
 
 const releaseRunLock = async (repoRoot: string): Promise<void> => {
@@ -1161,6 +1173,7 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         try {
+          await heartbeatRunLock(repoRoot);
           const currentRun = await readRunState(repoRoot);
           if (currentRun.status === "DOING") {
             return `A mario-devx run is already in progress (${currentRun.phase}). Wait for it to finish, then rerun /mario-devx:status.`;
@@ -1180,6 +1193,7 @@ export const createTools = (ctx: PluginContext) => {
         const inProgress = (prd.tasks ?? []).filter((t) => t.status === "in_progress");
         if (inProgress.length > 1) {
           const focus = inProgress[0];
+          const ids = new Set(inProgress.map((t) => t.id));
           const state = await bumpIteration(repoRoot);
           const attemptAt = nowIso();
           const gates: PrdGatesAttempt = { ok: false, commands: [] };
@@ -1202,11 +1216,15 @@ export const createTools = (ctx: PluginContext) => {
             ui,
             judge,
           };
+          // Normalize: block ALL in_progress tasks; attach a single lastAttempt to the focus task.
+          prd = {
+            ...prd,
+            tasks: (prd.tasks ?? []).map((t) => (ids.has(t.id) ? { ...t, status: "blocked" as const } : t)),
+          };
           if (focus) {
-            prd = setPrdTaskStatus(prd, focus.id, "blocked");
             prd = setPrdTaskLastAttempt(prd, focus.id, lastAttempt);
-            await writePrdJson(repoRoot, prd);
           }
+          await writePrdJson(repoRoot, prd);
           await writeRunState(repoRoot, {
             iteration: state.iteration,
             status: "BLOCKED",
@@ -1287,6 +1305,7 @@ export const createTools = (ctx: PluginContext) => {
 
           await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
+            await heartbeatRunLock(repoRoot);
             const ws = await resetWorkSession(ctx, repoRoot, context.agent);
             await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
             await updateRunState(repoRoot, {
@@ -1301,6 +1320,7 @@ export const createTools = (ctx: PluginContext) => {
 
 
             try {
+              await heartbeatRunLock(repoRoot);
               await ctx.client.session.promptAsync({
                 path: { id: ws.sessionId },
                 body: {
@@ -1308,6 +1328,8 @@ export const createTools = (ctx: PluginContext) => {
                   parts: [{ type: "text", text: buildModePrompt }],
                 },
               });
+
+              await heartbeatRunLock(repoRoot);
 
               const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
               if (!idle) {
@@ -1338,14 +1360,18 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-          const gateResult = await runGateCommands(gateCommands, ctx.$);
-          const uiResult = shouldRunUiVerify
-            ? await runUiVerification({
-                ctx,
-                devCmd: uiVerifyCmd,
-                url: uiVerifyUrl,
-              })
-            : null;
+              await heartbeatRunLock(repoRoot);
+
+              const gateResult = await runGateCommands(gateCommands, ctx.$);
+              const uiResult = shouldRunUiVerify
+                ? await runUiVerification({
+                    ctx,
+                    devCmd: uiVerifyCmd,
+                    url: uiVerifyUrl,
+                  })
+                : null;
+
+              await heartbeatRunLock(repoRoot);
 
           const gates: PrdGatesAttempt = {
             ok: gateResult.ok,
@@ -1444,14 +1470,15 @@ export const createTools = (ctx: PluginContext) => {
               .join("\n"),
           );
 
-          await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
-          const verifierResponse = await ctx.client.session.prompt({
-            path: { id: ws.sessionId },
-            body: {
-              ...(context.agent ? { agent: context.agent } : {}),
-              parts: [{ type: "text", text: verifierPrompt }],
-            },
-          });
+              await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
+              const verifierResponse = await ctx.client.session.prompt({
+                path: { id: ws.sessionId },
+                body: {
+                  ...(context.agent ? { agent: context.agent } : {}),
+                  parts: [{ type: "text", text: verifierPrompt }],
+                },
+              });
+              await heartbeatRunLock(repoRoot);
           const verifierText = extractTextFromPromptResponse(verifierResponse);
           const judge = parseJudgeAttemptFromText(verifierText);
           const lastAttempt: PrdTaskAttempt = {
@@ -1587,6 +1614,11 @@ export const createTools = (ctx: PluginContext) => {
             );
             fixes.push("Run /mario-devx:new to seed tasks or add tasks manually to .mario/prd.json."
             );
+          }
+          const inProgress = (prd.tasks ?? []).filter((t) => t.status === "in_progress").map((t) => t.id);
+          if (inProgress.length > 1) {
+            issues.push(`Invalid task state: multiple tasks are in_progress (${inProgress.join(", ")}).`);
+            fixes.push("Edit .mario/prd.json so at most one task is in_progress (set the others to open/blocked/cancelled). Then rerun /mario-devx:run 1.");
           }
           const blocked = (prd.tasks ?? []).filter((t) => t.status === "blocked").map((t) => t.id);
           if (blocked.length > 0) {

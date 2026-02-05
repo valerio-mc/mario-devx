@@ -31,7 +31,8 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
       };
     } catch {
       // Back up the corrupt state file and reset.
-      const backupPath = `${stateFile(repoRoot)}.corrupt-${new Date().toISOString().replace(/[:.]/g, "")}`;
+      const rand = Math.random().toString(16).slice(2, 8);
+      const backupPath = `${stateFile(repoRoot)}.corrupt-${new Date().toISOString().replace(/[:.]/g, "")}-${rand}`;
       try {
         await ensureDir(marioStateDir(repoRoot));
         await writeText(backupPath, raw);
