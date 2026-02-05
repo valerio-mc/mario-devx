@@ -399,6 +399,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
   }
   const bootstrapPlan = await scaffoldPlanFromPrd(repoRoot, prd);
   const doneWhen = prd.qualityGates ?? [];
+  const extractedScripts = Array.from(new Set(doneWhen.map((gate) => extractScriptFromCommand(gate)).filter((s): s is string => Boolean(s))));
   const tasks: PrdTask[] = [];
   let n = 1;
   tasks.push(
@@ -409,6 +410,21 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
       notes: bootstrapPlan.notes,
     }),
   );
+  if (extractedScripts.length > 0) {
+    tasks.push(
+      makeTask({
+        id: normalizeTaskId(n++),
+        title: "Setup quality pipeline so configured gates are runnable",
+        doneWhen: [
+          "test -f package.json",
+          ...extractedScripts.map((script) => `node -e \"const p=require('./package.json');process.exit(p.scripts&&p.scripts['${script}']?0:1)\"`),
+        ],
+        notes: [
+          "Create missing scripts/config for the declared quality gates before feature implementation.",
+        ],
+      }),
+    );
+  }
   for (const feature of prd.product.mustHaveFeatures ?? []) {
     tasks.push(
       makeTask({
@@ -564,6 +580,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- Keep question short (max 22 words), concrete, and answerable in one message.",
     "- For boolean fields, ask yes/no in plain language (never ask for true/false literals).",
     "- Do not re-ask fields that are already satisfied in the readiness checklist.",
+    "- Plan implementation order as: scaffold baseline, setup quality pipeline so gates are runnable, then feature tasks.",
     "- qualityGates must be explicit runnable commands (eg: npm run lint).",
     "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
     "- Do not mark done=true unless ALL required fields pass the criteria above.",
