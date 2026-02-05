@@ -27,6 +27,7 @@ export type PrdJudgeAttempt = {
   exitSignal: boolean;
   reason: string[];
   nextActions: string[];
+  rawText?: string;
 };
 
 export type PrdTaskAttempt = {

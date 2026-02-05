@@ -156,26 +156,50 @@ const setPrdTaskLastAttempt = (prd: PrdJson, taskId: string, lastAttempt: PrdTas
 };
 
 const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
-  const statusMatch = text.match(/^Status:\s*(PASS|FAIL)\s*$/im);
-  const exitMatch = text.match(/^EXIT_SIGNAL:\s*(true|false)\s*$/im);
-  const status = (statusMatch?.[1] ?? "FAIL") as "PASS" | "FAIL";
-  const exitSignal = (exitMatch?.[1] ?? "false").toLowerCase() === "true";
-
   const lines = text.split(/\r?\n/);
-  const collectBulletsBetween = (start: RegExp, end: RegExp): string[] => {
-    const startIdx = lines.findIndex((l) => start.test(l));
-    if (startIdx === -1) return [];
-    const endIdx = lines.findIndex((l, i) => i > startIdx && end.test(l));
-    const slice = lines.slice(startIdx + 1, endIdx === -1 ? lines.length : endIdx);
-    return slice
-      .map((l) => l.trim())
-      .filter((l) => l.startsWith("-"))
-      .map((l) => l.replace(/^[-\s]+/, "").trim())
-      .filter((l) => l.length > 0);
-  };
 
-  const reason = collectBulletsBetween(/^Reason:\s*$/i, /^Next actions:\s*$/i);
-  const nextActions = collectBulletsBetween(/^Next actions:\s*$/i, /^\s*$/);
+  let status: "PASS" | "FAIL" = "FAIL";
+  let exitSignal = false;
+  let section: "none" | "reason" | "next" = "none";
+  const reason: string[] = [];
+  const nextActions: string[] = [];
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      continue;
+    }
+    const sm = line.match(/^Status:\s*(PASS|FAIL)\s*$/i);
+    if (sm) {
+      status = (sm[1] ?? "FAIL").toUpperCase() as "PASS" | "FAIL";
+      continue;
+    }
+    const em = line.match(/^EXIT_SIGNAL:\s*(true|false)\s*$/i);
+    if (em) {
+      exitSignal = (em[1] ?? "false").toLowerCase() === "true";
+      continue;
+    }
+    if (/^Reason:\s*$/i.test(line)) {
+      section = "reason";
+      continue;
+    }
+    if (/^Next actions:\s*$/i.test(line)) {
+      section = "next";
+      continue;
+    }
+    if (!line.startsWith("-")) {
+      continue;
+    }
+    const bullet = line.replace(/^[-\s]+/, "").trim();
+    if (!bullet) {
+      continue;
+    }
+    if (section === "reason") {
+      reason.push(bullet);
+    } else if (section === "next") {
+      nextActions.push(bullet);
+    }
+  }
 
   const normalizedReason = reason.length > 0 ? reason : ["Verifier did not provide a parsable Reason list."];
   const normalizedNext = nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."];
@@ -186,6 +210,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
       exitSignal: false,
       reason: ["Verifier output invalid: Status: PASS requires EXIT_SIGNAL: true."],
       nextActions: ["Fix the verifier output format (PASS must set EXIT_SIGNAL: true), then rerun /mario-devx:run 1."],
+      rawText: text,
     };
   }
 
@@ -194,6 +219,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
     exitSignal: status === "PASS" ? true : false,
     reason: normalizedReason,
     nextActions: normalizedNext,
+    rawText: text,
   };
 };
 
