@@ -31,6 +31,15 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
         workSession: parsed.workSession,
       };
     } catch {
+      // Back up the corrupt state file and reset.
+      const backupPath = `${stateFile(repoRoot)}.corrupt-${new Date().toISOString().replace(/[:.]/g, "")}`;
+      try {
+        await ensureDir(marioStateDir(repoRoot));
+        await writeText(backupPath, raw);
+        await writeText(stateFile(repoRoot), JSON.stringify({ version: 1 }, null, 2));
+      } catch {
+        // Best-effort only.
+      }
       return { version: 1 };
     }
   }
