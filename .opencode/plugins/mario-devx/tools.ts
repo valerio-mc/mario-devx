@@ -488,11 +488,13 @@ const runGateCommands = async (
     const durationMs = Date.now() - startedAt;
     const stdout = result.stdout.toString();
     const stderr = result.stderr.toString();
-    const outputTail = tail([stdout, stderr].filter((x) => x.trim().length > 0).join("\n"), 4000);
+    const combined = [stdout, stderr].filter((x) => x.trim().length > 0).join("\n");
+    const isOk = result.exitCode === 0;
+    const outputTail = isOk ? "" : tail(combined, 2000);
     results.push({
       name: command.name,
       command: cmd,
-      ok: result.exitCode === 0,
+      ok: isOk,
       exitCode: result.exitCode,
       durationMs,
       ...(outputTail.trim().length > 0 ? { outputTail } : {}),
