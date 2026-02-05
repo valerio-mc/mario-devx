@@ -25,7 +25,7 @@ Mario DevX forces the only kind of memory that actually helps:
 ```
 /mario-devx:new <idea>    # PRD wizard -> seeds .mario/prd.json (requirements + tasks)
 /mario-devx:run <N>       # build + gates + judge for the next N tasks
-/mario-devx:status        # what's running + latest verdict path + next action
+/mario-devx:status        # what's running + focus task + last verdict + next action
 /mario-devx:doctor        # healthcheck + concrete fixes
 ```
 
@@ -101,7 +101,7 @@ In your project:
 ```text
 .mario/
   prd.json                   # requirements + tasks + Quality Gates
-  AGENTS.md                  # harness knobs (UI_VERIFY*, CMD_*, etc)
+  AGENTS.md                  # harness knobs (UI_VERIFY*)
   state/state.json           # internal state (iteration, run status, work session ids)
 ```
 
@@ -114,7 +114,8 @@ In this repo:
 ## Backpressure (definition of done)
 
 - Source of truth: `qualityGates` in `.mario/prd.json`.
-- Fallback: if you forgot, mario-devx auto-detects common scripts (Node) and a few sane defaults (Go/Rust/Python), and only persists them to `.mario/AGENTS.md` when they were auto-detected.
+
+If you leave `qualityGates` empty, `/mario-devx:run` will refuse to run.
 
 ### UI verification (frontends)
 
