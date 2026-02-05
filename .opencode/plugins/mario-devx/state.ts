@@ -26,7 +26,6 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
       const parsed = JSON.parse(raw) as Partial<MarioState>;
       return {
         version: 1,
-        iteration: parsed.iteration,
         run: parsed.run,
         workSession: parsed.workSession,
       };
