@@ -320,10 +320,11 @@ const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ do
   const notes: string[] = [
     "Seeded by PRD interviewer.",
     "First task scaffolds project artifacts before strict quality gates are enforced.",
+    "Scaffold implementation is agent-chosen; command hints below are optional defaults.",
   ];
 
   if (prd.platform === "web" && prd.language === "typescript" && framework.includes("next")) {
-    notes.push("Scaffold command: npx create-next-app@latest . --ts --eslint --app --src-dir --use-npm --yes");
+    notes.push("Preferred scaffold command (optional): npx create-next-app@latest __tmp_next --ts --eslint --app --src-dir --use-npm --yes && rsync -a __tmp_next/ ./ --exclude .git --exclude node_modules && rm -rf __tmp_next && npm install");
     return {
       doneWhen: ["test -f package.json", "test -d app || test -d src/app"],
       notes,
@@ -331,7 +332,7 @@ const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ do
   }
 
   if (prd.platform === "web" && prd.language === "typescript" && (framework.includes("vite") || framework.includes("react"))) {
-    notes.push("Scaffold command: npm create vite@latest . -- --template react-ts");
+    notes.push("Preferred scaffold command (optional): npm create vite@latest __tmp_vite -- --template react-ts && rsync -a __tmp_vite/ ./ --exclude .git --exclude node_modules && rm -rf __tmp_vite && npm install");
     return {
       doneWhen: ["test -f package.json", "test -f src/main.tsx"],
       notes,
@@ -339,7 +340,7 @@ const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ do
   }
 
   if (prd.platform === "api" && prd.language === "python" && framework.includes("fastapi")) {
-    notes.push("Scaffold command: python -m pip install fastapi uvicorn[standard]");
+    notes.push("Preferred scaffold command (optional): python -m pip install fastapi uvicorn[standard]");
     return {
       doneWhen: ["test -f pyproject.toml || test -f requirements.txt"],
       notes,
@@ -347,7 +348,7 @@ const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ do
   }
 
   const inferred = await inferBootstrapDoneWhen(repoRoot, prd);
-  notes.push("Scaffold command: initialize project skeleton for selected stack before implementing features.");
+  notes.push("Preferred scaffold command (optional): initialize project skeleton for selected stack before implementing features.");
   return { doneWhen: inferred, notes };
 };
 
@@ -355,8 +356,8 @@ const firstScaffoldHintFromNotes = (notes: string[] | undefined): string | null 
   if (!notes || notes.length === 0) {
     return null;
   }
-  const line = notes.find((n) => n.startsWith("Scaffold command:"));
-  return line ? line.replace(/^Scaffold command:\s*/, "").trim() : null;
+  const line = notes.find((n) => n.startsWith("Preferred scaffold command (optional):"));
+  return line ? line.replace(/^Preferred scaffold command \(optional\):\s*/, "").trim() : null;
 };
 
 const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<string[]> => {
@@ -1586,7 +1587,8 @@ export const createTools = (ctx: PluginContext) => {
               `Deterministic gate failed: ${failed}.`,
             ], scaffoldHint
               ? [
-                  `Run scaffold command first: ${scaffoldHint}`,
+                  "Scaffold artifacts are missing; choose any valid scaffold approach for this stack.",
+                  `Optional default command: ${scaffoldHint}`,
                   "Then rerun /mario-devx:run 1.",
                 ]
               : undefined);
