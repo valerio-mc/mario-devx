@@ -931,7 +931,6 @@ const applyWizardAnswer = async (params: {
     }
     case "language": {
       next.language = choice === "A" ? "typescript" : choice === "B" ? "python" : choice === "C" ? "go" : "rust";
-      next.stack = next.stack;
       return advance();
     }
     case "framework": {
