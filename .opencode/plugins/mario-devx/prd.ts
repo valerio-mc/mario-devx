@@ -3,6 +3,40 @@ import { readTextIfExists, writeText } from "./fs";
 
 export type PrdTaskStatus = "open" | "in_progress" | "blocked" | "completed" | "cancelled";
 
+export type PrdGateAttempt = {
+  command: string;
+  ok: boolean;
+  exitCode: number;
+  durationMs: number;
+  outputTail?: string;
+};
+
+export type PrdGatesAttempt = {
+  ok: boolean;
+  commands: PrdGateAttempt[];
+};
+
+export type PrdUiAttempt = {
+  ran: boolean;
+  ok: boolean | null;
+  note?: string;
+};
+
+export type PrdJudgeAttempt = {
+  status: "PASS" | "FAIL";
+  exitSignal: boolean;
+  reason: string[];
+  nextActions: string[];
+};
+
+export type PrdTaskAttempt = {
+  at: string;
+  iteration: number;
+  gates: PrdGatesAttempt;
+  ui: PrdUiAttempt;
+  judge: PrdJudgeAttempt;
+};
+
 export type PrdTask = {
   id: string;
   status: PrdTaskStatus;
@@ -10,6 +44,7 @@ export type PrdTask = {
   scope: string[];
   doneWhen: string[];
   evidence: string[];
+  lastAttempt?: PrdTaskAttempt;
   notes?: string[];
   rollback?: string[];
 };
@@ -41,8 +76,41 @@ export type PrdJsonV1 = {
   tasks: PrdTask[];
 };
 
-export type PrdJson = {
+export type PrdJsonV2 = {
   version: 2;
+  meta: {
+    createdAt: string;
+    updatedAt: string;
+  };
+  wizard: PrdWizard;
+  idea: string;
+  platform: "web" | "api" | "cli" | "library" | null;
+  frontend: boolean | null;
+  language: "typescript" | "python" | "go" | "rust" | "other" | null;
+  framework: string | null;
+  persistence: "none" | "sqlite" | "postgres" | "supabase" | "other" | null;
+  auth: "none" | "password" | "oauth" | "magic_link" | "other" | null;
+  deploy: "local" | "vercel" | "docker" | "fly" | "other" | null;
+  stack: string | null;
+  qualityGates: string[];
+  llm: {
+    provider: string;
+    model: string;
+  };
+  env: {
+    keyFile: string;
+    keyVar: string;
+  };
+  product: {
+    users: string;
+    problem: string;
+    mustHaveFeatures: string[];
+  };
+  tasks: PrdTask[];
+};
+
+export type PrdJson = {
+  version: 3;
   meta: {
     createdAt: string;
     updatedAt: string;
@@ -89,7 +157,7 @@ const defaultWizard = (): PrdWizard => ({
 export const defaultPrdJson = (): PrdJson => {
   const now = nowIso();
   return {
-    version: 2,
+    version: 3,
     meta: { createdAt: now, updatedAt: now },
     wizard: defaultWizard(),
     idea: "",
@@ -113,11 +181,11 @@ export const defaultPrdJson = (): PrdJson => {
   };
 };
 
-const upgradeV1ToV2 = (v1: PrdJsonV1): PrdJson => {
+const upgradeV1ToV2 = (v1: PrdJsonV1): PrdJsonV2 => {
   const base = defaultPrdJson();
   const now = nowIso();
   return {
-    ...base,
+    ...(base as unknown as PrdJsonV2),
     meta: { createdAt: now, updatedAt: now },
     idea: v1.idea ?? "",
     frontend: v1.frontend ?? null,
@@ -126,6 +194,32 @@ const upgradeV1ToV2 = (v1: PrdJsonV1): PrdJson => {
     llm: v1.llm?.provider && v1.llm?.model ? v1.llm : base.llm,
     env: v1.env?.keyFile && v1.env?.keyVar ? v1.env : base.env,
     tasks: Array.isArray(v1.tasks) ? v1.tasks : [],
+  };
+};
+
+const upgradeV2ToV3 = (v2: PrdJsonV2): PrdJson => {
+  const base = defaultPrdJson();
+  return {
+    ...base,
+    meta: {
+      createdAt: v2.meta?.createdAt?.trim() ? v2.meta.createdAt : base.meta.createdAt,
+      updatedAt: base.meta.updatedAt,
+    },
+    wizard: v2.wizard ?? base.wizard,
+    idea: v2.idea ?? base.idea,
+    platform: v2.platform ?? base.platform,
+    frontend: v2.frontend ?? base.frontend,
+    language: v2.language ?? base.language,
+    framework: v2.framework ?? base.framework,
+    persistence: v2.persistence ?? base.persistence,
+    auth: v2.auth ?? base.auth,
+    deploy: v2.deploy ?? base.deploy,
+    stack: v2.stack ?? base.stack,
+    qualityGates: Array.isArray(v2.qualityGates) ? v2.qualityGates : base.qualityGates,
+    llm: v2.llm?.provider && v2.llm?.model ? v2.llm : base.llm,
+    env: v2.env?.keyFile && v2.env?.keyVar ? v2.env : base.env,
+    product: v2.product ?? base.product,
+    tasks: Array.isArray(v2.tasks) ? v2.tasks : [],
   };
 };
 
@@ -140,7 +234,7 @@ export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | n
       return null;
     }
     const v = (parsed as { version?: unknown }).version;
-    if (v === 2) {
+    if (v === 3) {
       const prd = parsed as PrdJson;
       if (!Array.isArray(prd.tasks)) {
         return null;
@@ -148,8 +242,11 @@ export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | n
       return prd;
     }
     if (v === 1) {
-      const upgraded = upgradeV1ToV2(parsed as PrdJsonV1);
-      return upgraded;
+      const v2 = upgradeV1ToV2(parsed as PrdJsonV1);
+      return upgradeV2ToV3(v2);
+    }
+    if (v === 2) {
+      return upgradeV2ToV3(parsed as PrdJsonV2);
     }
     return null;
   } catch {
@@ -160,7 +257,7 @@ export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | n
 export const writePrdJson = async (repoRoot: string, prd: PrdJson): Promise<void> => {
   const next: PrdJson = {
     ...prd,
-    version: 2,
+    version: 3,
     meta: {
       createdAt: prd.meta?.createdAt ?? nowIso(),
       updatedAt: nowIso(),

@@ -6,10 +6,9 @@ Canonical files:
 - `.mario/prd.json` (requirements + task list + quality gates)
 - `.mario/AGENTS.md` (harness knobs)
 - `.mario/state/state.json` (internal state)
-- `.mario/runs/*` (evidence)
 
 Rules:
-- Before doing anything else, read the most recent verifier verdict in `.mario/runs/*/judge.out` (use `.mario/state/state.json` to find the latest runDir).
+- Before doing anything else, read `.mario/prd.json` for the current task and its `lastAttempt` (if any).
 - Implement exactly ONE task (the tool invocation provides the task ID and a task block).
 - Search first; do not assume missing.
 - Apply backpressure: run the verification commands configured in `.mario/prd.json` (`qualityGates`) and any overrides in `.mario/AGENTS.md` (`CMD_*`).

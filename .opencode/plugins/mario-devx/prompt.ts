@@ -19,7 +19,7 @@ export const buildPrompt = async (
     "- PRD + tasks: .mario/prd.json",
     "- Agent config: .mario/AGENTS.md",
     "- State: .mario/state/state.json",
-    "- Latest verdict: .mario/runs/<latest>/judge.out (see state.json for runDir)",
+    "- Task evidence: .mario/prd.json (tasks[].lastAttempt)",
     "",
   ];
 

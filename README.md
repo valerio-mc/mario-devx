@@ -102,8 +102,7 @@ In your project:
 .mario/
   prd.json                   # requirements + tasks + Quality Gates
   AGENTS.md                  # harness knobs (UI_VERIFY*, CMD_*, etc)
-  state/state.json           # internal state (iteration, run status, work session ids, latestVerdictPath)
-  runs/*                     # evidence per run (gates.log/json, judge.out, optional ui-verify.log)
+  state/state.json           # internal state (iteration, run status, work session ids)
 ```
 
 In this repo:
@@ -125,13 +124,13 @@ If `.mario/prd.json` has `frontend: true`, mario-devx enables best-effort UI ver
 
 How it works:
 - Starts your dev server (`UI_VERIFY_CMD`) and drives a real browser at `UI_VERIFY_URL` using Vercel's `agent-browser` (Playwright-based).
-- Writes evidence under `.mario/runs/*` (look for `ui-verify.log`).
+- Stores the latest UI result on the task under `.mario/prd.json` (`tasks[].lastAttempt.ui`).
 
 If prerequisites are missing, UI verify is skipped unless you set `UI_VERIFY_REQUIRED=1`.
 
 ## Verifier output
 
-The judge writes to `.mario/runs/*/judge.out`:
+The judge output is stored on the task in `.mario/prd.json` under `tasks[].lastAttempt.judge`:
 
 ```text
 Status: PASS|FAIL
@@ -144,10 +143,9 @@ Next actions:
 
 ## Git hygiene
 
-If you don't want run artifacts or internal state in git, add this to your repo `.gitignore`:
+If you don't want internal state in git, add this to your repo `.gitignore`:
 
 ```gitignore
-.mario/runs/
 .mario/state/
 ```
 

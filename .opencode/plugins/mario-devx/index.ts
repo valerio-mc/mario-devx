@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
-import { readRunState, readWorkSessionState, writeRunState } from "./state";
+import { readRunState, readWorkSessionState } from "./state";
 
 const marioDevxPlugin: Plugin = async (ctx) => {
   const tools = createTools(ctx);
@@ -33,7 +33,6 @@ const marioDevxPlugin: Plugin = async (ctx) => {
 
       const summary = [
         `mario-devx: work session is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`,
-        run.runDir ? `Run dir: ${run.runDir}` : "",
         run.status !== "NONE" ? `Run state: ${run.status}` : "",
       ]
         .filter((x) => x)

@@ -1,12 +1,22 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import path from "path";
-import { ensureDir, readTextIfExists, writeText } from "./fs";
+import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { ensureMario, bumpIteration, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
-import { marioRunsDir } from "./paths";
 import { RunState } from "./types";
-import { defaultPrdJson, readPrdJsonIfExists, writePrdJson, type PrdJson, type PrdTask, type PrdTaskStatus } from "./prd";
+import {
+  defaultPrdJson,
+  readPrdJsonIfExists,
+  writePrdJson,
+  type PrdGatesAttempt,
+  type PrdJudgeAttempt,
+  type PrdJson,
+  type PrdTask,
+  type PrdTaskAttempt,
+  type PrdTaskStatus,
+  type PrdUiAttempt,
+} from "./prd";
 
 type ToolContext = {
   sessionID?: string;
@@ -54,7 +64,7 @@ const linesFromExtra = (extra: string): string[] => {
     .filter((l) => l.length > 0);
 };
 
-const tasksEvidenceDefaults = (): string[] => [".mario/runs/*/gates.json", ".mario/runs/*/gates.log", ".mario/runs/*/judge.out"];
+const tasksEvidenceDefaults = (): string[] => [];
 
 const normalizeTaskId = (n: number): string => `T-${String(n).padStart(4, "0")}`;
 
@@ -90,6 +100,41 @@ const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
 const setPrdTaskStatus = (prd: PrdJson, taskId: string, status: PrdTaskStatus): PrdJson => {
   const tasks = (prd.tasks ?? []).map((t) => (t.id === taskId ? { ...t, status } : t));
   return { ...prd, tasks };
+};
+
+const setPrdTaskLastAttempt = (prd: PrdJson, taskId: string, lastAttempt: PrdTaskAttempt): PrdJson => {
+  const tasks = (prd.tasks ?? []).map((t) => (t.id === taskId ? { ...t, lastAttempt } : t));
+  return { ...prd, tasks };
+};
+
+const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
+  const statusMatch = text.match(/^Status:\s*(PASS|FAIL)\s*$/im);
+  const exitMatch = text.match(/^EXIT_SIGNAL:\s*(true|false)\s*$/im);
+  const status = (statusMatch?.[1] ?? "FAIL") as "PASS" | "FAIL";
+  const exitSignal = (exitMatch?.[1] ?? "false").toLowerCase() === "true";
+
+  const lines = text.split(/\r?\n/);
+  const collectBulletsBetween = (start: RegExp, end: RegExp): string[] => {
+    const startIdx = lines.findIndex((l) => start.test(l));
+    if (startIdx === -1) return [];
+    const endIdx = lines.findIndex((l, i) => i > startIdx && end.test(l));
+    const slice = lines.slice(startIdx + 1, endIdx === -1 ? lines.length : endIdx);
+    return slice
+      .map((l) => l.trim())
+      .filter((l) => l.startsWith("-"))
+      .map((l) => l.replace(/^[-\s]+/, "").trim())
+      .filter((l) => l.length > 0);
+  };
+
+  const reason = collectBulletsBetween(/^Reason:\s*$/i, /^Next actions:\s*$/i);
+  const nextActions = collectBulletsBetween(/^Next actions:\s*$/i, /^\s*$/);
+
+  return {
+    status,
+    exitSignal: status === "PASS" ? exitSignal : false,
+    reason: reason.length > 0 ? reason : ["Verifier did not provide a parsable Reason list."],
+    nextActions: nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."],
+  };
 };
 
 const getRepoRoot = (ctx: PluginContext): string => ctx.worktree ?? ctx.directory ?? process.cwd();
@@ -220,82 +265,57 @@ const hasAgentBrowserCli = async (ctx: PluginContext): Promise<boolean> => {
 
 const runUiVerification = async (params: {
   ctx: PluginContext;
-  runDir: string;
   devCmd: string;
   url: string;
-}): Promise<{ ok: boolean; summary: string }> => {
-  const { ctx, runDir, devCmd, url } = params;
+}): Promise<{ ok: boolean; note?: string }> => {
+  const { ctx, devCmd, url } = params;
   if (!ctx.$) {
-    return { ok: false, summary: "Bun shell not available to run UI verification." };
+    return { ok: false, note: "Bun shell not available to run UI verification." };
   }
 
-  const logPath = path.join(runDir, "ui-verify.log");
-  const pidPath = path.join(runDir, "devserver.pid");
-  const snapshotPath = path.join(runDir, "ui-snapshot.json");
-  const screenshotPath = path.join(runDir, "ui.png");
-  const consolePath = path.join(runDir, "ui-console.json");
-  const errorsPath = path.join(runDir, "ui-errors.json");
-
-  const log: string[] = [];
   let pid = "";
 
   // Start dev server in background.
-  log.push(`$ ${devCmd} (background)`);
   const start = await ctx.$`sh -c ${`${devCmd} >/dev/null 2>&1 & echo $!`}`.nothrow();
   pid = start.stdout.toString().trim();
-  log.push(`devserver pid: ${pid || "(none)"}`);
-  log.push(start.stderr.toString());
   if (!pid) {
-    await writeText(logPath, log.join("\n"));
-    return { ok: false, summary: "Failed to start dev server." };
+    return { ok: false, note: "Failed to start dev server." };
   }
-  await writeText(pidPath, `${pid}\n`);
 
   // Wait for URL to respond.
-  log.push(`$ wait for ${url}`);
   const waitCmd = `i=0; while [ $i -lt 60 ]; do curl -fsS ${url} >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1`;
   const waited = await ctx.$`sh -c ${waitCmd}`.nothrow();
-  log.push(`wait exitCode: ${waited.exitCode}`);
   if (waited.exitCode !== 0) {
     // stop server
     await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
-    await writeText(logPath, log.join("\n"));
-    return { ok: false, summary: `Dev server did not become ready at ${url}.` };
+    return { ok: false, note: `Dev server did not become ready at ${url}.` };
   }
 
   // Drive browser with agent-browser.
   const cmds: { label: string; cmd: string }[] = [
     { label: "open", cmd: `agent-browser open ${url}` },
-    { label: "snapshot", cmd: `agent-browser snapshot -i --json > ${snapshotPath}` },
-    { label: "screenshot", cmd: `agent-browser screenshot ${screenshotPath}` },
-    { label: "console", cmd: `agent-browser console --json > ${consolePath}` },
-    { label: "errors", cmd: `agent-browser errors --json > ${errorsPath}` },
+    { label: "snapshot", cmd: "agent-browser snapshot -i --json" },
+    { label: "console", cmd: "agent-browser console --json" },
+    { label: "errors", cmd: "agent-browser errors --json" },
     { label: "close", cmd: "agent-browser close" },
   ];
 
   for (const item of cmds) {
-    log.push(`$ ${item.cmd}`);
     const r = await ctx.$`sh -c ${item.cmd}`.nothrow();
-    log.push(`exitCode: ${r.exitCode}`);
-    log.push(r.stdout.toString());
-    log.push(r.stderr.toString());
     if (r.exitCode !== 0) {
       // Ensure close and stop server.
       await ctx.$`sh -c ${"agent-browser close >/dev/null 2>&1 || true"}`.nothrow();
       await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
-      await writeText(logPath, log.join("\n"));
       return {
         ok: false,
-        summary: `agent-browser failed at '${item.label}'. If this is first run, you may need: agent-browser install`,
+        note: `agent-browser failed at '${item.label}'. If this is first run, you may need: agent-browser install`,
       };
     }
   }
 
   // Stop server.
-  log.push(`$ kill ${pid}`);
   await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
-  await writeText(logPath, log.join("\n"));
-  return { ok: true, summary: "UI verification completed." };
+  return { ok: true, note: "UI verification completed." };
 };
 
 const appendLine = async (filePath: string, line: string): Promise<void> => {
@@ -358,51 +378,66 @@ const waitForSessionIdle = async (
   return false;
 };
 
-const writeRunArtifacts = async (runDir: string, prompt: string): Promise<void> => {
-  await ensureDir(runDir);
-  await writeText(path.join(runDir, "prompt.md"), prompt);
+const tail = (input: string, maxChars: number): string => {
+  if (input.length <= maxChars) return input;
+  return input.slice(input.length - maxChars);
 };
 
 const runGateCommands = async (
   commands: { name: string; command: string }[],
   $: PluginContext["$"] | undefined,
-  runDir: string,
-): Promise<{ ok: boolean; summary: string; failed?: { name: string; command: string; exitCode: number }; results: Array<{ name: string; command: string; exitCode: number; durationMs: number }> }> => {
+): Promise<{
+  ok: boolean;
+  failed?: { name: string; command: string; exitCode: number };
+  results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number; outputTail?: string }>;
+  note?: string;
+}> => {
   if (commands.length === 0) {
-    return { ok: false, summary: "No quality gates detected.", results: [] };
+    return { ok: false, note: "No quality gates detected.", results: [] };
   }
   if (!$) {
-    return { ok: false, summary: "Bun shell not available to run gates.", results: [] };
+    return { ok: false, note: "Bun shell not available to run gates.", results: [] };
   }
 
-  const logLines: string[] = [];
-  const results: Array<{ name: string; command: string; exitCode: number; durationMs: number }> = [];
+  const results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number; outputTail?: string }> = [];
   let ok = true;
   let failed: { name: string; command: string; exitCode: number } | undefined;
 
   for (const command of commands) {
-    logLines.push(`$ ${command.command}`);
-
     const cmd = command.command.trim();
     if (cmd.length === 0) {
       ok = false;
-      logLines.push("ERROR: empty gate command");
+      results.push({ name: command.name, command: "", ok: false, exitCode: 1, durationMs: 0, outputTail: "ERROR: empty gate command" });
       break;
     }
 
     if (cmd.includes("\n") || cmd.includes("\r")) {
       ok = false;
-      logLines.push("ERROR: gate command contains newline characters (refusing to run)");
+      results.push({
+        name: command.name,
+        command: cmd,
+        ok: false,
+        exitCode: 1,
+        durationMs: 0,
+        outputTail: "ERROR: gate command contains newline characters (refusing to run)",
+      });
       break;
     }
 
     const startedAt = Date.now();
     const result = await $`sh -c ${cmd}`.nothrow();
     const durationMs = Date.now() - startedAt;
-    results.push({ name: command.name, command: cmd, exitCode: result.exitCode, durationMs });
-    logLines.push(`exitCode: ${result.exitCode}`);
-    logLines.push(result.stdout.toString());
-    logLines.push(result.stderr.toString());
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+    const outputTail = tail([stdout, stderr].filter((x) => x.trim().length > 0).join("\n"), 4000);
+    results.push({
+      name: command.name,
+      command: cmd,
+      ok: result.exitCode === 0,
+      exitCode: result.exitCode,
+      durationMs,
+      ...(outputTail.trim().length > 0 ? { outputTail } : {}),
+    });
 
     if (result.exitCode !== 0) {
       ok = false;
@@ -410,14 +445,10 @@ const runGateCommands = async (
       break;
     }
   }
-
-  await writeText(path.join(runDir, "gates.log"), logLines.join("\n"));
-  await writeText(path.join(runDir, "gates.json"), JSON.stringify(results, null, 2));
   return {
     ok,
     results,
     ...(failed ? { failed } : {}),
-    summary: ok ? "All quality gates passed." : "Quality gate failed. See gates.log.",
   };
 };
 
@@ -446,7 +477,6 @@ const getBaselineText = (repoRoot: string): string => {
     "- PRD + tasks: .mario/prd.json",
     "- Agent config: .mario/AGENTS.md",
     "- State: .mario/state/state.json",
-    "- Runs: .mario/runs/*",
     "",
     `Repo: ${repoRoot}`,
   ].join("\n");
@@ -1146,11 +1176,7 @@ export const createTools = (ctx: PluginContext) => {
           await writePrdJson(repoRoot, prd);
 
           const state = await bumpIteration(repoRoot);
-          const runDir = path.join(
-            marioRunsDir(repoRoot),
-            `${new Date().toISOString().replace(/[:.]/g, "")}-run-iter${state.iteration}`,
-          );
-          await ensureDir(runDir);
+          const attemptAt = nowIso();
 
           const iterationPlan = [
             `# Iteration Task (${task.id})`,
@@ -1164,7 +1190,6 @@ export const createTools = (ctx: PluginContext) => {
             .filter((x) => x)
             .join("\n");
           const buildModePrompt = await buildPrompt(repoRoot, "build", iterationPlan);
-          await writeRunArtifacts(runDir, buildModePrompt);
 
           await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
@@ -1175,12 +1200,8 @@ export const createTools = (ctx: PluginContext) => {
             phase: "run",
             currentPI: task.id,
             controlSessionId: context.sessionID,
-            runDir,
             workSessionId: ws.sessionId,
             baselineMessageId: ws.baselineMessageId,
-            lastGate: "NONE",
-            lastUI: "NONE",
-            lastVerifier: "NONE",
             startedAt: nowIso(),
           });
 
@@ -1195,62 +1216,77 @@ export const createTools = (ctx: PluginContext) => {
 
           const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
           if (!idle) {
-            const text = [
-              "Status: FAIL",
-              "EXIT_SIGNAL: false",
-              "Reason:",
-              "- Build timed out waiting for the work session to go idle.",
-              "Next actions:",
-              "- Rerun /mario-devx:status; if it remains stuck, inspect the work session via /sessions.",
-            ].join("\n");
-            await writeText(path.join(runDir, "judge.out"), text);
+            const gates: PrdGatesAttempt = { ok: false, commands: [] };
+            const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+            const judge: PrdJudgeAttempt = {
+              status: "FAIL",
+              exitSignal: false,
+              reason: ["Build timed out waiting for the work session to go idle."],
+              nextActions: ["Rerun /mario-devx:status; if it remains stuck, inspect the work session via /sessions."],
+            };
+            const lastAttempt: PrdTaskAttempt = {
+              at: attemptAt,
+              iteration: state.iteration,
+              gates,
+              ui,
+              judge,
+            };
             prd = setPrdTaskStatus(prd, task.id, "blocked");
+            prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
             await writePrdJson(repoRoot, prd);
             await updateRunState(repoRoot, {
               status: "BLOCKED",
               phase: "run",
               currentPI: task.id,
-              runDir,
-              latestVerdictPath: path.join(runDir, "judge.out"),
-              lastGate: "NONE",
-              lastUI: "NONE",
-              lastVerifier: "FAIL",
             });
             await showToast(ctx, `Run stopped: build timed out on ${task.id}`, "warning");
             break;
           }
 
-          const gateResult = await runGateCommands(gateCommands, ctx.$, runDir);
+          const gateResult = await runGateCommands(gateCommands, ctx.$);
           const uiResult = shouldRunUiVerify
             ? await runUiVerification({
                 ctx,
-                runDir,
                 devCmd: uiVerifyCmd,
                 url: uiVerifyUrl,
               })
             : null;
 
-          const failEarly = async (reasonLines: string[]): Promise<void> => {
-            const text = [
-              "Status: FAIL",
-              "EXIT_SIGNAL: false",
-              "Reason:",
-              ...reasonLines.map((l) => `- ${l}`),
-              "Next actions:",
-              "- Fix the failing checks, then rerun /mario-devx:run 1.",
-            ].join("\n");
-            await writeText(path.join(runDir, "judge.out"), text);
+          const gates: PrdGatesAttempt = {
+            ok: gateResult.ok,
+            commands: gateResult.results.map((r) => ({
+              command: r.command,
+              ok: r.ok,
+              exitCode: r.exitCode,
+              durationMs: r.durationMs,
+              ...(r.outputTail ? { outputTail: r.outputTail } : {}),
+            })),
+          };
+          const ui: PrdUiAttempt = uiResult
+            ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
+            : { ran: false, ok: null, note: uiVerifyEnabled && isWebApp ? "UI verification skipped (prerequisites missing)." : "UI verification not configured." };
+
+          const failEarly = async (reasonLines: string[], nextActions?: string[]): Promise<void> => {
+            const judge: PrdJudgeAttempt = {
+              status: "FAIL",
+              exitSignal: false,
+              reason: reasonLines,
+              nextActions: nextActions && nextActions.length > 0 ? nextActions : ["Fix the failing checks, then rerun /mario-devx:run 1."],
+            };
+            const lastAttempt: PrdTaskAttempt = {
+              at: attemptAt,
+              iteration: state.iteration,
+              gates,
+              ui,
+              judge,
+            };
             prd = setPrdTaskStatus(prd, task.id, "blocked");
+            prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
             await writePrdJson(repoRoot, prd);
             await updateRunState(repoRoot, {
               status: "BLOCKED",
               phase: "run",
               currentPI: task.id,
-              runDir,
-              latestVerdictPath: path.join(runDir, "judge.out"),
-              lastGate: gateResult.ok ? "PASS" : "FAIL",
-              lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
-              lastVerifier: "FAIL",
             });
           };
 
@@ -1260,27 +1296,31 @@ export const createTools = (ctx: PluginContext) => {
               : "(unknown command)";
             await failEarly([
               `Deterministic gate failed: ${failed}.`,
-              `Evidence: ${path.join(runDir, "gates.log")}`,
-              `Evidence: ${path.join(runDir, "gates.json")}`,
             ]);
             await showToast(ctx, `Run stopped: gates failed on ${task.id}`, "warning");
             break;
           }
 
           if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk)) {
-            await failEarly([
+            await failEarly(
+              [
               "UI verification is required but agent-browser prerequisites are missing.",
               `Repo: ${agentBrowserRepo}`,
               "Install: npx skills add vercel-labs/agent-browser",
               "Install: npm install -g agent-browser && agent-browser install",
-            ]);
+              ],
+              [
+                "Install prerequisites, then rerun /mario-devx:run 1.",
+                "Or set UI_VERIFY_REQUIRED=0 in .mario/AGENTS.md to make UI verification best-effort.",
+              ],
+            );
             await showToast(ctx, `Run stopped: UI prerequisites missing on ${task.id}`, "warning");
             break;
           }
 
           if (uiVerifyEnabled && isWebApp && uiVerifyRequired && uiResult && !uiResult.ok) {
             await failEarly([
-              `UI verification failed (see ${path.join(runDir, "ui-verify.log")}).`,
+              "UI verification failed.",
             ]);
             await showToast(ctx, `Run stopped: UI verification failed on ${task.id}`, "warning");
             break;
@@ -1296,12 +1336,15 @@ export const createTools = (ctx: PluginContext) => {
             repoRoot,
             "verify",
             [
-              `Run artifacts: ${runDir}`,
-              "Deterministic gates: PASS",
-              `Gates log: ${path.join(runDir, "gates.log")}`,
               `Task: ${task.id} - ${task.title}`,
+              task.doneWhen.length > 0
+                ? `Done when:\n${task.doneWhen.map((d) => `- ${d}`).join("\n")}`
+                : "Done when: (none)",
+              "",
+              "Deterministic gates:",
+              ...gateResult.results.map((r) => `- ${r.command}: ${r.ok ? "PASS" : `FAIL (exit ${r.exitCode})`}`),
               uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
-              uiResult ? `UI log: ${path.join(runDir, "ui-verify.log")}` : "",
+              uiResult?.note ? `UI note: ${uiResult.note}` : "",
             ]
               .filter((x) => x)
               .join("\n"),
@@ -1316,27 +1359,26 @@ export const createTools = (ctx: PluginContext) => {
             },
           });
           const verifierText = extractTextFromPromptResponse(verifierResponse);
-          await writeText(path.join(runDir, "judge.out"), verifierText);
-
-          const parsed = parseVerifierStatus(verifierText);
-          const verdictPath = path.join(runDir, "judge.out");
+          const judge = parseJudgeAttemptFromText(verifierText);
+          const lastAttempt: PrdTaskAttempt = {
+            at: attemptAt,
+            iteration: state.iteration,
+            gates,
+            ui,
+            judge,
+          };
           await updateRunState(repoRoot, {
-            status: parsed.status === "PASS" ? "DONE" : "BLOCKED",
+            status: judge.status === "PASS" ? "DONE" : "BLOCKED",
             phase: "run",
             currentPI: task.id,
             controlSessionId: context.sessionID,
-            runDir,
-            latestVerdictPath: verdictPath,
-            lastGate: "PASS",
-            lastUI: uiResult ? (uiResult.ok ? "PASS" : "FAIL") : "NONE",
-            lastVerifier: parsed.status,
           });
 
-          prd = setPrdTaskStatus(prd, task.id, parsed.status === "PASS" ? "completed" : "blocked");
+          prd = setPrdTaskStatus(prd, task.id, judge.status === "PASS" ? "completed" : "blocked");
+          prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
           await writePrdJson(repoRoot, prd);
-        // History lives in .mario/runs/* (gates.log/gates.json/judge.out and optional UI artifacts).
 
-          if (parsed.status !== "PASS" || !parsed.exit) {
+          if (judge.status !== "PASS" || !judge.exitSignal) {
             await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
             break;
           }
@@ -1350,7 +1392,7 @@ export const createTools = (ctx: PluginContext) => {
             ? "Reached max_items limit."
             : completed === attempted
               ? "No more open/in_progress tasks found."
-              : "Stopped early due to failure. See .mario/runs/<latest>/judge.out.";
+              : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
 
         return `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
       },
@@ -1365,12 +1407,16 @@ export const createTools = (ctx: PluginContext) => {
         const run = await readRunState(repoRoot);
         const prd = await ensurePrd(repoRoot);
         const nextTask = getNextPrdTask(prd);
+        const currentTask = run.currentPI ? (prd.tasks ?? []).find((t) => t.id === run.currentPI) : null;
+        const focusTask = currentTask ?? nextTask;
 
         const next =
           run.status === "DOING"
             ? "A run is in progress. Wait for it to finish, then rerun /mario-devx:status."
             : run.status === "BLOCKED"
-              ? "Read the last judge.out, fix issues, then run /mario-devx:run 1."
+              ? focusTask?.lastAttempt?.judge
+                ? "Fix the listed next actions, then run /mario-devx:run 1."
+                : "A task is blocked but has no lastAttempt. Rerun /mario-devx:run 1 to regenerate evidence."
               : prd.wizard.status !== "completed"
                 ? "Run /mario-devx:new to finish the PRD wizard."
                 : nextTask
@@ -1387,9 +1433,13 @@ export const createTools = (ctx: PluginContext) => {
           `Iteration: ${run.iteration}`,
           `Work session: ${ws.sessionId}`,
           `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
-          run.latestVerdictPath ? `Latest verdict: ${run.latestVerdictPath}` : "Latest verdict: (none)",
           `PRD wizard: ${prd.wizard.status}${prd.wizard.status !== "completed" ? ` (${prd.wizard.step}/${prd.wizard.totalSteps})` : ""}`,
-          nextTask ? `Next task: ${nextTask.id} (${nextTask.status}) - ${nextTask.title}` : "Next task: (none)",
+          focusTask
+            ? `Focus task: ${focusTask.id} (${focusTask.status}) - ${focusTask.title}`
+            : "Focus task: (none)",
+          focusTask?.lastAttempt?.judge
+            ? `Last verdict: ${focusTask.lastAttempt.judge.status} (exit=${focusTask.lastAttempt.judge.exitSignal})`
+            : "Last verdict: (none)",
           "",
           `Next: ${next}`,
         ].join("\n");
@@ -1431,8 +1481,7 @@ export const createTools = (ctx: PluginContext) => {
           const blocked = (prd.tasks ?? []).filter((t) => t.status === "blocked").map((t) => t.id);
           if (blocked.length > 0) {
             issues.push(`Blocked tasks: ${blocked.join(", ")}`);
-            fixes.push("Read the latest judge.out under .mario/runs/* and address the next actions, then rerun /mario-devx:run 1."
-            );
+            fixes.push("For each blocked task, read prd.json.tasks[].lastAttempt.judge.nextActions, fix them, then rerun /mario-devx:run 1.");
           }
         }
 
