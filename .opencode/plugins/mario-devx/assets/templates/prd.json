@@ -19,16 +19,7 @@
   "persistence": null,
   "auth": null,
   "deploy": null,
-  "stack": null,
   "qualityGates": [],
-  "llm": {
-    "provider": "",
-    "model": ""
-  },
-  "env": {
-    "keyFile": "",
-    "keyVar": ""
-  },
   "product": {
     "users": "",
     "problem": "",

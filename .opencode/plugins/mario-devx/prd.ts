@@ -47,7 +47,6 @@ export type PrdTask = {
   evidence: string[];
   lastAttempt?: PrdTaskAttempt;
   notes?: string[];
-  rollback?: string[];
 };
 
 export type PrdWizardStatus = "in_progress" | "completed";
@@ -75,16 +74,7 @@ export type PrdJson = {
   persistence: "none" | "sqlite" | "postgres" | "supabase" | "other" | null;
   auth: "none" | "password" | "oauth" | "magic_link" | "other" | null;
   deploy: "local" | "vercel" | "docker" | "fly" | "other" | null;
-  stack: string | null;
   qualityGates: string[];
-  llm: {
-    provider: string;
-    model: string;
-  };
-  env: {
-    keyFile: string;
-    keyVar: string;
-  };
   product: {
     users: string;
     problem: string;
@@ -119,10 +109,7 @@ export const defaultPrdJson = (): PrdJson => {
     persistence: null,
     auth: null,
     deploy: null,
-    stack: null,
     qualityGates: [],
-    llm: { provider: "", model: "" },
-    env: { keyFile: "", keyVar: "" },
     product: {
       users: "",
       problem: "",
