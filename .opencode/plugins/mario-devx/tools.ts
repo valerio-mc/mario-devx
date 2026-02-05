@@ -803,9 +803,9 @@ const wizardQuestionFor = (params: { repoRoot: string; prd: PrdJson; step: numbe
           "Pick quality gates. Commands must be single-line and safe to run locally.",
         options: [
           { key: "A", label: "Auto-detect" },
-          { key: "B", label: "Skip (empty)" },
-          { key: "C", label: "Fast defaults" },
-          { key: "D", label: "Custom (D: `cmd` ...)" },
+          { key: "B", label: "Fast defaults" },
+          { key: "C", label: "Custom (C: `cmd` ...)" },
+          { key: "D", label: "I will edit prd.json manually" },
         ],
       };
     case 9:
@@ -972,18 +972,17 @@ const applyWizardAnswer = async (params: {
         return advance();
       }
       if (choice === "B") {
-        next.qualityGates = [];
-        return advance();
-      }
-      if (choice === "C") {
         // Deterministic fast default that works when scripts exist; otherwise empty.
         const detected = await detectNodeQualityGates(repoRoot);
         next.qualityGates = detected.filter((c) => c.includes("lint") || c.includes("typecheck"));
         return advance();
       }
+      if (choice === "D") {
+        return advance();
+      }
       const cmds = parseCustomGateCommands(extra);
       if (cmds.length === 0) {
-        return { prd: next, advanced: false, error: "No commands found. Use D: `npm test` `npm run lint`" };
+        return { prd: next, advanced: false, error: "No commands found. Use C: `npm test` `npm run lint`" };
       }
       next.qualityGates = cmds;
       return advance();
@@ -1097,6 +1096,15 @@ export const createTools = (ctx: PluginContext) => {
           // Completion.
           if (prd.wizard.step >= prd.wizard.totalSteps) {
             const doneWhen = prd.qualityGates ?? [];
+            if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
+              await writePrdJson(repoRoot, prd);
+              const qg = wizardQuestionFor({ repoRoot, prd, step: 8 });
+              return [
+                "PRD wizard: qualityGates is empty; at least one gate is required to run.",
+                "",
+                renderWizardQuestion(qg, 8, prd.wizard.totalSteps),
+              ].join("\n");
+            }
             if (prd.tasks.length === 0) {
               const tasks: PrdTask[] = [];
               let n = 1;
