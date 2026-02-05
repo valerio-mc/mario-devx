@@ -84,8 +84,6 @@ export type PrdJson = {
 
 export const prdJsonPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "prd.json");
 
-const nowIso = (): string => new Date().toISOString();
-
 const defaultWizard = (): PrdWizard => ({
   status: "in_progress",
   step: 0,
@@ -95,7 +93,7 @@ const defaultWizard = (): PrdWizard => ({
 });
 
 export const defaultPrdJson = (): PrdJson => {
-  const now = nowIso();
+  const now = new Date().toISOString();
   return {
     version: 3,
     meta: { createdAt: now, updatedAt: now },
@@ -147,8 +145,8 @@ export const writePrdJson = async (repoRoot: string, prd: PrdJson): Promise<void
     ...prd,
     version: 3,
     meta: {
-      createdAt: prd.meta?.createdAt ?? nowIso(),
-      updatedAt: nowIso(),
+      createdAt: prd.meta?.createdAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     },
   };
   await writeText(prdJsonPath(repoRoot), `${JSON.stringify(next, null, 2)}\n`);
