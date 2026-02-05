@@ -81,12 +81,12 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
   const existing = await readPrdJsonIfExists(repoRoot);
   if (existing) {
     const createdAt = existing.meta?.createdAt?.trim() ? existing.meta.createdAt : nowIso();
-    const updatedAt = nowIso();
-    const next: PrdJson = { ...existing, meta: { createdAt, updatedAt } };
-    if (createdAt !== existing.meta.createdAt || updatedAt !== existing.meta.updatedAt) {
-      await writePrdJson(repoRoot, next);
+    if (createdAt !== existing.meta.createdAt) {
+      const repaired: PrdJson = { ...existing, meta: { ...existing.meta, createdAt } };
+      await writePrdJson(repoRoot, repaired);
+      return repaired;
     }
-    return next;
+    return existing;
   }
   const created = defaultPrdJson();
   await writePrdJson(repoRoot, created);
