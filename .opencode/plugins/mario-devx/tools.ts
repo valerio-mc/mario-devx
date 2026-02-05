@@ -88,9 +88,9 @@ const makeTask = (params: {
 
 const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
   const tasks = prd.tasks ?? [];
-  const doing = tasks.find((t) => t.status === "in_progress");
-  if (doing) {
-    return doing;
+  const doing = tasks.filter((t) => t.status === "in_progress");
+  if (doing.length >= 1) {
+    return doing[0] ?? null;
   }
   return tasks.find((t) => t.status === "open") ?? null;
 };
@@ -127,11 +127,23 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   const reason = collectBulletsBetween(/^Reason:\s*$/i, /^Next actions:\s*$/i);
   const nextActions = collectBulletsBetween(/^Next actions:\s*$/i, /^\s*$/);
 
+  const normalizedReason = reason.length > 0 ? reason : ["Verifier did not provide a parsable Reason list."];
+  const normalizedNext = nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."];
+
+  if (status === "PASS" && exitSignal !== true) {
+    return {
+      status: "FAIL",
+      exitSignal: false,
+      reason: ["Verifier output invalid: Status: PASS requires EXIT_SIGNAL: true."],
+      nextActions: ["Fix the verifier output format (PASS must set EXIT_SIGNAL: true), then rerun /mario-devx:run 1."],
+    };
+  }
+
   return {
     status,
-    exitSignal: status === "PASS" ? exitSignal : false,
-    reason: reason.length > 0 ? reason : ["Verifier did not provide a parsable Reason list."],
-    nextActions: nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."],
+    exitSignal: status === "PASS" ? true : false,
+    reason: normalizedReason,
+    nextActions: normalizedNext,
   };
 };
 
@@ -1120,6 +1132,47 @@ export const createTools = (ctx: PluginContext) => {
         }
         if (!Array.isArray(prd.tasks) || prd.tasks.length === 0) {
           return "No tasks found in .mario/prd.json. Run /mario-devx:new to seed tasks.";
+        }
+
+        const inProgress = (prd.tasks ?? []).filter((t) => t.status === "in_progress");
+        if (inProgress.length > 1) {
+          const focus = inProgress[0];
+          const state = await bumpIteration(repoRoot);
+          const attemptAt = nowIso();
+          const gates: PrdGatesAttempt = { ok: false, commands: [] };
+          const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+          const judge: PrdJudgeAttempt = {
+            status: "FAIL",
+            exitSignal: false,
+            reason: [
+              `Invalid task state: multiple tasks are in_progress (${inProgress.map((t) => t.id).join(", ")}).`,
+            ],
+            nextActions: [
+              "Edit .mario/prd.json so at most one task is in_progress (set the others to open/blocked/cancelled).",
+              "Then rerun /mario-devx:run 1.",
+            ],
+          };
+          const lastAttempt: PrdTaskAttempt = {
+            at: attemptAt,
+            iteration: state.iteration,
+            gates,
+            ui,
+            judge,
+          };
+          if (focus) {
+            prd = setPrdTaskStatus(prd, focus.id, "blocked");
+            prd = setPrdTaskLastAttempt(prd, focus.id, lastAttempt);
+            await writePrdJson(repoRoot, prd);
+          }
+          await writeRunState(repoRoot, {
+            iteration: state.iteration,
+            status: "BLOCKED",
+            phase: "run",
+            ...(focus?.id ? { currentPI: focus.id } : {}),
+            ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
+            updatedAt: nowIso(),
+          });
+          return judge.reason.concat(["", "See tasks[].lastAttempt.judge.nextActions in .mario/prd.json."]).join("\n");
         }
 
         if (prd.frontend === true) {

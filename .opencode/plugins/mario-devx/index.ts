@@ -31,12 +31,11 @@ const marioDevxPlugin: Plugin = async (ctx) => {
         return;
       }
 
-      const summary = [
-        `mario-devx: work session is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`,
-        run.status !== "NONE" ? `Run state: ${run.status}` : "",
-      ]
-        .filter((x) => x)
-        .join("\n");
+      if (run.status !== "DOING") {
+        return;
+      }
+
+      const summary = `mario-devx: work session is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
 
       await ctx.client.session.prompt({
         path: { id: run.controlSessionId },
