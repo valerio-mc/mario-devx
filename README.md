@@ -154,6 +154,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 
 - Quality Gates failing instantly: verify `.mario/prd.json` has runnable commands under `qualityGates`.
 - UI verify doesn't run: install prerequisites (`npx skills add vercel-labs/agent-browser`, and `npm install -g agent-browser && agent-browser install`) and check `.mario/AGENTS.md`.
+- If `/run` shows AGENTS parse warnings: fix malformed lines in `.mario/AGENTS.md` (must be `KEY=VALUE`; comments must start with `#`).
 - Still confused: run `/mario-devx:doctor`.
 
 ## Acknowledgements
