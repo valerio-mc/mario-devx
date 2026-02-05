@@ -213,6 +213,17 @@ const looksLikeUiChoiceArtifact = (input: string): boolean => {
   return /(single-choice|multi-choice|free-text|show current status|stop for now|hardcoded|fixed questions|generate 3 questions)/i.test(s);
 };
 
+const looksTooBroadQuestion = (question: string): boolean => {
+  const q = question.trim();
+  if (!q) {
+    return true;
+  }
+  const wordCount = q.split(/\s+/).filter(Boolean).length;
+  const clauseSignals = (q.match(/,| and | or |;/gi) ?? []).length;
+  const hasListCue = /(include|cover|describe.*(flow|end-to-end)|what.*and.*what|first.*then)/i.test(q);
+  return wordCount > 30 || clauseSignals >= 4 || hasListCue;
+};
+
 const isPrdComplete = (prd: PrdJson): boolean => {
   return (
     hasNonEmpty(prd.idea)
@@ -296,19 +307,54 @@ const fallbackQuestion = (prd: PrdJson): string => {
   }
 };
 
-const seedTasksFromPrd = (prd: PrdJson): PrdJson => {
+const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<string[]> => {
+  const qualityGates = prd.qualityGates ?? [];
+  const qualityText = qualityGates.join("\n");
+  const hasPackageJson = !!(await readTextIfExists(path.join(repoRoot, "package.json")));
+  const hasPyproject = !!(await readTextIfExists(path.join(repoRoot, "pyproject.toml")));
+  const hasRequirements = !!(await readTextIfExists(path.join(repoRoot, "requirements.txt")));
+  const hasGoMod = !!(await readTextIfExists(path.join(repoRoot, "go.mod")));
+  const hasCargoToml = !!(await readTextIfExists(path.join(repoRoot, "Cargo.toml")));
+
+  const wantsNode = prd.language === "typescript"
+    || /\b(npm|pnpm|yarn|bun)\b/i.test(qualityText)
+    || prd.platform === "web";
+  const wantsPython = prd.language === "python" || /\b(pytest|python|poetry|uv|mypy|ruff|flake8)\b/i.test(qualityText);
+  const wantsGo = prd.language === "go" || /\bgo\b/i.test(qualityText);
+  const wantsRust = prd.language === "rust" || /\bcargo\b/i.test(qualityText);
+
+  if (wantsNode && !hasPackageJson) {
+    return ["test -f package.json"];
+  }
+  if (wantsPython && !hasPyproject && !hasRequirements) {
+    return ["test -f pyproject.toml || test -f requirements.txt"];
+  }
+  if (wantsGo && !hasGoMod) {
+    return ["test -f go.mod"];
+  }
+  if (wantsRust && !hasCargoToml) {
+    return ["test -f Cargo.toml"];
+  }
+  return qualityGates;
+};
+
+const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson> => {
   if (Array.isArray(prd.tasks) && prd.tasks.length > 0) {
     return prd;
   }
+  const bootstrapDoneWhen = await inferBootstrapDoneWhen(repoRoot, prd);
   const doneWhen = prd.qualityGates ?? [];
   const tasks: PrdTask[] = [];
   let n = 1;
   tasks.push(
     makeTask({
       id: normalizeTaskId(n++),
-      title: prd.idea.trim() ? `Project baseline: ${prd.idea.trim()}` : "Project baseline",
-      doneWhen,
-      notes: ["Seeded by PRD interviewer."],
+      title: prd.idea.trim() ? `Scaffold project baseline: ${prd.idea.trim()}` : "Scaffold project baseline",
+      doneWhen: bootstrapDoneWhen,
+      notes: [
+        "Seeded by PRD interviewer.",
+        "First task scaffolds project artifacts before strict quality gates are enforced.",
+      ],
     }),
   );
   for (const feature of prd.product.mustHaveFeatures ?? []) {
@@ -365,6 +411,7 @@ const setPrdTaskLastAttempt = (prd: PrdJson, taskId: string, lastAttempt: PrdTas
 };
 
 const interviewPrompt = (prd: PrdJson, input: string): string => {
+  const missingField = firstMissingField(prd);
   const readiness = {
     idea: hasNonEmpty(prd.idea),
     platform: prd.platform !== null,
@@ -423,6 +470,8 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- updates MUST include only fields changed by this answer.",
     "- Ask probing follow-ups until requirements are testable and implementation-ready.",
     "- Ask direct natural-language questions; do NOT use A/B/C/D multiple-choice formatting.",
+    "- Ask about ONE missing field only; do not combine multiple fields in one question.",
+    "- Keep question short (max 22 words), concrete, and answerable in one message.",
     "- qualityGates must be explicit runnable commands (eg: npm run lint).",
     "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
     "- Do not mark done=true unless ALL required fields pass the criteria above.",
@@ -431,6 +480,9 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "",
     "Readiness checklist:",
     JSON.stringify(readiness, null, 2),
+    "",
+    "Current target field (ask only this):",
+    missingField,
     "",
     "Current PRD state:",
     JSON.stringify(current, null, 2),
@@ -1106,7 +1158,8 @@ export const createTools = (ctx: PluginContext) => {
 
         const step = deriveWizardStep(prd);
         const done = isPrdComplete(prd);
-        const nextQuestion = (question && question.trim()) || envelope?.next_question?.trim() || fallbackQuestion(prd);
+        const modelQuestion = (question && question.trim()) || envelope?.next_question?.trim() || "";
+        const nextQuestion = looksTooBroadQuestion(modelQuestion) ? fallbackQuestion(prd) : (modelQuestion || fallbackQuestion(prd));
 
         prd = {
           ...prd,
@@ -1125,7 +1178,7 @@ export const createTools = (ctx: PluginContext) => {
         };
 
         if (done) {
-          prd = seedTasksFromPrd(prd);
+          prd = await seedTasksFromPrd(repoRoot, prd);
           prd = {
             ...prd,
             wizard: {
@@ -1268,11 +1321,6 @@ export const createTools = (ctx: PluginContext) => {
         const maxItems = Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 1;
 
         const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-        const gateCommands = (prd.qualityGates ?? []).map((command, idx) => ({
-          name: `gate-${idx + 1}`,
-          command,
-        }));
-
         const agentsRaw = await readTextIfExists(agentsPath);
         const agentsParsed = agentsRaw ? parseAgentsEnv(agentsRaw) : { env: {}, warnings: [] };
         const agentsEnv = agentsParsed.env;
@@ -1298,6 +1346,11 @@ export const createTools = (ctx: PluginContext) => {
             if (!task) {
               break;
             }
+            const effectiveDoneWhen = task.doneWhen.length > 0 ? task.doneWhen : (prd.qualityGates ?? []);
+            const gateCommands = effectiveDoneWhen.map((command, idx) => ({
+              name: `gate-${idx + 1}`,
+              command,
+            }));
             attempted += 1;
 
             prd = setPrdTaskStatus(prd, task.id, "in_progress");
@@ -1313,7 +1366,7 @@ export const createTools = (ctx: PluginContext) => {
             "",
             `Status: ${task.status}`,
             task.scope.length > 0 ? `Scope: ${task.scope.join(", ")}` : "",
-            task.doneWhen.length > 0 ? `Done when:\n${task.doneWhen.map((d) => `- ${d}`).join("\n")}` : "Done when: (none)",
+            effectiveDoneWhen.length > 0 ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}` : "Done when: (none)",
           ]
             .filter((x) => x)
             .join("\n");
@@ -1519,8 +1572,8 @@ export const createTools = (ctx: PluginContext) => {
             "verify",
             [
               `Task: ${task.id} - ${task.title}`,
-              task.doneWhen.length > 0
-                ? `Done when:\n${task.doneWhen.map((d) => `- ${d}`).join("\n")}`
+              effectiveDoneWhen.length > 0
+                ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}`
                 : "Done when: (none)",
               "",
               "Deterministic gates:",
