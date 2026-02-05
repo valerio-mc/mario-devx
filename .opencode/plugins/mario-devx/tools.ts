@@ -411,6 +411,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "Rules:",
     "- updates MUST include only fields changed by this answer.",
     "- Ask probing follow-ups until requirements are testable and implementation-ready.",
+    "- Ask direct natural-language questions; do NOT use A/B/C/D multiple-choice formatting.",
     "- qualityGates must be explicit runnable commands (eg: npm run lint).",
     "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
     "- Do not mark done=true unless ALL required fields pass the criteria above.",
