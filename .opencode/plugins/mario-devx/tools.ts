@@ -307,6 +307,58 @@ const fallbackQuestion = (prd: PrdJson): string => {
   }
 };
 
+const compactIdea = (idea: string): string => {
+  const oneLine = idea.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= 80) {
+    return oneLine;
+  }
+  return `${oneLine.slice(0, 77).trim()}...`;
+};
+
+const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ doneWhen: string[]; notes: string[] }> => {
+  const framework = (prd.framework ?? "").toLowerCase();
+  const notes: string[] = [
+    "Seeded by PRD interviewer.",
+    "First task scaffolds project artifacts before strict quality gates are enforced.",
+  ];
+
+  if (prd.platform === "web" && prd.language === "typescript" && framework.includes("next")) {
+    notes.push("Scaffold command: npx create-next-app@latest . --ts --eslint --app --src-dir --use-npm --yes");
+    return {
+      doneWhen: ["test -f package.json", "test -d app || test -d src/app"],
+      notes,
+    };
+  }
+
+  if (prd.platform === "web" && prd.language === "typescript" && (framework.includes("vite") || framework.includes("react"))) {
+    notes.push("Scaffold command: npm create vite@latest . -- --template react-ts");
+    return {
+      doneWhen: ["test -f package.json", "test -f src/main.tsx"],
+      notes,
+    };
+  }
+
+  if (prd.platform === "api" && prd.language === "python" && framework.includes("fastapi")) {
+    notes.push("Scaffold command: python -m pip install fastapi uvicorn[standard]");
+    return {
+      doneWhen: ["test -f pyproject.toml || test -f requirements.txt"],
+      notes,
+    };
+  }
+
+  const inferred = await inferBootstrapDoneWhen(repoRoot, prd);
+  notes.push("Scaffold command: initialize project skeleton for selected stack before implementing features.");
+  return { doneWhen: inferred, notes };
+};
+
+const firstScaffoldHintFromNotes = (notes: string[] | undefined): string | null => {
+  if (!notes || notes.length === 0) {
+    return null;
+  }
+  const line = notes.find((n) => n.startsWith("Scaffold command:"));
+  return line ? line.replace(/^Scaffold command:\s*/, "").trim() : null;
+};
+
 const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<string[]> => {
   const qualityGates = prd.qualityGates ?? [];
   const qualityText = qualityGates.join("\n");
@@ -342,19 +394,16 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
   if (Array.isArray(prd.tasks) && prd.tasks.length > 0) {
     return prd;
   }
-  const bootstrapDoneWhen = await inferBootstrapDoneWhen(repoRoot, prd);
+  const bootstrapPlan = await scaffoldPlanFromPrd(repoRoot, prd);
   const doneWhen = prd.qualityGates ?? [];
   const tasks: PrdTask[] = [];
   let n = 1;
   tasks.push(
     makeTask({
       id: normalizeTaskId(n++),
-      title: prd.idea.trim() ? `Scaffold project baseline: ${prd.idea.trim()}` : "Scaffold project baseline",
-      doneWhen: bootstrapDoneWhen,
-      notes: [
-        "Seeded by PRD interviewer.",
-        "First task scaffolds project artifacts before strict quality gates are enforced.",
-      ],
+      title: prd.idea.trim() ? `Scaffold project baseline: ${compactIdea(prd.idea)}` : "Scaffold project baseline",
+      doneWhen: bootstrapPlan.doneWhen,
+      notes: bootstrapPlan.notes,
     }),
   );
   for (const feature of prd.product.mustHaveFeatures ?? []) {
@@ -1369,6 +1418,7 @@ export const createTools = (ctx: PluginContext) => {
             `Status: ${task.status}`,
             task.scope.length > 0 ? `Scope: ${task.scope.join(", ")}` : "",
             effectiveDoneWhen.length > 0 ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}` : "Done when: (none)",
+            task.notes && task.notes.length > 0 ? `Notes:\n${task.notes.map((n) => `- ${n}`).join("\n")}` : "",
           ]
             .filter((x) => x)
             .join("\n");
@@ -1531,9 +1581,15 @@ export const createTools = (ctx: PluginContext) => {
             const failed = gateResult.failed
               ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
               : "(unknown command)";
+            const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
             await failEarly([
               `Deterministic gate failed: ${failed}.`,
-            ]);
+            ], scaffoldHint
+              ? [
+                  `Run scaffold command first: ${scaffoldHint}`,
+                  "Then rerun /mario-devx:run 1.",
+                ]
+              : undefined);
             await showToast(ctx, `Run stopped: gates failed on ${task.id}`, "warning");
             break;
           }
