@@ -62,7 +62,8 @@ opencode .
 /mario-devx:new my brilliant idea
 ```
 
-Answer the PRD wizard questions in your current session (rerun `/mario-devx:new` with A/B/C/D until complete).
+Answer the PRD interview questions in your current session using natural language.
+You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
 
 ## Usage
 

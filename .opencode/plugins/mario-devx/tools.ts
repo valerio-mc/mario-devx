@@ -144,30 +144,111 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
   return created;
 };
 
-const parseWizardInput = (raw: string): { choice: "A" | "B" | "C" | "D"; extra: string } | null => {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const first = trimmed[0]?.toUpperCase();
-  if (first !== "A" && first !== "B" && first !== "C" && first !== "D") {
-    return null;
-  }
-  let rest = trimmed.slice(1).trimStart();
-  // Accept common separators: "A: ...", "A) ...", "A. ...", "A - ..."
-  if (rest.startsWith(":")) rest = rest.slice(1);
-  else if (rest.startsWith(")")) rest = rest.slice(1);
-  else if (rest.startsWith(".")) rest = rest.slice(1);
-  else if (rest.startsWith("-")) rest = rest.slice(1);
-  const extra = rest.trimStart();
-  return { choice: first, extra } as { choice: "A" | "B" | "C" | "D"; extra: string };
+type InterviewUpdates = {
+  idea?: string;
+  platform?: "web" | "api" | "cli" | "library";
+  frontend?: boolean;
+  language?: "typescript" | "python" | "go" | "rust" | "other";
+  framework?: string | null;
+  qualityGates?: string[];
+  mustHaveFeatures?: string[];
 };
 
-const linesFromExtra = (extra: string): string[] => {
-  return extra
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+type InterviewEnvelope = {
+  done: boolean;
+  updates?: InterviewUpdates;
+  next_question?: string;
+};
+
+const WIZARD_TOTAL_STEPS = 7;
+const LAST_QUESTION_KEY = "__last_question";
+
+const hasNonEmpty = (value: string | null | undefined): boolean => typeof value === "string" && value.trim().length > 0;
+
+const isPrdComplete = (prd: PrdJson): boolean => {
+  return (
+    hasNonEmpty(prd.idea)
+    && prd.platform !== null
+    && typeof prd.frontend === "boolean"
+    && prd.language !== null
+    && hasNonEmpty(prd.framework)
+    && Array.isArray(prd.qualityGates)
+    && prd.qualityGates.length > 0
+    && Array.isArray(prd.product.mustHaveFeatures)
+    && prd.product.mustHaveFeatures.length > 0
+  );
+};
+
+const deriveWizardStep = (prd: PrdJson): number => {
+  let step = 0;
+  if (hasNonEmpty(prd.idea)) step = 1;
+  if (prd.platform !== null) step = 2;
+  if (typeof prd.frontend === "boolean") step = 3;
+  if (prd.language !== null) step = 4;
+  if (hasNonEmpty(prd.framework)) step = 5;
+  if (Array.isArray(prd.qualityGates) && prd.qualityGates.length > 0) step = 6;
+  if (Array.isArray(prd.product.mustHaveFeatures) && prd.product.mustHaveFeatures.length > 0) step = 7;
+  return Math.min(WIZARD_TOTAL_STEPS, step);
+};
+
+const firstMissingField = (prd: PrdJson): string => {
+  if (!hasNonEmpty(prd.idea)) return "idea";
+  if (prd.platform === null) return "platform";
+  if (typeof prd.frontend !== "boolean") return "frontend";
+  if (prd.language === null) return "language";
+  if (!hasNonEmpty(prd.framework)) return "framework";
+  if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) return "qualityGates";
+  if (!Array.isArray(prd.product.mustHaveFeatures) || prd.product.mustHaveFeatures.length === 0) return "mustHaveFeatures";
+  return "done";
+};
+
+const fallbackQuestion = (prd: PrdJson): string => {
+  const missing = firstMissingField(prd);
+  switch (missing) {
+    case "idea":
+      return "What one-line idea should this project build?";
+    case "platform":
+      return "What are we building: web app, API service, CLI tool, or library?";
+    case "frontend":
+      return "Does this project need a browser UI?";
+    case "language":
+      return "What is the primary language: TypeScript, Python, Go, Rust, or other?";
+    case "framework":
+      return "Which framework/runtime should be the default?";
+    case "qualityGates":
+      return "List the quality gate commands to run (one command per line, for example: npm run lint).";
+    case "mustHaveFeatures":
+      return "List the must-have features to implement first.";
+    default:
+      return "Anything else I should capture before we run the first iteration?";
+  }
+};
+
+const seedTasksFromPrd = (prd: PrdJson): PrdJson => {
+  if (Array.isArray(prd.tasks) && prd.tasks.length > 0) {
+    return prd;
+  }
+  const doneWhen = prd.qualityGates ?? [];
+  const tasks: PrdTask[] = [];
+  let n = 1;
+  tasks.push(
+    makeTask({
+      id: normalizeTaskId(n++),
+      title: prd.idea.trim() ? `Project baseline: ${prd.idea.trim()}` : "Project baseline",
+      doneWhen,
+      notes: ["Seeded by PRD interviewer."],
+    }),
+  );
+  for (const feature of prd.product.mustHaveFeatures ?? []) {
+    tasks.push(
+      makeTask({
+        id: normalizeTaskId(n++),
+        title: `Implement: ${feature}`,
+        doneWhen,
+      }),
+    );
+  }
+  return { ...prd, tasks };
 };
 
 const normalizeTaskId = (n: number): string => `T-${String(n).padStart(4, "0")}`;
@@ -209,6 +290,100 @@ const setPrdTaskStatus = (prd: PrdJson, taskId: string, status: PrdTaskStatus): 
 const setPrdTaskLastAttempt = (prd: PrdJson, taskId: string, lastAttempt: PrdTaskAttempt): PrdJson => {
   const tasks = (prd.tasks ?? []).map((t) => (t.id === taskId ? { ...t, lastAttempt } : t));
   return { ...prd, tasks };
+};
+
+const interviewPrompt = (prd: PrdJson, input: string): string => {
+  const current = {
+    idea: prd.idea,
+    platform: prd.platform,
+    frontend: prd.frontend,
+    language: prd.language,
+    framework: prd.framework,
+    qualityGates: prd.qualityGates,
+    mustHaveFeatures: prd.product.mustHaveFeatures,
+    step: prd.wizard.step,
+  };
+  return [
+    "You are mario-devx's PRD interviewer.",
+    "Ask ONE concise follow-up question that helps complete the PRD.",
+    "You must return BOTH:",
+    "1) a JSON envelope between <MARIO_JSON> tags",
+    "2) the next question between <MARIO_QUESTION> tags",
+    "",
+    "Required fields before done=true:",
+    "- idea",
+    "- platform (web|api|cli|library)",
+    "- frontend (true/false)",
+    "- language (typescript|python|go|rust|other)",
+    "- framework (string)",
+    "- qualityGates (non-empty string[] of runnable commands)",
+    "- mustHaveFeatures (non-empty string[])",
+    "",
+    "Envelope schema:",
+    '{"done": boolean, "updates": {idea?, platform?, frontend?, language?, framework?, qualityGates?, mustHaveFeatures?}, "next_question": string}',
+    "",
+    "Rules:",
+    "- updates MUST include only fields changed by this answer.",
+    "- qualityGates must be explicit runnable commands (eg: npm run lint).",
+    "- if unsure, ask a question and keep done=false.",
+    "- no markdown except the two required tags.",
+    "",
+    "Current PRD state:",
+    JSON.stringify(current, null, 2),
+    "",
+    "User answer:",
+    input,
+    "",
+    "Return format exactly:",
+    "<MARIO_JSON>",
+    '{"done":false,"updates":{},"next_question":"..."}',
+    "</MARIO_JSON>",
+    "<MARIO_QUESTION>",
+    "...",
+    "</MARIO_QUESTION>",
+  ].join("\n");
+};
+
+const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | null; question: string | null } => {
+  const jsonMatch = text.match(/<MARIO_JSON>([\s\S]*?)<\/MARIO_JSON>/i);
+  const questionMatch = text.match(/<MARIO_QUESTION>([\s\S]*?)<\/MARIO_QUESTION>/i);
+  if (!jsonMatch) {
+    return { envelope: null, question: questionMatch?.[1]?.trim() ?? null };
+  }
+  try {
+    const envelope = JSON.parse((jsonMatch[1] ?? "").trim()) as InterviewEnvelope;
+    return { envelope, question: questionMatch?.[1]?.trim() ?? null };
+  } catch {
+    return { envelope: null, question: questionMatch?.[1]?.trim() ?? null };
+  }
+};
+
+const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefined): PrdJson => {
+  if (!updates) {
+    return prd;
+  }
+  let next = { ...prd };
+  if (typeof updates.idea === "string") next.idea = updates.idea.trim();
+  if (updates.platform) next.platform = updates.platform;
+  if (typeof updates.frontend === "boolean") next.frontend = updates.frontend;
+  if (updates.language) next.language = updates.language;
+  if (typeof updates.framework === "string" || updates.framework === null) next.framework = updates.framework;
+  if (Array.isArray(updates.qualityGates)) {
+    next.qualityGates = updates.qualityGates.map((x) => String(x).trim()).filter(Boolean);
+  }
+  if (Array.isArray(updates.mustHaveFeatures)) {
+    next.product = {
+      ...next.product,
+      mustHaveFeatures: updates.mustHaveFeatures.map((x) => String(x).trim()).filter(Boolean),
+    };
+  }
+  if (next.platform && next.platform !== "web") {
+    next.frontend = false;
+  }
+  if (typeof next.framework === "string" && next.framework.trim().length === 0) {
+    next.framework = null;
+  }
+  return next;
 };
 
 const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
@@ -741,293 +916,12 @@ const extractTextFromPromptResponse = (response: unknown): string => {
     .join("\n");
 };
 
-const parseCustomGateCommands = (raw: string): string[] => {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return [];
-  }
-  const backticked = Array.from(trimmed.matchAll(/`([^`]+)`/g)).map((m) => (m[1] ?? "").trim());
-  const source = backticked.length > 0 ? backticked : trimmed.split(/\r?\n|;/g).map((s) => s.trim());
-  return source.filter((s) => s.length > 0);
-};
-
-const detectNodeQualityGates = async (repoRoot: string): Promise<string[]> => {
-  const pkgRaw = await readTextIfExists(path.join(repoRoot, "package.json"));
-  if (!pkgRaw) {
-    return [];
-  }
-  try {
-    const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
-    const scripts = pkg.scripts ?? {};
-    const preferred = ["lint", "typecheck", "test", "build"];
-    const gates: string[] = [];
-    for (const key of preferred) {
-      if (typeof scripts[key] === "string" && scripts[key].trim().length > 0) {
-        gates.push(`npm run ${key}`);
-      }
-    }
-    return gates;
-  } catch {
-    return [];
-  }
-};
-
-type WizardQuestion = {
-  id: string;
-  title: string;
-  prompt: string;
-  options: Array<{ key: "A" | "B" | "C" | "D"; label: string }>;
-};
-
-const wizardQuestionFor = (params: { repoRoot: string; prd: PrdJson; step: number }): WizardQuestion => {
-  const { repoRoot, prd, step } = params;
-  switch (step) {
-    case 0:
-      return {
-        id: "idea",
-        title: "Idea Source",
-        prompt: "How should mario-devx set the idea one-liner? (Tip: you can also run `/mario-devx:new <idea>` to skip this.)",
-        options: [
-          { key: "A", label: "Use repo name" },
-          { key: "B", label: "Keep existing" },
-          { key: "C", label: "Type it (C: ...)" },
-          { key: "D", label: "Leave blank" },
-        ],
-      };
-    case 1:
-      return {
-        id: "platform",
-        title: "Platform",
-        prompt: "What are we building?",
-        options: [
-          { key: "A", label: "Web app" },
-          { key: "B", label: "API service" },
-          { key: "C", label: "CLI tool" },
-          { key: "D", label: "Library" },
-        ],
-      };
-    case 2:
-      return {
-        id: "frontend",
-        title: "Frontend",
-        prompt: "Does this project need a browser UI?",
-        options: [
-          { key: "A", label: "Yes" },
-          { key: "B", label: "No" },
-          { key: "C", label: "Not sure (assume yes)" },
-          { key: "D", label: "Skip (leave null)" },
-        ],
-      };
-    case 3:
-      return {
-        id: "language",
-        title: "Language",
-        prompt: "Primary implementation language?",
-        options: [
-          { key: "A", label: "TypeScript" },
-          { key: "B", label: "Python" },
-          { key: "C", label: "Go" },
-          { key: "D", label: "Rust" },
-        ],
-      };
-    case 4:
-      return {
-        id: "framework",
-        title: "Framework",
-        prompt: "Pick a main framework/runtime (or specify other).",
-        options: [
-          { key: "A", label: "Use existing" },
-          { key: "B", label: prd.platform === "web" ? "Next.js / React" : "Express" },
-          { key: "C", label: prd.language === "python" ? "FastAPI" : prd.language === "go" ? "net/http" : "(skip)" },
-          { key: "D", label: "Other (D: ...)" },
-        ],
-      };
-    case 5:
-      return {
-        id: "qualityGates",
-        title: "Quality Gates",
-        prompt:
-          "Pick quality gates. Commands must be single-line and safe to run locally.",
-        options: [
-          { key: "A", label: "Auto-detect" },
-          { key: "B", label: "Fast defaults" },
-          { key: "C", label: "Custom (C: `cmd` ...)" },
-          { key: "D", label: "I will edit prd.json manually" },
-        ],
-      };
-    case 6:
-    default:
-      return {
-        id: "features",
-        title: "Must-have Features",
-        prompt:
-          "Seed feature tasks. Provide a list after the letter, one per line (or semicolon-separated).",
-        options: [
-          { key: "A", label: "Scaffold-only" },
-          { key: "B", label: "3 features (B: ...)" },
-          { key: "C", label: "6 features (C: ...)" },
-          { key: "D", label: "Custom list (D: ...)" },
-        ],
-      };
-  }
-};
-
-const renderWizardQuestion = (q: WizardQuestion, step: number, total: number): string => {
-  const header = `PRD wizard (${step + 1}/${total}): ${q.title}`;
-  const opts = q.options.map((o) => `${o.key}) ${o.label}`).join("\n");
-  return [header, q.prompt, "", opts, "", "Reply with A/B/C/D (you can append text like: D: ...)"]
-    .filter((x) => x)
-    .join("\n");
-};
-
-const applyWizardAnswer = async (params: {
-  repoRoot: string;
-  prd: PrdJson;
-  step: number;
-  input: string;
-  initialIdeaArg?: string;
-}): Promise<{ prd: PrdJson; advanced: boolean; error?: string }> => {
-  const { repoRoot, prd, step, input, initialIdeaArg } = params;
-  const parsed = parseWizardInput(input);
-  if (!parsed) {
-    return { prd, advanced: false, error: "Invalid input. Reply with A/B/C/D." };
-  }
-  const { choice, extra } = parsed;
-  const q = wizardQuestionFor({ repoRoot, prd, step });
-
-  const next: PrdJson = {
-    ...prd,
-    wizard: {
-      ...prd.wizard,
-      lastQuestionId: q.id,
-      answers: { ...prd.wizard.answers, [q.id]: input.trim() },
-    },
-  };
-
-  const advance = (): { prd: PrdJson; advanced: boolean } => {
-    return {
-      prd: {
-        ...next,
-        wizard: {
-          ...next.wizard,
-          step: Math.min(next.wizard.step + 1, next.wizard.totalSteps),
-        },
-      },
-      advanced: true,
-    };
-  };
-
-  switch (q.id) {
-    case "idea": {
-      if (choice === "A") {
-        next.idea = extra.trim() ? extra.trim() : path.basename(repoRoot);
-        return advance();
-      }
-      if (choice === "B") {
-        if (!next.idea.trim()) {
-          return { prd: next, advanced: false, error: "No existing idea set. Use A/C/D." };
-        }
-        return advance();
-      }
-      if (choice === "D") {
-        next.idea = "";
-        return advance();
-      }
-      if (!extra.trim()) {
-        return { prd: next, advanced: false, error: "Missing idea text. Use C: your idea." };
-      }
-      next.idea = extra.trim();
-      return advance();
-    }
-    case "platform": {
-      next.platform = choice === "A" ? "web" : choice === "B" ? "api" : choice === "C" ? "cli" : "library";
-      if (next.platform !== "web") {
-        next.frontend = false;
-      }
-      return advance();
-    }
-    case "frontend": {
-      if (next.platform !== "web") {
-        // Auto-skip; frontend already forced false.
-        return advance();
-      }
-      next.frontend = choice === "A" ? true : choice === "B" ? false : choice === "C" ? true : null;
-      return advance();
-    }
-    case "language": {
-      next.language = choice === "A" ? "typescript" : choice === "B" ? "python" : choice === "C" ? "go" : "rust";
-      return advance();
-    }
-    case "framework": {
-      if (choice === "A") {
-        // Keep existing; user can edit prd.json manually.
-        return advance();
-      }
-      if (choice === "B") {
-        next.framework = next.platform === "web" ? "nextjs" : "express";
-        return advance();
-      }
-      if (choice === "C") {
-        next.framework = next.language === "python" ? "fastapi" : next.language === "go" ? "net/http" : null;
-        return advance();
-      }
-      if (!extra.trim()) {
-        return { prd: next, advanced: false, error: "Missing framework text. Use D: name." };
-      }
-      next.framework = extra.trim();
-      return advance();
-    }
-    case "qualityGates": {
-      if (choice === "A") {
-        next.qualityGates = await detectNodeQualityGates(repoRoot);
-        return advance();
-      }
-      if (choice === "B") {
-        // Deterministic fast default that works when scripts exist; otherwise empty.
-        const detected = await detectNodeQualityGates(repoRoot);
-        next.qualityGates = detected.filter((c) => c.includes("lint") || c.includes("typecheck"));
-        return advance();
-      }
-      if (choice === "D") {
-        return {
-          prd: next,
-          advanced: false,
-          error:
-            "If you want to edit gates manually, update .mario/prd.json:qualityGates and then answer this question with A/B/C.",
-        };
-      }
-      const cmds = parseCustomGateCommands(extra);
-      if (cmds.length === 0) {
-        return { prd: next, advanced: false, error: "No commands found. Use C: `npm test` `npm run lint`" };
-      }
-      next.qualityGates = cmds;
-      return advance();
-    }
-    case "features": {
-      if (choice === "A") {
-        next.product = { ...next.product, mustHaveFeatures: [] };
-        return advance();
-      }
-      const rawList = extra.includes("\n") ? linesFromExtra(extra) : extra.split(";").map((s) => s.trim()).filter(Boolean);
-      const list = rawList.filter((x) => x.length > 0);
-      if (list.length === 0) {
-        return { prd: next, advanced: false, error: "No features found. Example: D: login; dashboard; export csv" };
-      }
-      const max = choice === "B" ? 3 : choice === "C" ? 6 : 50;
-      next.product = { ...next.product, mustHaveFeatures: list.slice(0, max) };
-      return advance();
-    }
-    default:
-      return { prd: next, advanced: false, error: "Unknown wizard question." };
-  }
-};
-
 export const createTools = (ctx: PluginContext) => {
   const repoRoot = getRepoRoot(ctx);
 
   return {
     mario_devx_new: tool({
-      description: "PRD wizard (writes .mario/prd.json)",
+      description: "Interactive PRD interview (writes .mario/prd.json)",
       args: {
         idea: tool.schema.string().optional().describe("Initial idea"),
       },
@@ -1039,22 +933,7 @@ export const createTools = (ctx: PluginContext) => {
 
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
-
-        // Auto-advance step 0 when user passes a raw idea (not A/B/C/D).
         const rawInput = (args.idea ?? "").trim();
-        if (prd.wizard.status !== "completed" && prd.wizard.step === 0 && rawInput && !parseWizardInput(rawInput)) {
-          prd = {
-            ...prd,
-            idea: rawInput,
-            wizard: {
-              ...prd.wizard,
-              lastQuestionId: "idea",
-              answers: { ...prd.wizard.answers, idea: `D: ${rawInput}` },
-              step: 1,
-            },
-          };
-          await writePrdJson(repoRoot, prd);
-        }
 
         if (prd.wizard.status === "completed") {
           return [
@@ -1064,88 +943,101 @@ export const createTools = (ctx: PluginContext) => {
           ].join("\n");
         }
 
-        // Auto-skip frontend question when not a web platform.
-        while (prd.wizard.step === 2 && prd.platform && prd.platform !== "web") {
+        if (rawInput && prd.wizard.step === 0 && !hasNonEmpty(prd.idea)) {
           prd = {
             ...prd,
-            frontend: false,
-            wizard: { ...prd.wizard, step: prd.wizard.step + 1 },
+            idea: rawInput,
           };
-          await writePrdJson(repoRoot, prd);
         }
 
-        const step = prd.wizard.step;
-        const total = prd.wizard.totalSteps;
-        const q = wizardQuestionFor({ repoRoot, prd, step });
-
-        if (!rawInput) {
-          return renderWizardQuestion(q, step, total);
+        const hasAnswer = rawInput.length > 0;
+        const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
+        if (!hasAnswer && cachedQuestion) {
+          return [
+            `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
+            cachedQuestion,
+            "Reply with your answer in natural language.",
+          ].join("\n");
         }
 
-        const result = await applyWizardAnswer({
-          repoRoot,
-          prd,
-          step,
-          input: rawInput,
-          initialIdeaArg: args.idea,
+        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
+        const interviewInput = hasAnswer ? rawInput : "Start the interview and ask the first unanswered question.";
+        const interviewResponse = await ctx.client.session.prompt({
+          path: { id: ws.sessionId },
+          body: {
+            ...(context.agent ? { agent: context.agent } : {}),
+            parts: [{ type: "text", text: interviewPrompt(prd, interviewInput) }],
+          },
         });
-        prd = result.prd;
-        if (result.error) {
-          await writePrdJson(repoRoot, prd);
-          return [result.error, "", renderWizardQuestion(q, step, total)].join("\n");
+        const text = extractTextFromPromptResponse(interviewResponse);
+        const { envelope, question } = parseInterviewResponse(text);
+
+        if (envelope?.updates) {
+          prd = applyInterviewUpdates(prd, envelope.updates);
         }
-        if (result.advanced) {
-          // Completion.
-          if (prd.wizard.step >= prd.wizard.totalSteps) {
-            const doneWhen = prd.qualityGates ?? [];
-            if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
-              await writePrdJson(repoRoot, prd);
-              const qg = wizardQuestionFor({ repoRoot, prd, step: 5 });
-              return [
-                "PRD wizard: qualityGates is empty; at least one gate is required to run.",
-                "",
-                renderWizardQuestion(qg, 5, prd.wizard.totalSteps),
-              ].join("\n");
-            }
-            if (prd.tasks.length === 0) {
-              const tasks: PrdTask[] = [];
-              let n = 1;
-              tasks.push(
-                makeTask({
-                  id: normalizeTaskId(n++),
-                  title: prd.idea.trim() ? `Project baseline: ${prd.idea.trim()}` : "Project baseline",
-                  doneWhen,
-                  notes: ["Seeded by PRD wizard."],
-                }),
-              );
-              for (const feature of prd.product.mustHaveFeatures ?? []) {
-                tasks.push(
-                  makeTask({
-                    id: normalizeTaskId(n++),
-                    title: `Implement: ${feature}`,
-                    doneWhen,
-                  }),
-                );
-              }
-              prd = { ...prd, tasks };
-            }
-            prd = { ...prd, wizard: { ...prd.wizard, status: "completed" } };
+
+        const step = deriveWizardStep(prd);
+        const done = isPrdComplete(prd);
+        const nextQuestion = (question && question.trim()) || envelope?.next_question?.trim() || fallbackQuestion(prd);
+
+        prd = {
+          ...prd,
+          wizard: {
+            ...prd.wizard,
+            step,
+            totalSteps: WIZARD_TOTAL_STEPS,
+            status: done ? "completed" : "in_progress",
+            lastQuestionId: firstMissingField(prd),
+            answers: {
+              ...prd.wizard.answers,
+              ...(hasAnswer ? { [`turn-${Date.now()}`]: rawInput } : {}),
+              [LAST_QUESTION_KEY]: nextQuestion,
+            },
+          },
+        };
+
+        if (done) {
+          if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
+            prd = {
+              ...prd,
+              wizard: {
+                ...prd.wizard,
+                status: "in_progress",
+                step: Math.min(deriveWizardStep(prd), WIZARD_TOTAL_STEPS),
+                lastQuestionId: "qualityGates",
+              },
+            };
             await writePrdJson(repoRoot, prd);
             return [
-              "PRD wizard: completed.",
-              `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
-              `Tasks: ${prd.tasks.length}`,
-              "Next: /mario-devx:run 1",
+              "PRD interview: quality gates are still empty.",
+              "Add at least one runnable command (for example: npm run test).",
             ].join("\n");
           }
-
+          prd = seedTasksFromPrd(prd);
+          prd = {
+            ...prd,
+            wizard: {
+              ...prd.wizard,
+              status: "completed",
+              step: WIZARD_TOTAL_STEPS,
+              lastQuestionId: "done",
+            },
+          };
           await writePrdJson(repoRoot, prd);
-          const nextQ = wizardQuestionFor({ repoRoot, prd, step: prd.wizard.step });
-          return renderWizardQuestion(nextQ, prd.wizard.step, prd.wizard.totalSteps);
+          return [
+            "PRD wizard: completed.",
+            `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+            `Tasks: ${prd.tasks.length}`,
+            "Next: /mario-devx:run 1",
+          ].join("\n");
         }
 
         await writePrdJson(repoRoot, prd);
-        return renderWizardQuestion(q, step, total);
+        return [
+          `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+          nextQuestion,
+          "Reply with your answer in natural language.",
+        ].join("\n");
       },
     }),
 

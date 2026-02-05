@@ -26,8 +26,8 @@ const command = (
 export const createCommands = (): CommandDefinition[] => [
   command(
     "new",
-    "PRD wizard (writes .mario/prd.json)",
-    "Call tool mario_devx_new with idea=\"$ARGUMENTS\". Then follow the instructions in the tool output.",
+    "Interactive PRD interview (writes .mario/prd.json)",
+    "Call tool mario_devx_new with idea=\"$ARGUMENTS\". Return only the interview question or completion result.",
   ),
   command(
     "run",
