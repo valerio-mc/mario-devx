@@ -449,7 +449,29 @@ const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
   if (doing.length >= 1) {
     return doing[0] ?? null;
   }
+  const blocked = tasks.filter((t) => t.status === "blocked");
+  if (blocked.length >= 1) {
+    return blocked[0] ?? null;
+  }
   return tasks.find((t) => t.status === "open") ?? null;
+};
+
+const missingNpmScriptForCommand = async (repoRoot: string, command: string): Promise<string | null> => {
+  const m = command.match(/^npm\s+run\s+([a-zA-Z0-9:_-]+)$/);
+  if (!m) {
+    return null;
+  }
+  const scriptName = m[1];
+  const pkgRaw = await readTextIfExists(path.join(repoRoot, "package.json"));
+  if (!pkgRaw) {
+    return scriptName;
+  }
+  try {
+    const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
+    return pkg.scripts && typeof pkg.scripts[scriptName] === "string" ? null : scriptName;
+  } catch {
+    return scriptName;
+  }
 };
 
 const setPrdTaskStatus = (prd: PrdJson, taskId: string, status: PrdTaskStatus): PrdJson => {
@@ -1557,10 +1579,16 @@ export const createTools = (ctx: PluginContext) => {
                   ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
                   : "(unknown command)";
                 const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
+                const missingScript = gateResult.failed
+                  ? await missingNpmScriptForCommand(repoRoot, gateResult.failed.command)
+                  : null;
                 const repairPrompt = [
                   `Task ${task.id} failed deterministic gate: ${failedGate}.`,
                   gateResult.failed?.command?.includes("package.json")
                     ? "If project scaffold is missing, scaffold the app first before feature edits."
+                    : "",
+                  missingScript
+                    ? `Detected missing npm script '${missingScript}'. Add it to package.json and required config/files so it passes.`
                     : "",
                   scaffoldHint ? `Optional scaffold default: ${scaffoldHint}` : "",
                   "Fix the repository so all deterministic gates pass.",
@@ -1647,17 +1675,27 @@ export const createTools = (ctx: PluginContext) => {
               ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
               : "(unknown command)";
             const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
+            const missingScript = gateResult.failed
+              ? await missingNpmScriptForCommand(repoRoot, gateResult.failed.command)
+              : null;
             const elapsedMs = Date.now() - taskRepairStartedAt;
             await failEarly([
               `Deterministic gate failed: ${failed}.`,
               `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s across ${repairAttempts} attempt(s) (no-progress or time budget reached).`,
-            ], scaffoldHint
-              ? [
-                  "Scaffold artifacts are missing; choose any valid scaffold approach for this stack.",
-                  `Optional default command: ${scaffoldHint}`,
-                  "Then rerun /mario-devx:run 1.",
-                ]
-              : undefined);
+            ], [
+              ...(missingScript
+                ? [
+                    `Add npm script '${missingScript}' in package.json (and setup files it depends on).`,
+                  ]
+                : []),
+              ...(scaffoldHint
+                ? [
+                    "Scaffold artifacts are missing; choose any valid scaffold approach for this stack.",
+                    `Optional default command: ${scaffoldHint}`,
+                  ]
+                : []),
+              "Then rerun /mario-devx:run 1.",
+            ]);
             await showToast(ctx, `Run stopped: gates failed on ${task.id}`, "warning");
             break;
           }
