@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
+import { mkdir, readFile, stat, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
@@ -27,6 +28,54 @@ type ToolContext = {
 type PluginContext = Parameters<Plugin>[0];
 
 const nowIso = (): string => new Date().toISOString();
+
+const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
+
+const acquireRunLock = async (repoRoot: string, controlSessionId: string | undefined): Promise<{ ok: true } | { ok: false; message: string }> => {
+  const lockPath = runLockPath(repoRoot);
+  await mkdir(path.dirname(lockPath), { recursive: true });
+
+  const staleAfterMs = 2 * 60 * 60 * 1000;
+  try {
+    const s = await stat(lockPath);
+    if (Date.now() - s.mtimeMs > staleAfterMs) {
+      await unlink(lockPath);
+    } else {
+      const existing = await readFile(lockPath, "utf8");
+      return {
+        ok: false,
+        message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
+      };
+    }
+  } catch {
+    // No lock.
+  }
+
+  const payload = {
+    at: nowIso(),
+    pid: process.pid,
+    controlSessionId: controlSessionId ?? null,
+  };
+  try {
+    await writeFile(lockPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+  } catch {
+    const existing = await readFile(lockPath, "utf8").catch(() => "");
+    return {
+      ok: false,
+      message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
+    };
+  }
+  return { ok: true };
+};
+
+const releaseRunLock = async (repoRoot: string): Promise<void> => {
+  const lockPath = runLockPath(repoRoot);
+  try {
+    await unlink(lockPath);
+  } catch {
+    // Best-effort only.
+  }
+};
 
 const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
   const existing = await readPrdJsonIfExists(repoRoot);
@@ -1071,18 +1120,27 @@ export const createTools = (ctx: PluginContext) => {
 
         await ensureMario(repoRoot, false);
 
-        const currentRun = await readRunState(repoRoot);
-        if (currentRun.status === "DOING") {
-          return `A mario-devx run is already in progress (${currentRun.phase}). Wait for it to finish, then rerun /mario-devx:status.`;
+        const lock = await acquireRunLock(repoRoot, context.sessionID);
+        if (!lock.ok) {
+          return lock.message;
         }
 
-        let prd = await ensurePrd(repoRoot);
-        if (prd.wizard.status !== "completed") {
-          return "PRD wizard is not complete. Run /mario-devx:new to finish it.";
-        }
-        if (!Array.isArray(prd.tasks) || prd.tasks.length === 0) {
-          return "No tasks found in .mario/prd.json. Run /mario-devx:new to seed tasks.";
-        }
+        try {
+          const currentRun = await readRunState(repoRoot);
+          if (currentRun.status === "DOING") {
+            return `A mario-devx run is already in progress (${currentRun.phase}). Wait for it to finish, then rerun /mario-devx:status.`;
+          }
+
+          let prd = await ensurePrd(repoRoot);
+          if (prd.wizard.status !== "completed") {
+            return "PRD wizard is not complete. Run /mario-devx:new to finish it.";
+          }
+          if (!Array.isArray(prd.tasks) || prd.tasks.length === 0) {
+            return "No tasks found in .mario/prd.json. Run /mario-devx:new to seed tasks.";
+          }
+          if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
+            return "No quality gates configured in .mario/prd.json (qualityGates is empty). Add at least one command, then rerun /mario-devx:run 1.";
+          }
 
         const inProgress = (prd.tasks ?? []).filter((t) => t.status === "in_progress");
         if (inProgress.length > 1) {
@@ -1163,18 +1221,18 @@ export const createTools = (ctx: PluginContext) => {
         const skillOk = await hasAgentBrowserSkill(repoRoot);
         const shouldRunUiVerify = uiVerifyEnabled && isWebApp && cliOk && skillOk;
 
-        let attempted = 0;
-        let completed = 0;
+          let attempted = 0;
+          let completed = 0;
 
-        while (attempted < maxItems) {
-          const task = getNextPrdTask(prd);
-          if (!task) {
-            break;
-          }
-          attempted += 1;
+          while (attempted < maxItems) {
+            const task = getNextPrdTask(prd);
+            if (!task) {
+              break;
+            }
+            attempted += 1;
 
-          prd = setPrdTaskStatus(prd, task.id, "in_progress");
-          await writePrdJson(repoRoot, prd);
+            prd = setPrdTaskStatus(prd, task.id, "in_progress");
+            await writePrdJson(repoRoot, prd);
 
           const state = await bumpIteration(repoRoot);
           const attemptAt = nowIso();
@@ -1194,55 +1252,56 @@ export const createTools = (ctx: PluginContext) => {
 
           await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
-          const ws = await resetWorkSession(ctx, repoRoot, context.agent);
-          await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
-          await updateRunState(repoRoot, {
-            status: "DOING",
-            phase: "run",
-            currentPI: task.id,
-            controlSessionId: context.sessionID,
-            workSessionId: ws.sessionId,
-            baselineMessageId: ws.baselineMessageId,
-            startedAt: nowIso(),
-          });
-
-
-          await ctx.client.session.promptAsync({
-            path: { id: ws.sessionId },
-            body: {
-              ...(context.agent ? { agent: context.agent } : {}),
-              parts: [{ type: "text", text: buildModePrompt }],
-            },
-          });
-
-          const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
-          if (!idle) {
-            const gates: PrdGatesAttempt = { ok: false, commands: [] };
-            const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-            const judge: PrdJudgeAttempt = {
-              status: "FAIL",
-              exitSignal: false,
-              reason: ["Build timed out waiting for the work session to go idle."],
-              nextActions: ["Rerun /mario-devx:status; if it remains stuck, inspect the work session via /sessions."],
-            };
-            const lastAttempt: PrdTaskAttempt = {
-              at: attemptAt,
-              iteration: state.iteration,
-              gates,
-              ui,
-              judge,
-            };
-            prd = setPrdTaskStatus(prd, task.id, "blocked");
-            prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-            await writePrdJson(repoRoot, prd);
+            const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+            await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
             await updateRunState(repoRoot, {
-              status: "BLOCKED",
+              status: "DOING",
               phase: "run",
               currentPI: task.id,
+              controlSessionId: context.sessionID,
+              workSessionId: ws.sessionId,
+              baselineMessageId: ws.baselineMessageId,
+              startedAt: nowIso(),
             });
-            await showToast(ctx, `Run stopped: build timed out on ${task.id}`, "warning");
-            break;
-          }
+
+
+            try {
+              await ctx.client.session.promptAsync({
+                path: { id: ws.sessionId },
+                body: {
+                  ...(context.agent ? { agent: context.agent } : {}),
+                  parts: [{ type: "text", text: buildModePrompt }],
+                },
+              });
+
+              const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
+              if (!idle) {
+                const gates: PrdGatesAttempt = { ok: false, commands: [] };
+                const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+                const judge: PrdJudgeAttempt = {
+                  status: "FAIL",
+                  exitSignal: false,
+                  reason: ["Build timed out waiting for the work session to go idle."],
+                  nextActions: ["Rerun /mario-devx:status; if it remains stuck, inspect the work session via /sessions."],
+                };
+                const lastAttempt: PrdTaskAttempt = {
+                  at: attemptAt,
+                  iteration: state.iteration,
+                  gates,
+                  ui,
+                  judge,
+                };
+                prd = setPrdTaskStatus(prd, task.id, "blocked");
+                prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
+                await writePrdJson(repoRoot, prd);
+                await updateRunState(repoRoot, {
+                  status: "BLOCKED",
+                  phase: "run",
+                  currentPI: task.id,
+                });
+                await showToast(ctx, `Run stopped: build timed out on ${task.id}`, "warning");
+                break;
+              }
 
           const gateResult = await runGateCommands(gateCommands, ctx.$);
           const uiResult = shouldRunUiVerify
@@ -1384,9 +1443,14 @@ export const createTools = (ctx: PluginContext) => {
             break;
           }
 
-          completed += 1;
-          await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
-        }
+              completed += 1;
+              await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
+            } finally {
+              if ((await readRunState(repoRoot)).status === "DOING") {
+                await updateRunState(repoRoot, { status: "BLOCKED", phase: "run" });
+              }
+            }
+          }
 
         const note =
           completed === attempted && attempted === maxItems
@@ -1395,7 +1459,10 @@ export const createTools = (ctx: PluginContext) => {
               ? "No more open/in_progress tasks found."
               : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
 
-        return `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
+          return `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
+        } finally {
+          await releaseRunLock(repoRoot);
+        }
       },
     }),
 
