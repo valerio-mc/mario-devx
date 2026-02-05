@@ -1467,12 +1467,12 @@ export const createTools = (ctx: PluginContext) => {
             ui,
             judge,
           };
-          await updateRunState(repoRoot, {
-            status: judge.status === "PASS" ? "DONE" : "BLOCKED",
-            phase: "run",
-            currentPI: task.id,
-            controlSessionId: context.sessionID,
-          });
+           await updateRunState(repoRoot, {
+             status: judge.status === "PASS" ? "DOING" : "BLOCKED",
+             phase: "run",
+             currentPI: task.id,
+             controlSessionId: context.sessionID,
+           });
 
           prd = setPrdTaskStatus(prd, task.id, judge.status === "PASS" ? "completed" : "blocked");
           prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
@@ -1492,12 +1492,20 @@ export const createTools = (ctx: PluginContext) => {
             }
           }
 
-        const note =
-          completed === attempted && attempted === maxItems
-            ? "Reached max_items limit."
-            : completed === attempted
-              ? "No more open/in_progress tasks found."
-              : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
+          // Mark the run done once the loop ends.
+          await updateRunState(repoRoot, {
+            status: completed === attempted ? "DONE" : "BLOCKED",
+            phase: "run",
+            ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
+            updatedAt: nowIso(),
+          });
+
+          const note =
+            completed === attempted && attempted === maxItems
+              ? "Reached max_items limit."
+              : completed === attempted
+                ? "No more open/in_progress tasks found."
+                : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
 
           return `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
         } finally {
