@@ -309,47 +309,52 @@ const runUiVerification = async (params: {
 
   let pid = "";
 
-  // Start dev server in background.
-  const start = await ctx.$`sh -c ${`${devCmd} >/dev/null 2>&1 & echo $!`}`.nothrow();
-  pid = start.stdout.toString().trim();
-  if (!pid) {
-    return { ok: false, note: "Failed to start dev server." };
-  }
-
-  // Wait for URL to respond.
-  const waitCmd = `i=0; while [ $i -lt 60 ]; do curl -fsS ${url} >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1`;
-  const waited = await ctx.$`sh -c ${waitCmd}`.nothrow();
-  if (waited.exitCode !== 0) {
-    // stop server
-    await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
-    return { ok: false, note: `Dev server did not become ready at ${url}.` };
-  }
-
-  // Drive browser with agent-browser.
-  const cmds: { label: string; cmd: string }[] = [
-    { label: "open", cmd: `agent-browser open ${url}` },
-    { label: "snapshot", cmd: "agent-browser snapshot -i --json" },
-    { label: "console", cmd: "agent-browser console --json" },
-    { label: "errors", cmd: "agent-browser errors --json" },
-    { label: "close", cmd: "agent-browser close" },
-  ];
-
-  for (const item of cmds) {
-    const r = await ctx.$`sh -c ${item.cmd}`.nothrow();
-    if (r.exitCode !== 0) {
-      // Ensure close and stop server.
-      await ctx.$`sh -c ${"agent-browser close >/dev/null 2>&1 || true"}`.nothrow();
+  const cleanup = async (): Promise<void> => {
+    // Always attempt to close the browser and stop the dev server.
+    await ctx.$`sh -c ${"agent-browser close >/dev/null 2>&1 || true"}`.nothrow();
+    if (pid) {
       await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
-      return {
-        ok: false,
-        note: `agent-browser failed at '${item.label}'. If this is first run, you may need: agent-browser install`,
-      };
     }
-  }
+  };
 
-  // Stop server.
-  await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
-  return { ok: true, note: "UI verification completed." };
+  try {
+    // Start dev server in background.
+    const start = await ctx.$`sh -c ${`${devCmd} >/dev/null 2>&1 & echo $!`}`.nothrow();
+    pid = start.stdout.toString().trim();
+    if (!pid) {
+      return { ok: false, note: "Failed to start dev server." };
+    }
+
+    // Wait for URL to respond.
+    const waitCmd = `i=0; while [ $i -lt 60 ]; do curl -fsS ${url} >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1`;
+    const waited = await ctx.$`sh -c ${waitCmd}`.nothrow();
+    if (waited.exitCode !== 0) {
+      return { ok: false, note: `Dev server did not become ready at ${url}.` };
+    }
+
+    // Drive browser with agent-browser.
+    const cmds: { label: string; cmd: string }[] = [
+      { label: "open", cmd: `agent-browser open ${url}` },
+      { label: "snapshot", cmd: "agent-browser snapshot -i --json" },
+      { label: "console", cmd: "agent-browser console --json" },
+      { label: "errors", cmd: "agent-browser errors --json" },
+      { label: "close", cmd: "agent-browser close" },
+    ];
+
+    for (const item of cmds) {
+      const r = await ctx.$`sh -c ${item.cmd}`.nothrow();
+      if (r.exitCode !== 0) {
+        return {
+          ok: false,
+          note: `agent-browser failed at '${item.label}'. If this is first run, you may need: agent-browser install`,
+        };
+      }
+    }
+
+    return { ok: true, note: "UI verification completed." };
+  } finally {
+    await cleanup();
+  }
 };
 
 const showToast = async (
