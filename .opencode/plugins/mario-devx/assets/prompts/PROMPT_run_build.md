@@ -12,15 +12,16 @@ Rules:
 - Implement exactly ONE task (the tool invocation provides the task ID and a task block).
 - Search first; do not assume missing.
 - Apply backpressure: run the verification commands configured in `.mario/prd.json` (`qualityGates`).
-- If deterministic verification is not possible, write a verifiable checklist into the task's `doneWhen` / `evidence` / `notes` fields in `.mario/prd.json`.
+- If deterministic verification is not possible, report the limitation in chat and continue with smallest verifiable code change; do NOT edit `.mario/prd.json` directly.
 - Do not modify `.opencode/plugins/mario-devx/**`.
+- Do not edit control-plane files directly: `.mario/prd.json`, `.mario/state/state.json`, `.mario/AGENTS.md`.
 
 Prime directive:
 - Do not advance. You are not done unless the deterministic gates pass and the verifier outputs `Status: PASS` + `EXIT_SIGNAL: true`.
 
 Stop conditions (do not guess):
 - If the task block you received does not match `.mario/prd.json` for that task id, STOP and mark the task `blocked` with a short note describing the mismatch.
-- If the task's `doneWhen` is missing, vague, or cannot be verified, STOP and convert it to a verifiable checklist.
+- If the task's `doneWhen` is missing, vague, or cannot be verified, STOP and explain what is unverifiable; do not edit `.mario/prd.json` directly.
 
 No-magic rule:
 - Do not write vague work like "update the logic" or "refactor the component".

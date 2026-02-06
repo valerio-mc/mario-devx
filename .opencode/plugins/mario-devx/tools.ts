@@ -682,8 +682,10 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
 
   let status: "PASS" | "FAIL" = "FAIL";
   let statusSeen: "PASS" | "FAIL" | null = null;
+  let statusExplicit = false;
   let statusConflict = false;
   let exitSignal = false;
+  let exitExplicit = false;
   let section: "none" | "reason" | "next" = "none";
   const reason: string[] = [];
   const nextActions: string[] = [];
@@ -701,12 +703,14 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
         statusConflict = true;
       }
       statusSeen = statusSeen ?? next;
+      statusExplicit = true;
       status = next;
       continue;
     }
     const em = line.match(/^EXIT_SIGNAL:\s*(true|false)\s*$/i);
     if (em) {
       exitSignal = (em[1] ?? "false").toLowerCase() === "true";
+      exitExplicit = true;
       continue;
     }
     if (/^(Reason|Reasons):\s*$/i.test(line)) {
@@ -758,6 +762,20 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   const normalizedReason = reason.length > 0 ? reason : unmatched.length > 0 ? unmatched : ["Verifier did not provide a parsable Reason list."];
   const normalizedNext = nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."];
 
+  if (!statusExplicit || !exitExplicit) {
+    return {
+      status: "FAIL",
+      exitSignal: false,
+      reason: [
+        `Verifier output invalid: missing required header(s):${statusExplicit ? "" : " Status:"}${exitExplicit ? "" : " EXIT_SIGNAL:"}`.trim(),
+      ],
+      nextActions: [
+        "Re-run verifier and return exact format: Status, EXIT_SIGNAL, Reason bullets, Next actions bullets.",
+      ],
+      rawText: text,
+    };
+  }
+
   if (status === "PASS" && exitSignal !== true) {
     return {
       status: "FAIL",
@@ -775,6 +793,14 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
     nextActions: normalizedNext,
     rawText: text,
   };
+};
+
+const judgeNeedsStrictRetry = (judge: PrdJudgeAttempt): boolean => {
+  return (
+    judge.status === "FAIL"
+    && Array.isArray(judge.reason)
+    && judge.reason.some((line) => line.toLowerCase().includes("verifier output invalid"))
+  );
 };
 
 const getXdgConfigHome = (): string => {
@@ -1833,7 +1859,37 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
           const verifierText = extractTextFromPromptResponse(verifierResponse);
-          const judge = parseJudgeAttemptFromText(verifierText);
+          let judge = parseJudgeAttemptFromText(verifierText);
+          if (judgeNeedsStrictRetry(judge)) {
+            const strictRetryPrompt = [
+              "Re-evaluate and return ONLY the required verifier format.",
+              "Required exact headers:",
+              "Status: PASS|FAIL",
+              "EXIT_SIGNAL: true|false",
+              "Reason:",
+              "- <bullets>",
+              "Next actions:",
+              "- <bullets>",
+              "",
+              "Do not include prose before headers.",
+              "Previous invalid output:",
+              verifierText,
+            ].join("\n");
+            const strictResp = await ctx.client.session.prompt({
+              path: { id: ws.sessionId },
+              body: {
+                ...(context.agent ? { agent: context.agent } : {}),
+                parts: [{ type: "text", text: strictRetryPrompt }],
+              },
+            });
+            if (!(await heartbeatRunLock(repoRoot))) {
+              await blockForHeartbeatFailure("after-judge-retry");
+              await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+              break;
+            }
+            const strictText = extractTextFromPromptResponse(strictResp);
+            judge = parseJudgeAttemptFromText(strictText);
+          }
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
             iteration: state.iteration,
