@@ -333,7 +333,7 @@ const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ do
   ];
 
   if (prd.platform === "web" && prd.language === "typescript" && framework.includes("next")) {
-    notes.push("Preferred scaffold command (optional): npx create-next-app@latest __tmp_next --ts --eslint --app --src-dir --use-npm --yes && rsync -a __tmp_next/ ./ --exclude .git --exclude node_modules && rm -rf __tmp_next && npm install");
+    notes.push("Preferred scaffold command (optional): npx create-next-app@latest tmp-next --ts --eslint --app --src-dir --use-npm --yes && rsync -a tmp-next/ ./ --exclude .git --exclude node_modules && rm -rf tmp-next && npm install");
     return {
       doneWhen: ["test -f package.json", "test -d app || test -d src/app"],
       notes,
@@ -341,7 +341,7 @@ const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ do
   }
 
   if (prd.platform === "web" && prd.language === "typescript" && (framework.includes("vite") || framework.includes("react"))) {
-    notes.push("Preferred scaffold command (optional): npm create vite@latest __tmp_vite -- --template react-ts && rsync -a __tmp_vite/ ./ --exclude .git --exclude node_modules && rm -rf __tmp_vite && npm install");
+    notes.push("Preferred scaffold command (optional): npm create vite@latest tmp-vite -- --template react-ts && rsync -a tmp-vite/ ./ --exclude .git --exclude node_modules && rm -rf tmp-vite && npm install");
     return {
       doneWhen: ["test -f package.json", "test -f src/main.tsx"],
       notes,
