@@ -362,6 +362,17 @@ const firstScaffoldHintFromNotes = (notes: string[] | undefined): string | null 
   return line ? line.replace(/^Preferred scaffold command \(optional\):\s*/, "").trim() : null;
 };
 
+const isScaffoldMissingGateCommand = (command: string): boolean => {
+  const c = command.trim();
+  return (
+    c === "test -f package.json"
+    || c === "test -d app || test -d src/app"
+    || c === "test -f pyproject.toml || test -f requirements.txt"
+    || c === "test -f go.mod"
+    || c === "test -f Cargo.toml"
+  );
+};
+
 const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<string[]> => {
   const qualityGates = prd.qualityGates ?? [];
   const qualityText = qualityGates.join("\n");
@@ -1618,7 +1629,8 @@ export const createTools = (ctx: PluginContext) => {
                   : null;
 
                 if (!deterministicScaffoldTried
-                  && gateResult.failed?.command?.includes("package.json")
+                  && gateResult.failed?.command
+                  && isScaffoldMissingGateCommand(gateResult.failed.command)
                   && scaffoldHint
                   && ctx.$) {
                   deterministicScaffoldTried = true;
@@ -1642,7 +1654,7 @@ export const createTools = (ctx: PluginContext) => {
 
                 const repairPrompt = [
                   `Task ${task.id} failed deterministic gate: ${failedGate}.`,
-                  gateResult.failed?.command?.includes("package.json")
+                  gateResult.failed?.command && isScaffoldMissingGateCommand(gateResult.failed.command)
                     ? "If project scaffold is missing, scaffold the app first before feature edits."
                     : "",
                   missingScript
