@@ -139,8 +139,9 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
       meta: { ...existing.meta, createdAt },
       wizard: {
         ...existing.wizard,
-        totalSteps: Math.max(existing.wizard?.totalSteps ?? 0, 12),
+        totalSteps: Math.max(existing.wizard?.totalSteps ?? 0, 13),
       },
+      uiVerificationRequired: typeof existing.uiVerificationRequired === "boolean" ? existing.uiVerificationRequired : null,
       product: {
         targetUsers: Array.isArray(existing.product?.targetUsers) ? existing.product.targetUsers : [],
         userProblems: Array.isArray(existing.product?.userProblems) ? existing.product.userProblems : [],
@@ -165,6 +166,7 @@ type InterviewUpdates = {
   idea?: string;
   platform?: "web" | "api" | "cli" | "library";
   frontend?: boolean;
+  uiVerificationRequired?: boolean;
   language?: "typescript" | "python" | "go" | "rust" | "other";
   framework?: string | null;
   targetUsers?: string[];
@@ -182,7 +184,7 @@ type InterviewEnvelope = {
   next_question?: string;
 };
 
-const WIZARD_TOTAL_STEPS = 12;
+const WIZARD_TOTAL_STEPS = 13;
 const LAST_QUESTION_KEY = "__last_question";
 const MIN_FEATURES = 3;
 const MIN_QUALITY_GATES = 2;
@@ -231,6 +233,7 @@ const isPrdComplete = (prd: PrdJson): boolean => {
     hasNonEmpty(prd.idea)
     && prd.platform !== null
     && typeof prd.frontend === "boolean"
+    && (prd.frontend === false || typeof prd.uiVerificationRequired === "boolean")
     && prd.language !== null
     && hasNonEmpty(prd.framework)
     && hasMeaningfulList(prd.product.targetUsers)
@@ -249,15 +252,16 @@ const deriveWizardStep = (prd: PrdJson): number => {
   if (hasNonEmpty(prd.idea)) step = 1;
   if (prd.platform !== null) step = 2;
   if (typeof prd.frontend === "boolean") step = 3;
-  if (prd.language !== null) step = 4;
-  if (hasNonEmpty(prd.framework)) step = 5;
-  if (hasMeaningfulList(prd.product.targetUsers)) step = 6;
-  if (hasMeaningfulList(prd.product.userProblems)) step = 7;
-  if (hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 8;
-  if (hasMeaningfulList(prd.product.nonGoals)) step = 9;
-  if (hasMeaningfulList(prd.product.successMetrics)) step = 10;
-  if (hasMeaningfulList(prd.product.constraints)) step = 11;
-  if (hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates)) step = 12;
+  if (prd.frontend === false || typeof prd.uiVerificationRequired === "boolean") step = 4;
+  if (prd.language !== null) step = 5;
+  if (hasNonEmpty(prd.framework)) step = 6;
+  if (hasMeaningfulList(prd.product.targetUsers)) step = 7;
+  if (hasMeaningfulList(prd.product.userProblems)) step = 8;
+  if (hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 9;
+  if (hasMeaningfulList(prd.product.nonGoals)) step = 10;
+  if (hasMeaningfulList(prd.product.successMetrics)) step = 11;
+  if (hasMeaningfulList(prd.product.constraints)) step = 12;
+  if (hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates)) step = 13;
   return Math.min(WIZARD_TOTAL_STEPS, step);
 };
 
@@ -265,6 +269,7 @@ const firstMissingField = (prd: PrdJson): string => {
   if (!hasNonEmpty(prd.idea)) return "idea";
   if (prd.platform === null) return "platform";
   if (typeof prd.frontend !== "boolean") return "frontend";
+  if (prd.frontend === true && typeof prd.uiVerificationRequired !== "boolean") return "uiVerificationRequired";
   if (prd.language === null) return "language";
   if (!hasNonEmpty(prd.framework)) return "framework";
   if (!hasMeaningfulList(prd.product.targetUsers)) return "targetUsers";
@@ -286,6 +291,8 @@ const fallbackQuestion = (prd: PrdJson): string => {
       return "What are we building: web app, API service, CLI tool, or library?";
     case "frontend":
       return "Does this project need a browser UI?";
+    case "uiVerificationRequired":
+      return "Should automated UI browser verification be required on every run? (yes/no)";
     case "language":
       return "What is the primary language: TypeScript, Python, Go, Rust, or other?";
     case "framework":
@@ -533,6 +540,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     idea: hasNonEmpty(prd.idea),
     platform: prd.platform !== null,
     frontend: typeof prd.frontend === "boolean",
+    uiVerificationRequired: prd.frontend === false || typeof prd.uiVerificationRequired === "boolean",
     language: prd.language !== null,
     framework: hasNonEmpty(prd.framework),
     targetUsers: hasMeaningfulList(prd.product.targetUsers),
@@ -547,6 +555,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     idea: prd.idea,
     platform: prd.platform,
     frontend: prd.frontend,
+    uiVerificationRequired: prd.uiVerificationRequired,
     language: prd.language,
     framework: prd.framework,
     targetUsers: prd.product.targetUsers,
@@ -570,6 +579,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- idea",
     "- platform (web|api|cli|library)",
     "- frontend (true/false)",
+    "- uiVerificationRequired (true/false when frontend=true)",
     "- language (typescript|python|go|rust|other)",
     "- framework (string)",
     "- targetUsers (non-empty string[])",
@@ -581,7 +591,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     `- qualityGates (at least ${MIN_QUALITY_GATES} runnable commands including both test and static checks)`,
     "",
     "Envelope schema:",
-    '{"done": boolean, "updates": {idea?, platform?, frontend?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
+    '{"done": boolean, "updates": {idea?, platform?, frontend?, uiVerificationRequired?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
     "",
     "Rules:",
     "- updates MUST include only fields changed by this answer.",
@@ -642,6 +652,7 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   if (typeof updates.idea === "string") next.idea = updates.idea.trim();
   if (updates.platform) next.platform = updates.platform;
   if (typeof updates.frontend === "boolean") next.frontend = updates.frontend;
+  if (typeof updates.uiVerificationRequired === "boolean") next.uiVerificationRequired = updates.uiVerificationRequired;
   if (updates.language) next.language = updates.language;
   if (typeof updates.framework === "string" || updates.framework === null) next.framework = updates.framework;
   if (Array.isArray(updates.targetUsers)) {
@@ -670,6 +681,10 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   }
   if (next.platform && next.platform !== "web") {
     next.frontend = false;
+    next.uiVerificationRequired = false;
+  }
+  if (next.frontend === false) {
+    next.uiVerificationRequired = false;
   }
   if (typeof next.framework === "string" && next.framework.trim().length === 0) {
     next.framework = null;
@@ -1448,16 +1463,20 @@ export const createTools = (ctx: PluginContext) => {
             const raw = (await readTextIfExists(agentsPath)) ?? "";
             const parsed = parseAgentsEnv(raw);
             const env = parsed.env;
+            const uiRequired = prd.uiVerificationRequired === true;
             if (parsed.warnings.length > 0) {
               await showToast(ctx, `Run warning: AGENTS.md parse warnings (${parsed.warnings.length})`, "warning");
             }
             if (env.UI_VERIFY !== "1") {
               let next = raw;
               next = upsertAgentsKey(next, "UI_VERIFY", "1");
-              next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", "0");
+              next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
               if (!env.UI_VERIFY_CMD) next = upsertAgentsKey(next, "UI_VERIFY_CMD", "npm run dev");
               if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
               if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
+              await writeText(agentsPath, next);
+            } else if ((env.UI_VERIFY_REQUIRED === "1") !== uiRequired) {
+              const next = upsertAgentsKey(raw, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
               await writeText(agentsPath, next);
             }
           }

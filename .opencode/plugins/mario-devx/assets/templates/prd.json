@@ -7,13 +7,14 @@
   "wizard": {
     "status": "in_progress",
     "step": 0,
-    "totalSteps": 12,
+    "totalSteps": 13,
     "lastQuestionId": null,
     "answers": {}
   },
   "idea": "",
   "platform": null,
   "frontend": null,
+  "uiVerificationRequired": null,
   "language": null,
   "framework": null,
   "qualityGates": [],

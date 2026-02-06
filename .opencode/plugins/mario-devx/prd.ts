@@ -68,6 +68,7 @@ export type PrdJson = {
   idea: string;
   platform: "web" | "api" | "cli" | "library" | null;
   frontend: boolean | null;
+  uiVerificationRequired: boolean | null;
   language: "typescript" | "python" | "go" | "rust" | "other" | null;
   framework: string | null;
   qualityGates: string[];
@@ -87,7 +88,7 @@ export const prdJsonPath = (repoRoot: string): string => path.join(repoRoot, ".m
 const defaultWizard = (): PrdWizard => ({
   status: "in_progress",
   step: 0,
-  totalSteps: 12,
+  totalSteps: 13,
   lastQuestionId: null,
   answers: {},
 });
@@ -101,6 +102,7 @@ export const defaultPrdJson = (): PrdJson => {
     idea: "",
     platform: null,
     frontend: null,
+    uiVerificationRequired: null,
     language: null,
     framework: null,
     qualityGates: [],
