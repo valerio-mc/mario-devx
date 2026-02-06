@@ -30,6 +30,7 @@ type PluginContext = Parameters<Plugin>[0];
 const nowIso = (): string => new Date().toISOString();
 const MAX_TASK_REPAIR_MS = 25 * 60 * 1000;
 const MAX_NO_PROGRESS_STREAK = 3;
+const RUN_DUPLICATE_WINDOW_MS = 8000;
 
 const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
 
@@ -1409,6 +1410,18 @@ export const createTools = (ctx: PluginContext) => {
 
         await ensureMario(repoRoot, false);
 
+        const previousRun = await readRunState(repoRoot);
+        if (
+          context.sessionID
+          && previousRun.lastRunControlSessionId === context.sessionID
+          && previousRun.lastRunAt
+          && previousRun.lastRunResult
+          && Number.isFinite(Date.parse(previousRun.lastRunAt))
+          && (Date.now() - Date.parse(previousRun.lastRunAt)) <= RUN_DUPLICATE_WINDOW_MS
+        ) {
+          return previousRun.lastRunResult;
+        }
+
         const lock = await acquireRunLock(repoRoot, context.sessionID);
         if (!lock.ok) {
           return lock.message;
@@ -2004,7 +2017,7 @@ export const createTools = (ctx: PluginContext) => {
                 ? "No more open/in_progress tasks found."
                 : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
 
-          return [
+          const result = [
             `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`,
             latestTask ? `Task: ${latestTask.id} (${latestTask.status}) - ${latestTask.title}` : "Task: n/a",
             `Gates: ${passedGates}/${totalGates} PASS`,
@@ -2012,6 +2025,14 @@ export const createTools = (ctx: PluginContext) => {
             latestAttempt ? `Judge: ${latestAttempt.judge.status} (exit=${latestAttempt.judge.exitSignal})` : "Judge: n/a",
             `Reason: ${judgeTopReason}`,
           ].join("\n");
+
+          await updateRunState(repoRoot, {
+            ...(context.sessionID ? { lastRunControlSessionId: context.sessionID } : {}),
+            lastRunAt: nowIso(),
+            lastRunResult: result,
+          });
+
+          return result;
         } finally {
           await releaseRunLock(repoRoot);
         }

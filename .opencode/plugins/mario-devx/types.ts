@@ -13,6 +13,9 @@ export type RunState = {
   iteration: number;
   status: RunStatus;
   phase: RunPhase;
+  lastRunAt?: string;
+  lastRunControlSessionId?: string;
+  lastRunResult?: string;
   currentPI?: string;
   controlSessionId?: string;
   workSessionId?: string;

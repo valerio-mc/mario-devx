@@ -32,7 +32,7 @@ export const createCommands = (): CommandDefinition[] => [
   command(
     "run",
     "Run next tasks (build + verify)",
-    "Call tool mario_devx_run with max_items=$ARGUMENTS EXACTLY ONCE, then stop. Never call mario_devx_run again in the same command execution, even if the output mentions work session idle, blocked tasks, or suggests rerunning. Return only that single tool result.",
+    "Invoke mario_devx_run exactly once with max_items=$ARGUMENTS. Do not invoke any other tool. Return only the tool output.",
   ),
   command(
     "status",
