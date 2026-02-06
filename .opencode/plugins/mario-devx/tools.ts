@@ -1986,6 +1986,17 @@ export const createTools = (ctx: PluginContext) => {
             updatedAt: nowIso(),
           });
 
+          const latestTask = (prd.tasks ?? [])
+            .filter((t) => t.lastAttempt)
+            .sort((a, b) => (b.lastAttempt?.iteration ?? 0) - (a.lastAttempt?.iteration ?? 0))[0] ?? null;
+          const latestAttempt = latestTask?.lastAttempt;
+          const passedGates = latestAttempt?.gates.commands.filter((c) => c.ok).length ?? 0;
+          const totalGates = latestAttempt?.gates.commands.length ?? 0;
+          const uiSummary = latestAttempt?.ui
+            ? (latestAttempt.ui.ran ? `UI verify: ${latestAttempt.ui.ok ? "PASS" : "FAIL"}${uiVerifyRequired ? " (required)" : " (optional)"}` : "UI verify: not run")
+            : "UI verify: not available";
+          const judgeTopReason = latestAttempt?.judge.reason?.[0] ?? "No judge reason recorded.";
+
           const note =
             completed === attempted && attempted === maxItems
               ? "Reached max_items limit."
@@ -1993,7 +2004,14 @@ export const createTools = (ctx: PluginContext) => {
                 ? "No more open/in_progress tasks found."
                 : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
 
-          return `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`;
+          return [
+            `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`,
+            latestTask ? `Task: ${latestTask.id} (${latestTask.status}) - ${latestTask.title}` : "Task: n/a",
+            `Gates: ${passedGates}/${totalGates} PASS`,
+            uiSummary,
+            latestAttempt ? `Judge: ${latestAttempt.judge.status} (exit=${latestAttempt.judge.exitSignal})` : "Judge: n/a",
+            `Reason: ${judgeTopReason}`,
+          ].join("\n");
         } finally {
           await releaseRunLock(repoRoot);
         }
