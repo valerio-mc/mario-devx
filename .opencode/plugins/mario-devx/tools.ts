@@ -1587,6 +1587,7 @@ export const createTools = (ctx: PluginContext) => {
               let repairAttempts = 0;
               let noProgressStreak = 0;
               let lastGateFailureSig: string | null = null;
+              let deterministicScaffoldTried = false;
               let gateResult = await runGateCommands(gateCommands, ctx.$);
 
               const failSigFromGate = (): string => {
@@ -1615,6 +1616,30 @@ export const createTools = (ctx: PluginContext) => {
                 const missingScript = gateResult.failed
                   ? await missingPackageScriptForCommand(repoRoot, gateResult.failed.command)
                   : null;
+
+                if (!deterministicScaffoldTried
+                  && gateResult.failed?.command?.includes("package.json")
+                  && scaffoldHint
+                  && ctx.$) {
+                  deterministicScaffoldTried = true;
+                  await showToast(ctx, `Run: trying default scaffold for ${task.id}`, "info");
+                  await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - scaffold ${task.id}`);
+                  const scaffoldRun = await ctx.$`sh -c ${scaffoldHint}`.nothrow();
+                  repairAttempts += 1;
+                  if (!(await heartbeatRunLock(repoRoot))) {
+                    await blockForHeartbeatFailure("during-deterministic-scaffold");
+                    await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+                    break;
+                  }
+                  if (scaffoldRun.exitCode !== 0) {
+                    await showToast(ctx, `Run: default scaffold failed on ${task.id}, falling back to agent repair`, "warning");
+                  }
+                  gateResult = await runGateCommands(gateCommands, ctx.$);
+                  if (gateResult.ok) {
+                    break;
+                  }
+                }
+
                 const repairPrompt = [
                   `Task ${task.id} failed deterministic gate: ${failedGate}.`,
                   gateResult.failed?.command?.includes("package.json")
@@ -1718,7 +1743,7 @@ export const createTools = (ctx: PluginContext) => {
             ], [
               ...(missingScript
                 ? [
-                    `Add npm script '${missingScript}' in package.json (and setup files it depends on).`,
+                    `Add script '${missingScript}' in package.json (and setup files it depends on).`,
                   ]
                 : []),
               ...(scaffoldHint
