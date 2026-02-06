@@ -924,6 +924,35 @@ const hasAgentBrowserCli = async (ctx: PluginContext): Promise<boolean> => {
   return result.exitCode === 0;
 };
 
+const ensureAgentBrowserPrereqs = async (
+  ctx: PluginContext,
+  repoRoot: string,
+): Promise<{ cliOk: boolean; skillOk: boolean; attempted: string[] }> => {
+  const attempted: string[] = [];
+  let cliOk = await hasAgentBrowserCli(ctx);
+  let skillOk = await hasAgentBrowserSkill(repoRoot);
+
+  if (!ctx.$ || (cliOk && skillOk)) {
+    return { cliOk, skillOk, attempted };
+  }
+
+  if (!cliOk) {
+    attempted.push("npm install -g agent-browser");
+    await ctx.$`sh -c ${"npm install -g agent-browser"}`.nothrow();
+    attempted.push("agent-browser install");
+    await ctx.$`sh -c ${"agent-browser install"}`.nothrow();
+    cliOk = await hasAgentBrowserCli(ctx);
+  }
+
+  if (!skillOk) {
+    attempted.push("npx skills add vercel-labs/agent-browser");
+    await ctx.$`sh -c ${"npx skills add vercel-labs/agent-browser"}`.nothrow();
+    skillOk = await hasAgentBrowserSkill(repoRoot);
+  }
+
+  return { cliOk, skillOk, attempted };
+};
+
 const runUiVerification = async (params: {
   ctx: PluginContext;
   devCmd: string;
@@ -1499,8 +1528,15 @@ export const createTools = (ctx: PluginContext) => {
         const agentBrowserRepo = agentsEnv.AGENT_BROWSER_REPO || "https://github.com/vercel-labs/agent-browser";
 
         const isWebApp = await isLikelyWebApp(repoRoot);
-        const cliOk = await hasAgentBrowserCli(ctx);
-        const skillOk = await hasAgentBrowserSkill(repoRoot);
+        let cliOk = await hasAgentBrowserCli(ctx);
+        let skillOk = await hasAgentBrowserSkill(repoRoot);
+        let autoInstallAttempted: string[] = [];
+        if (uiVerifyEnabled && isWebApp && (!cliOk || !skillOk)) {
+          const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot);
+          cliOk = ensured.cliOk;
+          skillOk = ensured.skillOk;
+          autoInstallAttempted = ensured.attempted;
+        }
         const shouldRunUiVerify = uiVerifyEnabled && isWebApp && cliOk && skillOk;
 
           let attempted = 0;
@@ -1819,6 +1855,7 @@ export const createTools = (ctx: PluginContext) => {
             await failEarly(
               [
               "UI verification is required but agent-browser prerequisites are missing.",
+              ...(autoInstallAttempted.length > 0 ? [`Auto-install attempted: ${autoInstallAttempted.join("; ")}`] : []),
               `Repo: ${agentBrowserRepo}`,
               "Install: npx skills add vercel-labs/agent-browser",
               "Install: npm install -g agent-browser && agent-browser install",

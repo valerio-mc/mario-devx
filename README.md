@@ -60,7 +60,7 @@ opencode .
 ```
 
 Answer the PRD interview questions in your current session using natural language.
-The interviewer is intentionally strict: it will probe for target users, concrete problems, measurable success metrics, constraints, non-goals, and runnable quality gates before it marks the PRD complete.
+The interviewer is intentionally strict: it will probe for target users, concrete problems, measurable success metrics, constraints, non-goals, runnable quality gates, and whether UI browser verification should be required (for frontend projects) before it marks the PRD complete.
 You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
 
 5) **Run the loop**
@@ -102,13 +102,18 @@ If it stops, the answer is in the focus task's `lastAttempt` verdict.
 
 Note: nothing runs code until you call `/mario-devx:run`.
 
+Task order is scaffold-first by design:
+- `T-0001`: scaffold baseline
+- `T-0002`: setup quality pipeline (make declared gates runnable)
+- remaining tasks: feature implementation
+
 ## What gets created
 
 In your project:
 
 ```text
 .mario/
-  prd.json                   # requirements + tasks + Quality Gates
+  prd.json                   # requirements + tasks + Quality Gates (+ UI verify preference)
   AGENTS.md                  # harness knobs (UI_VERIFY*)
   state/state.json           # internal state (iteration, run status, work session ids)
 ```
@@ -127,15 +132,21 @@ If you leave `qualityGates` empty, `/mario-devx:run` will refuse to run.
 
 ### UI verification (frontends)
 
-If `.mario/prd.json` has `frontend: true`, mario-devx enables best-effort UI verification by default:
+If `.mario/prd.json` has `frontend: true`, mario-devx asks during PRD interview whether UI verification should be required.
+
+When enabled, mario-devx sets:
 - `UI_VERIFY=1`
-- `UI_VERIFY_REQUIRED=0`
+- `UI_VERIFY_REQUIRED=1` or `0` (from PRD answer)
 
 How it works:
 - Starts your dev server (`UI_VERIFY_CMD`) and drives a real browser at `UI_VERIFY_URL` using Vercel's `agent-browser` (Playwright-based).
 - Stores the latest UI result on the task under `.mario/prd.json` (`tasks[].lastAttempt.ui`).
 
 If prerequisites are missing, UI verify is skipped unless you set `UI_VERIFY_REQUIRED=1`.
+When UI verify is enabled and prerequisites are missing, mario-devx also auto-attempts install:
+- `npm install -g agent-browser`
+- `agent-browser install`
+- `npx skills add vercel-labs/agent-browser`
 
 ## Verifier output
 
@@ -161,7 +172,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 ## Troubleshooting
 
 - Quality Gates failing instantly: verify `.mario/prd.json` has runnable commands under `qualityGates`.
-- UI verify doesn't run: install prerequisites (`npx skills add vercel-labs/agent-browser`, and `npm install -g agent-browser && agent-browser install`) and check `.mario/AGENTS.md`.
+- UI verify doesn't run: check install output for `agent-browser`; if auto-install failed, rerun the install commands manually and verify `.mario/AGENTS.md` has `UI_VERIFY=1`.
 - If `/run` shows AGENTS parse warnings: fix malformed lines in `.mario/AGENTS.md` (must be `KEY=VALUE`; comments must start with `#`).
 - Still confused: run `/mario-devx:doctor`.
 
