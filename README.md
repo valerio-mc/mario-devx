@@ -115,7 +115,8 @@ Example:
 
 Task decomposition is unbounded: simple ideas may generate ~5 tasks, complex ideas can generate 30+ atomic tasks.
 For `mustHaveFeatures`, the interviewer now requires atomic action statements (one behavior per line) and will keep asking until they are concrete.
-You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
+Answer each interview prompt directly in natural language.
+Mario DevX only records what you explicitly provide in your PRD; it does not add default features on its own.
 
 5) **Run the loop**
 
