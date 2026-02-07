@@ -531,74 +531,36 @@ const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | n
 };
 
 const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefined): PrdJson => {
-  if (!updates) {
-    return prd;
-  }
-  let next = { ...prd };
-  if (typeof updates.idea === "string") next.idea = updates.idea.trim();
-  if (updates.platform) next.platform = updates.platform;
-  if (typeof updates.frontend === "boolean") next.frontend = updates.frontend;
-  if (typeof updates.uiVerificationRequired === "boolean") next.uiVerificationRequired = updates.uiVerificationRequired;
-  if (typeof updates.uiVerificationRequired === "boolean") {
-    next.verificationPolicy = {
-      ...next.verificationPolicy,
-      uiPolicy: updates.uiVerificationRequired ? "required" : "best_effort",
-    };
-  }
-  if (updates.uiDesignSystem) {
-    next.ui = { ...next.ui, designSystem: updates.uiDesignSystem };
-  }
-  if (updates.uiStyleReferenceMode) {
-    next.ui = { ...next.ui, styleReferenceMode: updates.uiStyleReferenceMode };
-  }
-  if (Array.isArray(updates.uiStyleReferences)) {
-    next.ui = { ...next.ui, styleReferences: mergeStyleReferences(next.ui.styleReferences, updates.uiStyleReferences) };
-  }
-  if (typeof updates.uiVisualDirection === "string") {
-    next.ui = { ...next.ui, visualDirection: updates.uiVisualDirection.trim() };
-  }
-  if (Array.isArray(updates.uiUxRequirements)) {
-    next.ui = { ...next.ui, uxRequirements: normalizeTextArray(updates.uiUxRequirements) };
-  }
-  if (typeof updates.docsReadmeRequired === "boolean") {
-    next.docs = { ...next.docs, readmeRequired: updates.docsReadmeRequired };
-  }
-  if (Array.isArray(updates.docsReadmeSections)) {
-    next.docs = { ...next.docs, readmeSections: normalizeTextArray(updates.docsReadmeSections) };
-  }
-  if (updates.language) next.language = updates.language;
-  if (typeof updates.framework === "string" || updates.framework === null) next.framework = updates.framework;
-  if (Array.isArray(updates.targetUsers)) {
-    next.product = { ...next.product, targetUsers: normalizeTextArray(updates.targetUsers) };
-  }
-  if (Array.isArray(updates.userProblems)) {
-    next.product = { ...next.product, userProblems: normalizeTextArray(updates.userProblems) };
-  }
-  if (Array.isArray(updates.qualityGates)) {
-    next.qualityGates = normalizeTextArray(updates.qualityGates);
-    next.verificationPolicy = {
-      ...next.verificationPolicy,
-      globalGates: next.qualityGates,
-    };
-  }
-  if (Array.isArray(updates.mustHaveFeatures)) {
-    next.product = {
-      ...next.product,
-      mustHaveFeatures: normalizeTextArray(updates.mustHaveFeatures),
-    };
-  }
-  if (Array.isArray(updates.nonGoals)) {
-    next.product = { ...next.product, nonGoals: normalizeTextArray(updates.nonGoals) };
-  }
-  if (Array.isArray(updates.successMetrics)) {
-    next.product = { ...next.product, successMetrics: normalizeTextArray(updates.successMetrics) };
-  }
-  if (Array.isArray(updates.constraints)) {
-    next.product = { ...next.product, constraints: normalizeTextArray(updates.constraints) };
-  }
+  if (!updates) return prd;
+  
+  // Deep merge with automatic normalization
+  const merge = (target: any, source: any): any => {
+    if (source === undefined || source === null) return target;
+    if (typeof source === "string") return source.trim();
+    if (Array.isArray(source)) return normalizeTextArray(source);
+    if (typeof source === "object") {
+      const result = { ...target };
+      for (const key of Object.keys(source)) {
+        result[key] = merge(result[key], source[key]);
+      }
+      return result;
+    }
+    return source;
+  };
+  
+  let next = merge(prd, updates) as PrdJson;
+  
+  // Derive dependent fields
   if (next.platform && next.platform !== "web") {
     next.frontend = false;
     next.uiVerificationRequired = false;
+  }
+  if (typeof next.uiVerificationRequired === "boolean") {
+    next.verificationPolicy = {
+      ...next.verificationPolicy,
+      uiPolicy: next.uiVerificationRequired ? "required" : "best_effort",
+      globalGates: next.qualityGates,
+    };
   }
   if (next.frontend === false) {
     next.uiVerificationRequired = false;
@@ -606,7 +568,7 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
       ...next.ui,
       designSystem: "none",
       visualDirection: next.ui.visualDirection || "non-UI project",
-      uxRequirements: next.ui.uxRequirements.length > 0 ? next.ui.uxRequirements : ["No browser UI required."],
+      uxRequirements: next.ui.uxRequirements?.length > 0 ? next.ui.uxRequirements : ["No browser UI required."],
     };
   }
   if (next.docs.readmeRequired === false) {
@@ -615,6 +577,7 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   if (typeof next.framework === "string" && next.framework.trim().length === 0) {
     next.framework = null;
   }
+  
   return next;
 };
 
