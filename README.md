@@ -229,15 +229,18 @@ When UI verify is enabled and prerequisites are missing, mario-devx auto-attempt
 
 ## Verifier output
 
-The judge output is stored on the task in `.mario/prd.json` under `tasks[].lastAttempt.judge`:
+The judge output is stored on the task in `.mario/prd.json` under `tasks[].lastAttempt.judge`.
 
-```text
-Status: PASS|FAIL
-EXIT_SIGNAL: true|false
-Reason:
-- ...
-Next actions:
-- ...
+The verifier now returns JSON for reliable parsing:
+
+```json
+<VERIFIER_JSON>
+{
+  "status": "PASS|FAIL",
+  "reason": ["..."],
+  "nextActions": ["..."]
+}
+</VERIFIER_JSON>
 ```
 
 ## Git hygiene
