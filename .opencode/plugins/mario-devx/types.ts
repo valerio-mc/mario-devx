@@ -9,6 +9,17 @@ export type RunPhase = "run";
 
 export type RunStatus = "NONE" | "DOING" | "DONE" | "BLOCKED";
 
+export type FeatureAddInterviewState = {
+  active: boolean;
+  startedAt: string;
+  step: 1 | 2 | 3;
+  originalRequest: string;
+  acceptance?: string[];
+  constraints?: string[];
+  uxNotes?: string;
+  lastQuestion?: string;
+};
+
 export type RunState = {
   iteration: number;
   status: RunStatus;
@@ -21,5 +32,6 @@ export type RunState = {
   workSessionId?: string;
   baselineMessageId?: string;
   startedAt?: string;
+  featureAddInterview?: FeatureAddInterviewState;
   updatedAt: string;
 };

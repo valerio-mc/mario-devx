@@ -185,6 +185,8 @@ You can add features at any time:
 /mario-devx:replan
 ```
 
+If your `/mario-devx:add` request is too vague, mario-devx will ask a short 3-step clarification interview before generating tasks.
+
 `/mario-devx:replan` also repairs malformed open feature tasks by canceling non-atomic fragments and regenerating clean atomic tasks from PRD/backlog.
 
 ## What gets created

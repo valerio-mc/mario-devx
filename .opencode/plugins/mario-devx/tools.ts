@@ -5,7 +5,7 @@ import path from "path";
 import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { ensureMario, bumpIteration, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
-import { RunState } from "./types";
+import { FeatureAddInterviewState, RunState } from "./types";
 import { getRepoRoot } from "./paths";
 import {
   defaultPrdJson,
@@ -302,6 +302,28 @@ const isAtomicFeatureStatement = (value: string): boolean => {
 const hasAtomicFeatures = (value: string[] | undefined, min = MIN_FEATURES): boolean => {
   const normalized = normalizeTextArray(value).map(stripTrailingSentencePunctuation).filter(Boolean);
   return normalized.length >= min && normalized.every(isAtomicFeatureStatement);
+};
+
+const isVagueFeatureRequest = (input: string): boolean => {
+  const s = input.replace(/\s+/g, " ").trim();
+  if (!s) return true;
+  const wordCount = s.split(/\s+/).filter(Boolean).length;
+  if (s.length < 24 || wordCount < 5) return true;
+  if (/\b(something|stuff|etc\.?|misc|various)\b/i.test(s)) return true;
+  if (/^(improve|enhance|polish|update|fix)\b/i.test(s) && wordCount < 8) return true;
+  // If it doesn't contain any concrete action verb, treat as vague.
+  if (!/(add|create|edit|update|delete|remove|export|import|sync|filter|search|sort|toggle|enable|disable|support|integrate|refactor|optimi[sz]e|validate|track|render|show|hide)\b/i.test(s)) {
+    return true;
+  }
+  return false;
+};
+
+const parseAtomicAcceptanceList = (input: string): string[] => {
+  const parsed = parseFeatureListReply(input)
+    .map(stripTrailingSentencePunctuation)
+    .filter(Boolean)
+    .filter(isAtomicFeatureStatement);
+  return Array.from(new Set(parsed));
 };
 
 const hasMeaningfulList = (value: string[] | undefined, min = 1): boolean => normalizeTextArray(value).length >= min;
@@ -2658,6 +2680,139 @@ export const createTools = (ctx: PluginContext) => {
         if (!feature) {
           return "Feature request is empty. Provide a short description.";
         }
+
+        const runState = await readRunState(repoRoot);
+        const activeInterview = runState.featureAddInterview?.active ? runState.featureAddInterview : null;
+        if (activeInterview) {
+          if (activeInterview.step === 1) {
+            const acceptance = parseAtomicAcceptanceList(feature);
+            if (acceptance.length < 2) {
+              const q = `For '${activeInterview.originalRequest}', list 2-5 concrete behaviors (one per line, action-first).`;
+              const next: FeatureAddInterviewState = {
+                ...activeInterview,
+                lastQuestion: q,
+              };
+              await writeRunState(repoRoot, { ...runState, featureAddInterview: next, updatedAt: nowIso() });
+              return [
+                "Feature interview (1/3)",
+                q,
+                "Reply with your answer in natural language.",
+              ].join("\n");
+            }
+            const q = "Any constraints or explicit non-goals for this feature? (Reply 'none' if nothing.)";
+            const next: FeatureAddInterviewState = {
+              ...activeInterview,
+              acceptance,
+              step: 2,
+              lastQuestion: q,
+            };
+            await writeRunState(repoRoot, { ...runState, featureAddInterview: next, updatedAt: nowIso() });
+            return [
+              "Feature interview (2/3)",
+              q,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
+
+          if (activeInterview.step === 2) {
+            const s = feature.trim();
+            const constraints = /^none$/i.test(s)
+              ? []
+              : parseFeatureListReply(s)
+                .map(stripTrailingSentencePunctuation)
+                .filter(Boolean);
+            const q = "Any UX notes or edge cases? (Where it appears, interactions, confirmations, empty states. Reply 'none' if nothing.)";
+            const next: FeatureAddInterviewState = {
+              ...activeInterview,
+              constraints,
+              step: 3,
+              lastQuestion: q,
+            };
+            await writeRunState(repoRoot, { ...runState, featureAddInterview: next, updatedAt: nowIso() });
+            return [
+              "Feature interview (3/3)",
+              q,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
+
+          if (activeInterview.step === 3) {
+            const uxNotes = /^none$/i.test(feature.trim()) ? "" : feature.trim();
+            const constraints = activeInterview.constraints ?? [];
+            const backlogId = nextBacklogId(prd);
+            const gates = prd.verificationPolicy?.globalGates?.length
+              ? prd.verificationPolicy.globalGates
+              : prd.qualityGates;
+            const startN = nextTaskOrdinal(prd.tasks ?? []);
+            let n = startN;
+
+            const acceptance = (activeInterview.acceptance ?? []).map(stripTrailingSentencePunctuation).filter(Boolean);
+            const taskAtoms = acceptance.length > 0 ? acceptance : decomposeFeatureRequestToTasks(activeInterview.originalRequest);
+            const newTasks = taskAtoms.map((item) => makeTask({
+              id: normalizeTaskId(n++),
+              title: `Implement: ${item}`,
+              doneWhen: gates,
+              labels: ["feature", "backlog"],
+              acceptance: [item],
+              ...(uxNotes ? { notes: [uxNotes] } : {}),
+            }));
+
+            const request = [
+              activeInterview.originalRequest,
+              acceptance.length > 0 ? `\nAcceptance:\n${acceptance.map((a) => `- ${a}`).join("\n")}` : "",
+              constraints.length > 0 ? `\nConstraints / non-goals:\n${constraints.map((c) => `- ${c}`).join("\n")}` : "",
+              uxNotes ? `\nUX notes:\n${uxNotes}` : "",
+            ]
+              .join("\n")
+              .trim();
+
+            prd = {
+              ...prd,
+              tasks: [...(prd.tasks ?? []), ...newTasks],
+              backlog: {
+                ...prd.backlog,
+                featureRequests: [
+                  ...prd.backlog.featureRequests,
+                  {
+                    id: backlogId,
+                    title: compactIdea(activeInterview.originalRequest),
+                    request,
+                    createdAt: nowIso(),
+                    status: "planned",
+                    taskIds: newTasks.map((t) => t.id),
+                  },
+                ],
+              },
+            };
+            await writePrdJson(repoRoot, prd);
+            await writeRunState(repoRoot, { ...runState, featureAddInterview: undefined, updatedAt: nowIso() });
+
+            return [
+              `Feature added: ${backlogId}`,
+              `New tasks: ${newTasks.length}`,
+              `Task IDs: ${newTasks.map((t) => t.id).join(", ")}`,
+              `Next: /mario-devx:run 1`,
+            ].join("\n");
+          }
+        }
+
+        if (isVagueFeatureRequest(feature)) {
+          const q = `Before I add tasks, clarify '${feature}': list 2-5 concrete behaviors (one per line, action-first).`;
+          const interview: FeatureAddInterviewState = {
+            active: true,
+            startedAt: nowIso(),
+            step: 1,
+            originalRequest: feature,
+            lastQuestion: q,
+          };
+          await writeRunState(repoRoot, { ...runState, featureAddInterview: interview, updatedAt: nowIso() });
+          return [
+            "Feature interview (1/3)",
+            q,
+            "Reply with your answer in natural language.",
+          ].join("\n");
+        }
+
         const backlogId = nextBacklogId(prd);
         const taskAtoms = decomposeFeatureRequestToTasks(feature);
         const gates = prd.verificationPolicy?.globalGates?.length
