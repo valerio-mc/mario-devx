@@ -70,6 +70,9 @@ The interviewer is intentionally strict and now captures deeper planning fields:
 
 Style references can be provided as URLs and/or screenshot paths in your answers.
 
+Example:
+- `Style references: https://linear.app, https://stripe.com, ./references/hero-layout.png`
+
 Task decomposition is unbounded: simple ideas may generate ~5 tasks, complex ideas can generate 30+ atomic tasks.
 You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
 
