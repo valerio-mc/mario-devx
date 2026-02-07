@@ -229,6 +229,25 @@ const looksTooBroadQuestion = (question: string): boolean => {
   return wordCount > 30 || clauseSignals >= 4 || hasListCue;
 };
 
+const isLikelyBooleanReply = (input: string): boolean => {
+  const s = input.trim().toLowerCase();
+  return ["y", "yes", "true", "1", "n", "no", "false", "0"].includes(s);
+};
+
+const parseBooleanReply = (input: string): boolean | null => {
+  const s = input.trim().toLowerCase();
+  if (["y", "yes", "true", "1"].includes(s)) return true;
+  if (["n", "no", "false", "0"].includes(s)) return false;
+  return null;
+};
+
+const sameQuestion = (a: string | null | undefined, b: string | null | undefined): boolean => {
+  if (!a || !b) {
+    return false;
+  }
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+};
+
 const isPrdComplete = (prd: PrdJson): boolean => {
   return (
     hasNonEmpty(prd.idea)
@@ -1331,6 +1350,60 @@ export const createTools = (ctx: PluginContext) => {
           ].join("\n");
         }
 
+        const missingBefore = firstMissingField(prd);
+        if (hasAnswer && missingBefore === "uiVerificationRequired") {
+          const boolReply = parseBooleanReply(rawInput);
+          if (typeof boolReply === "boolean") {
+            prd = {
+              ...prd,
+              uiVerificationRequired: boolReply,
+            };
+            const step = deriveWizardStep(prd);
+            const done = isPrdComplete(prd);
+            const nextQuestion = fallbackQuestion(prd);
+            prd = {
+              ...prd,
+              wizard: {
+                ...prd.wizard,
+                step,
+                totalSteps: WIZARD_TOTAL_STEPS,
+                status: done ? "completed" : "in_progress",
+                lastQuestionId: firstMissingField(prd),
+                answers: {
+                  ...prd.wizard.answers,
+                  [`turn-${Date.now()}`]: rawInput,
+                  [LAST_QUESTION_KEY]: nextQuestion,
+                },
+              },
+            };
+            if (done) {
+              prd = await seedTasksFromPrd(repoRoot, prd);
+              prd = {
+                ...prd,
+                wizard: {
+                  ...prd.wizard,
+                  status: "completed",
+                  step: WIZARD_TOTAL_STEPS,
+                  lastQuestionId: "done",
+                },
+              };
+              await writePrdJson(repoRoot, prd);
+              return [
+                "PRD wizard: completed.",
+                `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+                `Tasks: ${prd.tasks.length}`,
+                "Next: /mario-devx:run 1",
+              ].join("\n");
+            }
+            await writePrdJson(repoRoot, prd);
+            return [
+              `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+              nextQuestion,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
+        }
+
         const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const interviewInput = hasAnswer ? rawInput : "Start the interview and ask the first unanswered question.";
         const interviewResponse = await ctx.client.session.prompt({
@@ -1351,6 +1424,11 @@ export const createTools = (ctx: PluginContext) => {
         const done = isPrdComplete(prd);
         const modelQuestion = (question && question.trim()) || envelope?.next_question?.trim() || "";
         const nextQuestion = looksTooBroadQuestion(modelQuestion) ? fallbackQuestion(prd) : (modelQuestion || fallbackQuestion(prd));
+        const repeatedBooleanQuestion = hasAnswer
+          && isLikelyBooleanReply(rawInput)
+          && sameQuestion(cachedQuestion, nextQuestion)
+          && typeof prd.uiVerificationRequired === "boolean";
+        const finalQuestion = repeatedBooleanQuestion ? fallbackQuestion(prd) : nextQuestion;
 
         prd = {
           ...prd,
@@ -1363,7 +1441,7 @@ export const createTools = (ctx: PluginContext) => {
             answers: {
               ...prd.wizard.answers,
               ...(hasAnswer ? { [`turn-${Date.now()}`]: rawInput } : {}),
-              [LAST_QUESTION_KEY]: nextQuestion,
+              [LAST_QUESTION_KEY]: finalQuestion,
             },
           },
         };
@@ -1391,7 +1469,7 @@ export const createTools = (ctx: PluginContext) => {
         await writePrdJson(repoRoot, prd);
         return [
           `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
-          nextQuestion,
+          finalQuestion,
           "Reply with your answer in natural language.",
         ].join("\n");
       },
