@@ -227,6 +227,29 @@ When UI verify is enabled and prerequisites are missing, mario-devx auto-attempt
 - `agent-browser install`
 - `npx skills add vercel-labs/agent-browser`
 
+## Backpressure
+
+Mario DevX uses a heartbeat-based backpressure system to ensure safe, interruptible task execution:
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Gates     │───▶│     UI      │───▶│   Verifier  │───▶│   Result    │
+│ (npm test)  │    │(agent-browser)│   │   (LLM)     │    │(PASS/FAIL)  │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+       │                  │                  │
+       ▼                  ▼                  ▼
+  heartbeat ──────▶ heartbeat ──────▶ heartbeat ──────▶ update run.lock
+```
+
+**Execution flow with backpressure:**
+
+1. **Deterministic Gates** - Runs quality commands (test, lint, typecheck)
+2. **UI Verification** - Uses agent-browser (Playwright) to verify frontend  
+3. **LLM Verifier** - Final judgment based on all evidence
+4. **Heartbeat** - Updates run.lock after each phase; failure stops execution
+
+If any phase fails or the heartbeat cannot update the lock file, execution stops immediately with actionable feedback.
+
 ## Verifier output
 
 The judge output is stored on the task in `.mario/prd.json` under `tasks[].lastAttempt.judge`.
