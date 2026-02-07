@@ -77,16 +77,9 @@ Mario DevX forces the only kind of memory that actually helps:
 mkdir my-project && cd my-project && git init
 ```
 
-2) **Copy the plugin into your project**
+2) **Install the plugin files**
 
-```bash
-mkdir -p .opencode/plugins
-tmpdir="$(mktemp -d)" && \
-  curl -fsSL https://github.com/valerio-mc/mario-devx/archive/refs/heads/main.tar.gz | tar -xz -C "$tmpdir" && \
-  cp -R "$tmpdir"/mario-devx-main/.opencode/plugins/mario-devx ./.opencode/plugins/ && \
-  cp "$tmpdir"/mario-devx-main/.opencode/plugins/mario-devx.ts ./.opencode/plugins/ && \
-  cp "$tmpdir"/mario-devx-main/.opencode/package.json ./.opencode/
-```
+Use the same install command shown in **30-second quickstart**.
 
 3) **Start OpenCode**
 
