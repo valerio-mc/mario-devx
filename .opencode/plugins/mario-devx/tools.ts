@@ -316,88 +316,131 @@ type InterviewEnvelope = {
   next_question?: string;
 };
 
-const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson> => {
+const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: PluginContext): Promise<PrdJson> => {
   if (Array.isArray(prd.tasks) && prd.tasks.length > 0) {
     return prd;
   }
-  const bootstrapPlan = await scaffoldPlanFromPrd(repoRoot, prd);
-  const doneWhen = prd.qualityGates ?? [];
-
-  const toAtomicFeatureTasks = (feature: string): string[] => {
-    const compact = feature.replace(/\s+/g, " ").trim();
-    if (!compact) return [];
-    return [compact];
-  };
-
-  const tasks: PrdTask[] = [];
-  let n = 1;
-  const scaffoldId = normalizeTaskId(n++);
-  tasks.push(
-    makeTask({
-      id: scaffoldId,
-      title: prd.idea.trim() ? `Scaffold project baseline: ${compactIdea(prd.idea)}` : "Scaffold project baseline",
-      doneWhen: bootstrapPlan.doneWhen,
-      notes: bootstrapPlan.notes,
-      labels: ["scaffold", "foundation"],
-      acceptance: ["Project skeleton exists and can be iterated on safely."],
-    }),
-  );
-  if (doneWhen.length > 0) {
-    const qualitySetupId = normalizeTaskId(n++);
-    tasks.push(
-      makeTask({
-        id: qualitySetupId,
-        title: "Setup quality pipeline so configured gates are runnable",
-        doneWhen,
-        dependsOn: [scaffoldId],
-        labels: ["quality", "foundation"],
-        acceptance: ["All declared quality gates execute successfully in this repository."],
-        notes: [
-          "Implement project-specific verification setup so declared quality gates run successfully.",
-        ],
-      }),
-    );
-  }
-  if (prd.docs.readmeRequired) {
-    const sectionChecks = (prd.docs.readmeSections ?? [])
-      .map((section) => section.trim())
-      .filter(Boolean)
-      .map((section) => readmeSectionGate(section, escapeDoubleQuoted));
-    tasks.push(
-      makeTask({
-        id: normalizeTaskId(n++),
-        title: "Initialize and maintain human-readable README.md",
-        doneWhen: ["test -f README.md", ...sectionChecks],
-        dependsOn: [scaffoldId],
-        labels: ["docs"],
-        acceptance: [
-          `README.md includes: ${(prd.docs.readmeSections ?? []).join(", ")}`,
-        ],
-      }),
-    );
-  }
-  for (const feature of normalizeMustHaveFeatureAtoms(prd.product.mustHaveFeatures)) {
-    const atoms = toAtomicFeatureTasks(feature);
-    for (const atom of atoms) {
-    tasks.push(
-      makeTask({
-        id: normalizeTaskId(n++),
-          title: `Implement: ${atom}`,
-        doneWhen,
-          labels: ["feature"],
-          acceptance: [atom],
-      }),
-    );
+  /**
+   * LLM-driven task generation from PRD
+   * 
+   * ARCHITECTURE: Instead of hardcoded task templates (always scaffold → quality → features),
+   * we ask the LLM to analyze the PRD and generate an optimal task plan.
+   * 
+   * Benefits:
+   * - Tasks tailored to specific project needs
+   * - Intelligent dependency ordering
+   * - Appropriate task granularity
+   * - Considers platform, framework, and complexity
+   */
+  const ws = await ensureWorkSession(pluginCtx, repoRoot, { agent: undefined });
+  const taskGenPrompt = [
+    "You are mario-devx's task planner.",
+    "Generate an optimal task breakdown from this PRD.",
+    "",
+    "PRD:",
+    JSON.stringify(prd, null, 2),
+    "",
+    "Instructions:",
+    "1. Analyze the PRD to understand project type, platform, and requirements",
+    "2. Generate 5-15 implementation tasks",
+    "3. Include foundation tasks (scaffold, quality setup) if needed",
+    "4. Break must-have features into implementable tasks",
+    "5. Set appropriate dependencies between tasks",
+    "6. Tasks should be independently verifiable",
+    "",
+    "Task schema:",
+    '{"id": "T-XXXX", "title": "string", "doneWhen": ["commands"], "labels": ["scaffold"|"quality"|"docs"|"feature"], "acceptance": ["criteria"], "dependsOn": ["T-XXXX"], "notes": ["strings"]}',
+    "",
+    "Return format:",
+    "<TASK_JSON>",
+    '{"tasks": [...]}',
+    "</TASK_JSON>",
+  ].join("\n");
+  
+  console.log("[mario-devx] Generating tasks from PRD via LLM...");
+  const taskResponse = await pluginCtx.client.session.prompt({
+    path: { id: ws.sessionId },
+    body: { parts: [{ type: "text", text: taskGenPrompt }] },
+  });
+  
+  const taskText = extractTextFromPromptResponse(taskResponse);
+  const taskMatch = taskText.match(/<TASK_JSON>([\s\S]*?)<\/TASK_JSON>/i);
+  
+  let tasks: PrdTask[];
+  if (taskMatch) {
+    try {
+      const parsed = JSON.parse(taskMatch[1].trim());
+      tasks = parsed.tasks?.map((t: any, idx: number) => makeTask({
+        id: t.id || normalizeTaskId(idx + 1),
+        title: t.title,
+        doneWhen: t.doneWhen || prd.qualityGates || [],
+        labels: t.labels || ["feature"],
+        acceptance: t.acceptance || [t.title],
+        dependsOn: t.dependsOn,
+        notes: t.notes,
+      })) || [];
+      console.log(`[mario-devx] LLM generated ${tasks.length} tasks`);
+    } catch (err) {
+      console.error("[mario-devx] Failed to parse LLM task generation, using fallback:", err);
+      tasks = generateFallbackTasks(prd);
     }
+  } else {
+    console.error("[mario-devx] No <TASK_JSON> found in LLM response, using fallback");
+    tasks = generateFallbackTasks(prd);
   }
+  
   return {
     ...prd,
     tasks,
     verificationPolicy: {
       ...prd.verificationPolicy,
-      globalGates: doneWhen,
+      globalGates: prd.qualityGates || [],
     },
   };
+};
+
+/**
+ * Fallback task generation when LLM fails
+ * Simple linear progression: scaffold → quality → features
+ */
+const generateFallbackTasks = (prd: PrdJson): PrdTask[] => {
+  const tasks: PrdTask[] = [];
+  let n = 1;
+  const doneWhen = prd.qualityGates || [];
+  
+  // T-0001: Scaffold
+  tasks.push(makeTask({
+    id: normalizeTaskId(n++),
+    title: `Scaffold project baseline: ${compactIdea(prd.idea || "project")}`,
+    doneWhen: [],
+    labels: ["scaffold", "foundation"],
+    acceptance: ["Project skeleton exists"],
+  }));
+  
+  // T-0002: Quality (if gates defined)
+  if (doneWhen.length > 0) {
+    tasks.push(makeTask({
+      id: normalizeTaskId(n++),
+      title: "Setup quality pipeline",
+      doneWhen,
+      dependsOn: ["T-0001"],
+      labels: ["quality", "foundation"],
+      acceptance: ["All quality gates pass"],
+    }));
+  }
+  
+  // Feature tasks
+  for (const feature of prd.product.mustHaveFeatures || []) {
+    tasks.push(makeTask({
+      id: normalizeTaskId(n++),
+      title: `Implement: ${feature}`,
+      doneWhen,
+      labels: ["feature"],
+      acceptance: [feature],
+    }));
+  }
+  
+  return tasks;
 };
 
 const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
@@ -801,7 +844,7 @@ export const createTools = (ctx: PluginContext) => {
         };
 
         if (done) {
-          prd = await seedTasksFromPrd(repoRoot, prd);
+          prd = await seedTasksFromPrd(repoRoot, prd, ctx);
           prd = {
             ...prd,
             wizard: {
