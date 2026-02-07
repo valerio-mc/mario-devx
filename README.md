@@ -94,6 +94,7 @@ opencode .
 ```
 
 Answer the PRD interview questions in your current session using natural language.
+For key fields, prompts now include fixed options (for example platform/language/UI stack) to reduce ambiguity.
 The interviewer is intentionally strict and now captures deeper planning fields:
 - target users/problems + constraints + measurable outcomes
 - runnable quality gates (project-defined backpressure)
@@ -107,8 +108,9 @@ Example:
 - `Style references: https://linear.app, https://stripe.com, ./references/hero-layout.png`
 
 Task decomposition is unbounded: simple ideas may generate ~5 tasks, complex ideas can generate 30+ atomic tasks.
-For `mustHaveFeatures`, the interviewer now requires atomic action statements (one behavior per line) and will keep asking until they are concrete.
-Answer each interview prompt directly in natural language.
+For `mustHaveFeatures`, the interviewer requires atomic action statements (one behavior per line).
+Under the hood, mario-devx now applies a deterministic interview update engine so parseable answers advance immediately instead of repeating the same question loop.
+Answer each prompt directly; picking one of the shown options for enum/yes-no questions is the most reliable path.
 Mario DevX only records what you explicitly provide in your PRD; it does not add default features on its own.
 
 5) **Run the loop**
