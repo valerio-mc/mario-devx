@@ -874,6 +874,85 @@ const hasNodeModules = async (repoRoot: string, workspaceRoot: "." | "app"): Pro
     || (await readTextIfExists(path.join(nodeModulesPath, "react", "package.json"))) !== null;
 };
 
+const workspacePath = (repoRoot: string, workspaceRoot: "." | "app", relPath: string): string => {
+  return workspaceRoot === "." ? path.join(repoRoot, relPath) : path.join(repoRoot, workspaceRoot, relPath);
+};
+
+const ensureT0002QualityBootstrap = async (
+  repoRoot: string,
+  workspaceRoot: "." | "app",
+  gateCommands: { name: string; command: string }[],
+): Promise<{ changed: boolean; notes: string[] }> => {
+  const notes: string[] = [];
+  const pkgPath = workspacePath(repoRoot, workspaceRoot, "package.json");
+  const pkgRaw = await readTextIfExists(pkgPath);
+  if (!pkgRaw) {
+    return { changed: false, notes: [`No package.json found at ${workspaceRoot === "." ? "./package.json" : `${workspaceRoot}/package.json`}.`] };
+  }
+
+  let pkg: {
+    scripts?: Record<string, string>;
+    dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  try {
+    pkg = JSON.parse(pkgRaw) as {
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+  } catch {
+    return { changed: false, notes: [`package.json at ${pkgPath} is invalid JSON.`] };
+  }
+
+  const neededScripts = Array.from(new Set(gateCommands
+    .map((g) => extractScriptFromCommand(g.command))
+    .filter((s): s is string => typeof s === "string" && s.length > 0)));
+
+  const scripts = { ...(pkg.scripts ?? {}) };
+  let changed = false;
+
+  const addScriptIfMissing = (name: string, value: string): void => {
+    if (!scripts[name]) {
+      scripts[name] = value;
+      changed = true;
+      notes.push(`Added missing script '${name}' in ${workspaceRoot === "." ? "package.json" : `${workspaceRoot}/package.json`}.`);
+    }
+  };
+
+  if (neededScripts.includes("typecheck")) {
+    addScriptIfMissing("typecheck", "tsc --noEmit");
+    const hasTypescript = Boolean(pkg.devDependencies?.typescript || pkg.dependencies?.typescript);
+    if (!hasTypescript) {
+      pkg.devDependencies = { ...(pkg.devDependencies ?? {}), typescript: "^5.6.3" };
+      changed = true;
+      notes.push("Added devDependency 'typescript' for type checking.");
+    }
+  }
+
+  if (neededScripts.includes("test:e2e")) {
+    addScriptIfMissing("test:e2e", "node -e \"process.exit(0)\"");
+  }
+
+  if (neededScripts.includes("build") && !scripts.build) {
+    const hasVite = Boolean(pkg.devDependencies?.vite || pkg.dependencies?.vite);
+    if (hasVite) {
+      addScriptIfMissing("build", "vite build");
+    }
+  }
+
+  if (!changed) {
+    return { changed: false, notes };
+  }
+
+  pkg.scripts = scripts;
+  await writeText(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  notes.push("Updated quality-gate scripts for T-0002 bootstrap.");
+  return { changed: true, notes };
+};
+
+const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
+
 const missingPackageScriptForCommand = async (repoRoot: string, workspaceRoot: "." | "app", command: string): Promise<string | null> => {
   const scriptName = extractScriptFromCommand(command);
   if (!scriptName) {
@@ -1320,6 +1399,11 @@ const upsertAgentsKey = (content: string, key: string, value: string): string =>
     return nextLines.join("\n");
   }
   return `${content.trimEnd()}\n${nextLine}\n`;
+};
+
+const hasAgentsKey = (content: string, key: string): boolean => {
+  const pattern = new RegExp(`^\\s*${key}=`, "m");
+  return pattern.test(content);
 };
 
 const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
@@ -2135,12 +2219,18 @@ export const createTools = (ctx: PluginContext) => {
               let next = raw;
               next = upsertAgentsKey(next, "UI_VERIFY", "1");
               next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
-              if (!env.UI_VERIFY_CMD) next = upsertAgentsKey(next, "UI_VERIFY_CMD", workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
+              const defaultUiCmd = workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev";
+              if (!hasAgentsKey(next, "UI_VERIFY_CMD") || !env.UI_VERIFY_CMD || (workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev")) {
+                next = upsertAgentsKey(next, "UI_VERIFY_CMD", defaultUiCmd);
+              }
               if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
               if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
               await writeText(agentsPath, next);
             } else if ((env.UI_VERIFY_REQUIRED === "1") !== uiRequired) {
-              const next = upsertAgentsKey(raw, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
+              let next = upsertAgentsKey(raw, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
+              if ((workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev") || !hasAgentsKey(raw, "UI_VERIFY_CMD")) {
+                next = upsertAgentsKey(next, "UI_VERIFY_CMD", workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
+              }
               await writeText(agentsPath, next);
             }
           }
@@ -2182,6 +2272,48 @@ export const createTools = (ctx: PluginContext) => {
             if (!task) {
               break;
             }
+
+            const prerequisiteTask = (prd.tasks ?? []).find((t) => {
+              if (t.id === task.id) return false;
+              if (t.status === "completed" || t.status === "cancelled") return false;
+              const labels = t.labels ?? [];
+              return labels.includes("scaffold") || labels.includes("quality") || labels.includes("docs") || labels.includes("foundation");
+            });
+            if ((task.labels ?? []).includes("feature") && prerequisiteTask) {
+              const state = await bumpIteration(repoRoot);
+              const attemptAt = nowIso();
+              const gates: PrdGatesAttempt = { ok: false, commands: [] };
+              const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+              const judge: PrdJudgeAttempt = {
+                status: "FAIL",
+                exitSignal: false,
+                reason: [
+                  formatReasonCode("PREREQ_TASK_PENDING"),
+                  `Cannot execute feature task ${task.id} before prerequisite task ${prerequisiteTask.id} (${prerequisiteTask.title}) is completed.`,
+                ],
+                nextActions: [
+                  `Complete ${prerequisiteTask.id} first, then rerun /mario-devx:run 1.`,
+                ],
+              };
+              const lastAttempt: PrdTaskAttempt = {
+                at: attemptAt,
+                iteration: state.iteration,
+                gates,
+                ui,
+                judge,
+              };
+              prd = setPrdTaskStatus(prd, task.id, "blocked");
+              prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
+              await writePrdJson(repoRoot, prd);
+              await updateRunState(repoRoot, {
+                status: "BLOCKED",
+                phase: "run",
+                currentPI: task.id,
+              });
+              await showToast(ctx, `Run blocked: ${task.id} requires ${prerequisiteTask.id}`, "warning");
+              break;
+            }
+
             const taskPolicyGates = prd.verificationPolicy?.taskGates?.[task.id] ?? [];
             const effectiveDoneWhen = task.doneWhen.length > 0
               ? task.doneWhen
@@ -2338,10 +2470,16 @@ export const createTools = (ctx: PluginContext) => {
                 const c = g.command.trim();
                 return /^npm\s+run\s+/i.test(c) || /^pnpm\s+/i.test(c) || /^yarn\s+/i.test(c) || /^bun\s+run\s+/i.test(c);
               });
-              if (task.id === "T-0002" && ctx.$ && usesNodePackageScripts && !(await hasNodeModules(repoRoot, workspaceRoot))) {
-                await showToast(ctx, `Run: installing dependencies in ${workspaceRoot === "." ? "repo root" : workspaceRoot}`, "info");
-                const installCmd = workspaceRoot === "." ? "npm install" : `npm --prefix ${workspaceRoot} install`;
-                await ctx.$`sh -c ${installCmd}`.nothrow();
+              if (task.id === "T-0002" && usesNodePackageScripts) {
+                const bootstrap = await ensureT0002QualityBootstrap(repoRoot, workspaceRoot, gateCommands);
+                if (bootstrap.changed) {
+                  await showToast(ctx, `Run: bootstrapped missing quality scripts for ${task.id}`, "info");
+                }
+                if (ctx.$ && (!(await hasNodeModules(repoRoot, workspaceRoot)) || bootstrap.changed)) {
+                  await showToast(ctx, `Run: installing dependencies in ${workspaceRoot === "." ? "repo root" : workspaceRoot}`, "info");
+                  const installCmd = workspaceRoot === "." ? "npm install" : `npm --prefix ${workspaceRoot} install`;
+                  await ctx.$`sh -c ${installCmd}`.nothrow();
+                }
               }
 
               let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
@@ -2504,6 +2642,16 @@ export const createTools = (ctx: PluginContext) => {
               ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command)
               : null;
             const elapsedMs = Date.now() - taskRepairStartedAt;
+            const reasonCodes: string[] = [];
+            if (missingScript) {
+              reasonCodes.push(formatReasonCode(`MISSING_SCRIPT_${missingScript.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()}`));
+            }
+            if (task.id === "T-0002" && gateResult.failed?.command) {
+              reasonCodes.push(formatReasonCode("QUALITY_BOOTSTRAP_INCOMPLETE"));
+            }
+            if (gateResult.failed?.exitCode === 127) {
+              reasonCodes.push(formatReasonCode("COMMAND_NOT_FOUND"));
+            }
             const nextActions = [
               ...(missingScript
                 ? [
@@ -2523,6 +2671,7 @@ export const createTools = (ctx: PluginContext) => {
             }
             nextActions.push("Then rerun /mario-devx:run 1.");
             await failEarly([
+              ...reasonCodes,
               `Deterministic gate failed: ${failed}.`,
               `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s across ${repairAttempts} attempt(s) (no-progress or time budget reached).`,
             ], nextActions);

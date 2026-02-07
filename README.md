@@ -178,6 +178,7 @@ Scaffold nuance:
 - For web/TypeScript ideas in non-empty repos, the default scaffold may be created in `app/` (not root) to avoid clobbering existing files.
 - Scaffold completion accepts either `package.json` at root or `app/package.json`.
 - When scaffold lands in `app/`, mario-devx runs deterministic quality gates against that workspace and defaults UI dev command to `npm --prefix app run dev`.
+- `T-0002` now auto-bootstraps missing baseline scripts (for example `typecheck`, `test:e2e`) in the active workspace before retrying gates.
 
 You can add features at any time:
 
@@ -256,7 +257,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 
 - Quality Gates failing instantly: verify `.mario/prd.json` has runnable commands under `qualityGates`.
 - Scaffold keeps blocking on `T-0001`: inspect `tasks[].lastAttempt.judge.nextActions` in `.mario/prd.json`; follow the suggested scaffold command (root or `app/`), then rerun `/mario-devx:run 1`.
-- `T-0002` blocked after `app/` scaffold: ensure dependencies are installed in `app` (`npm --prefix app install`) and rerun `/mario-devx:run 1`.
+- `T-0002` still blocked: inspect `tasks[].lastAttempt.judge.reason` for `ReasonCode:*`; follow `nextActions` (they now point to the correct workspace manifest).
 - UI verify doesn't run: check install output for `agent-browser`; if auto-install failed, rerun the install commands manually and verify `.mario/AGENTS.md` has `UI_VERIFY=1`.
 - If `/run` shows AGENTS parse warnings: fix malformed lines in `.mario/AGENTS.md` (must be `KEY=VALUE`; comments must start with `#`).
 - Still confused: run `/mario-devx:doctor`.
