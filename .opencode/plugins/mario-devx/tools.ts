@@ -290,13 +290,17 @@ const extractStyleReferencesFromText = (input: string): string[] => {
 const stripTrailingSentencePunctuation = (value: string): string => value.replace(/[.?!]+$/g, "").trim();
 
 const isAtomicFeatureStatement = (value: string): boolean => {
-  const feature = stripTrailingSentencePunctuation(value).trim();
+  const feature = stripTrailingSentencePunctuation(value)
+    .replace(/^user\s+/i, "")
+    .trim();
   if (!feature) return false;
   if (/^(and|or|then)\b/i.test(feature)) return false;
   if (/^(active|completed|overdue|todo|done|high|low|med)$/i.test(feature)) return false;
   const wordCount = feature.split(/\s+/).filter(Boolean).length;
-  if (wordCount < 3) return false;
-  return /(create|edit|update|delete|mark|toggle|set|clear|filter|search|sort|persist|store|restore|show|hide|add|remove|snooze|schedule|confirm|open|close|validate|support|allow|enable|disable|track|view)\b/i.test(feature);
+  const hasActionVerb = /(create|edit|update|delete|mark|toggle|set|clear|filter|search|sort|persist|store|restore|show|hide|add|remove|snooze|schedule|confirm|open|close|validate|support|allow|enable|disable|track|view|answer|enter|generate|copy|pick|choose|select|share|save|submit|regenerate|import|export|upload|download|start|finish)\b/i.test(feature);
+  if (wordCount < 2) return false;
+  if (wordCount === 2 && !hasActionVerb) return false;
+  return hasActionVerb;
 };
 
 const hasAtomicFeatures = (value: string[] | undefined, min = MIN_FEATURES): boolean => {
@@ -370,76 +374,93 @@ const parseBooleanReply = (input: string): boolean | null => {
 };
 
 const parseFeatureListReply = (input: string): string[] => {
-  const normalized = input.replace(/\r\n?/g, "\n").trim();
+  const normalized = input
+    .replace(/\r\n?/g, "\n")
+    .replace(/\\n/g, "\n")
+    .trim();
   if (!normalized) {
     return [];
   }
 
   const clean = (item: string): string => item
     .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "")
+    .replace(/^user\s+/i, "")
     .replace(/\s+/g, " ")
     .trim();
+
+  const uniq = (items: string[]): string[] => Array.from(new Set(items));
+  const asAtomicIfEnough = (items: string[]): string[] | null => {
+    const normalizedItems = items.map(clean).map(stripTrailingSentencePunctuation).filter(Boolean);
+    const atomic = uniq(normalizedItems.filter(isAtomicFeatureStatement));
+    return atomic.length >= MIN_FEATURES ? atomic : null;
+  };
 
   const inlineNumbered = normalized.match(/\d+[.)]\s+/g);
   if (inlineNumbered && inlineNumbered.length >= MIN_FEATURES) {
     const marked = normalized.replace(/(?:^|\s)(\d+[.)])\s+/g, "\n$1 ").trim();
-    const items = marked
-      .split(/\n+/)
-      .map(clean)
-      .map(stripTrailingSentencePunctuation)
-      .filter(Boolean);
-    if (items.every(isAtomicFeatureStatement)) {
-      return Array.from(new Set(items));
+    const items = marked.split(/\n+/);
+    const atomic = asAtomicIfEnough(items);
+    if (atomic) {
+      return atomic;
     }
   }
 
   const lines = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const plainLineItems = lines.map(clean).map(stripTrailingSentencePunctuation).filter(Boolean);
-  if (plainLineItems.length >= MIN_FEATURES && plainLineItems.every(isAtomicFeatureStatement)) {
-    return Array.from(new Set(plainLineItems));
+  const plainLineItems = asAtomicIfEnough(lines);
+  if (plainLineItems) {
+    return plainLineItems;
   }
 
   const bulletLines = lines.filter((line) => /^(?:[-*•]|\d+[.)])\s+/.test(line));
   if (bulletLines.length >= MIN_FEATURES) {
-    const items = bulletLines.map(clean).map(stripTrailingSentencePunctuation).filter(Boolean);
-    if (items.every(isAtomicFeatureStatement)) {
-      return Array.from(new Set(items));
+    const atomic = asAtomicIfEnough(bulletLines);
+    if (atomic) {
+      return atomic;
     }
   }
 
-  const sentenceItems = normalized
+  const sentenceItems = asAtomicIfEnough(normalized
     .split(/(?<=[.?!])\s+(?=[A-Z])/)
-    .map(clean)
-    .map(stripTrailingSentencePunctuation)
-    .filter(Boolean);
-  if (sentenceItems.length >= MIN_FEATURES && sentenceItems.every(isAtomicFeatureStatement)) {
-    return Array.from(new Set(sentenceItems));
+  );
+  if (sentenceItems) {
+    return sentenceItems;
   }
 
-  const semicolonParts = normalized.split(/\s*;\s*/).map(clean).filter(Boolean);
-  if (semicolonParts.length >= MIN_FEATURES && semicolonParts.every(isAtomicFeatureStatement)) {
-    return Array.from(new Set(semicolonParts.map(stripTrailingSentencePunctuation)));
+  const semicolonParts = asAtomicIfEnough(normalized.split(/\s*;\s*/));
+  if (semicolonParts) {
+    return semicolonParts;
   }
 
-  if (!/[.?!]/.test(normalized) && normalized.includes(",")) {
-    const commaParts = normalized.split(",").map(clean).filter(Boolean);
-    if (commaParts.length >= MIN_FEATURES && commaParts.every(isAtomicFeatureStatement)) {
-      return Array.from(new Set(commaParts.map(stripTrailingSentencePunctuation)));
-    }
+  const commaParts = asAtomicIfEnough(normalized.split(","));
+  if (commaParts) {
+    return commaParts;
+  }
+
+  const pipeParts = asAtomicIfEnough(normalized.split(/\s*\|\s*/));
+  if (pipeParts) {
+    return pipeParts;
   }
 
   if (!/[.?!,;]/.test(normalized)) {
-    const andParts = normalized.split(/\s+and\s+/i).map(clean).filter(Boolean);
-    if (andParts.length >= MIN_FEATURES && andParts.every(isAtomicFeatureStatement)) {
-      return Array.from(new Set(andParts.map(stripTrailingSentencePunctuation)));
+    const andParts = asAtomicIfEnough(normalized.split(/\s+and\s+/i));
+    if (andParts) {
+      return andParts;
     }
   }
 
-  return Array.from(
-    new Set(
-      [stripTrailingSentencePunctuation(clean(normalized))].filter(Boolean),
-    ),
+  const fallback = uniq(
+    normalized
+      .split(/[\n,;|]+/)
+      .map(clean)
+      .map(stripTrailingSentencePunctuation)
+      .filter(Boolean)
+      .filter(isAtomicFeatureStatement),
   );
+  if (fallback.length >= MIN_FEATURES) {
+    return fallback;
+  }
+
+  return uniq([stripTrailingSentencePunctuation(clean(normalized))].filter(Boolean));
 };
 
 const sameQuestion = (a: string | null | undefined, b: string | null | undefined): boolean => {
