@@ -203,52 +203,75 @@ In this repo:
 .opencode/plugins/mario-devx/   # OpenCode plugin source + assets
 ```
 
-## Backpressure (definition of done)
+## Backpressure (Definition of Done)
 
-- Source of truth: `qualityGates` in `.mario/prd.json`.
+Mario DevX uses a **three-layer verification pipeline** with heartbeat-based backpressure to ensure every task is properly validated before completion.
 
-If you leave `qualityGates` empty, `/mario-devx:run` will refuse to run.
+### Source of Truth
 
-### UI verification (frontends)
+- **Quality Gates**: Defined in `qualityGates` array in `.mario/prd.json`
+- **UI Verification**: Enabled when `frontend: true` (sets `UI_VERIFY=1`)
+- **Run State**: Tracked in `.mario/state/run.lock` with continuous heartbeats
 
-If `.mario/prd.json` has `frontend: true`, mario-devx asks during PRD interview whether UI verification should be required.
+*Note: If `qualityGates` is empty, `/mario-devx:run` will refuse to run.*
 
-When enabled, mario-devx sets:
-- `UI_VERIFY=1`
-- `UI_VERIFY_REQUIRED=1` or `0` (from PRD answer)
-
-How it works:
-- Starts your dev server (`UI_VERIFY_CMD`) and drives a real browser at `UI_VERIFY_URL` using Vercel's `agent-browser` (Playwright-based).
-- Stores the latest UI result on the task under `.mario/prd.json` (`tasks[].lastAttempt.ui`).
-
-If prerequisites are missing and UI verify is enabled, mario-devx auto-attempts install first.
-When UI verify is enabled and prerequisites are missing, mario-devx auto-attempts:
-- `npm install -g agent-browser`
-- `agent-browser install`
-- `npx skills add vercel-labs/agent-browser`
-
-## Backpressure
-
-Mario DevX uses a heartbeat-based backpressure system to ensure safe, interruptible task execution:
+### Verification Pipeline
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   Gates     │───▶│     UI      │───▶│   Verifier  │───▶│   Result    │
-│ (npm test)  │    │(agent-browser)│   │   (LLM)     │    │(PASS/FAIL)  │
-└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
-       │                  │                  │
-       ▼                  ▼                  ▼
-  heartbeat ──────▶ heartbeat ──────▶ heartbeat ──────▶ update run.lock
+  PHASE 1              PHASE 2              PHASE 3             RESULT
+  ┌─────────┐          ┌─────────┐          ┌─────────┐        ┌─────────┐
+  │  Gates  │          │   UI    │          │ Verifier│        │  Task   │
+  │(determ- │    ▶     │(browser │    ▶     │  (LLM)  │   ▶    │ Status  │
+  │ inistic)│          │  based) │          │         │        │         │
+  └────┬────┘          └────┬────┘          └────┬────┘        └─────────┘
+       │                    │                    │
+       ▼                    ▼                    ▼
+   heartbeat           heartbeat           heartbeat
+       │                    │                    │
+       └────────────────────┴────────────────────┘
+                          │
+                    run.lock updated
 ```
 
-**Execution flow with backpressure:**
+**Phase Details:**
 
-1. **Deterministic Gates** - Runs quality commands (test, lint, typecheck)
-2. **UI Verification** - Uses agent-browser (Playwright) to verify frontend  
-3. **LLM Verifier** - Final judgment based on all evidence
-4. **Heartbeat** - Updates run.lock after each phase; failure stops execution
+| Phase | What It Does | Must Pass? |
+|-------|--------------|------------|
+| **1. Deterministic Gates** | Runs quality commands (test, lint, typecheck) | ✅ Always required |
+| **2. UI Verification** | Uses `agent-browser` (Playwright) to verify frontend | ⚠️ Required if `UI_VERIFY_REQUIRED=1` |
+| **3. LLM Verifier** | Final judgment based on all collected evidence | ✅ Always required |
+| **Heartbeat** | Updates `run.lock` timestamp after each phase | ✅ Failure stops execution |
 
-If any phase fails or the heartbeat cannot update the lock file, execution stops immediately with actionable feedback.
+### UI Verification (Frontends)
+
+When `frontend: true` in your PRD, mario-devx configures:
+- `UI_VERIFY=1` - Enable UI verification
+- `UI_VERIFY_REQUIRED=1|0` - Required or best-effort (from PRD interview)
+- `UI_VERIFY_CMD` - Command to start dev server (e.g., `npm run dev`)
+- `UI_VERIFY_URL` - URL to test (e.g., `http://localhost:3000`)
+
+**Auto-install prerequisites:**
+```bash
+npm install -g agent-browser
+agent-browser install
+npx skills add vercel-labs/agent-browser
+```
+
+**What happens:**
+1. Starts your dev server (`UI_VERIFY_CMD`)
+2. Drives a real browser at `UI_VERIFY_URL` using Vercel's `agent-browser` (Playwright-based)
+3. Captures snapshot, console logs, and errors
+4. Stores result in `.mario/prd.json` under `tasks[].lastAttempt.ui`
+
+### Backpressure Mechanism
+
+The heartbeat system ensures safe, interruptible execution:
+
+- **Before each phase**: Check `run.lock` exists and is valid
+- **After each phase**: Update `run.lock` with new heartbeat timestamp  
+- **On failure**: Stop execution immediately, mark task as `blocked`
+
+*If the heartbeat cannot update the lock file (disk full, permissions, etc.), execution stops with actionable error.*
 
 ## Verifier output
 
