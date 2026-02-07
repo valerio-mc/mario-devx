@@ -34,18 +34,12 @@ import {
   deriveWizardStep,
   escapeDoubleQuoted,
   extractStyleReferencesFromText,
-  fallbackQuestion,
-  firstMissingField,
   hasMeaningfulList,
   hasNonEmpty,
-  isLikelyBooleanReply,
   isPrdComplete,
-  looksLikeUiChoiceArtifact,
-  looksTooBroadQuestion,
   mergeStyleReferences,
   normalizeStyleReferences,
   normalizeTextArray,
-  sameQuestion,
 } from "./interview";
 import {
   decomposeFeatureRequestToTasks,
@@ -397,120 +391,62 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
 const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
 
 const interviewPrompt = (prd: PrdJson, input: string): string => {
-  const missingField = firstMissingField(prd);
-  const readiness = {
-    idea: hasNonEmpty(prd.idea),
-    platform: prd.platform !== null,
-    frontend: typeof prd.frontend === "boolean",
-    uiVerificationRequired: prd.frontend === false || typeof prd.uiVerificationRequired === "boolean",
-    uiDesignSystem: prd.frontend === false || prd.ui.designSystem !== null,
-    uiVisualDirection: prd.frontend === false || hasNonEmpty(prd.ui.visualDirection),
-    uiUxRequirements: prd.frontend === false || hasMeaningfulList(prd.ui.uxRequirements),
-    docsReadmeRequired: typeof prd.docs.readmeRequired === "boolean",
-    docsReadmeSections: prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections),
-    language: prd.language !== null,
-    framework: hasNonEmpty(prd.framework),
-    targetUsers: hasMeaningfulList(prd.product.targetUsers),
-    userProblems: hasMeaningfulList(prd.product.userProblems),
-    mustHaveFeatures: hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES),
-    nonGoals: hasMeaningfulList(prd.product.nonGoals),
-    successMetrics: hasMeaningfulList(prd.product.successMetrics),
-    constraints: hasMeaningfulList(prd.product.constraints),
-    qualityGates: hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES),
-  };
-  const current = {
-    idea: prd.idea,
-    platform: prd.platform,
-    frontend: prd.frontend,
-    uiVerificationRequired: prd.uiVerificationRequired,
-    uiDesignSystem: prd.ui.designSystem,
-    uiStyleReferenceMode: prd.ui.styleReferenceMode,
-    uiStyleReferences: prd.ui.styleReferences,
-    uiVisualDirection: prd.ui.visualDirection,
-    uiUxRequirements: prd.ui.uxRequirements,
-    docsReadmeRequired: prd.docs.readmeRequired,
-    docsReadmeSections: prd.docs.readmeSections,
-    planning: prd.planning,
-    language: prd.language,
-    framework: prd.framework,
-    targetUsers: prd.product.targetUsers,
-    userProblems: prd.product.userProblems,
-    qualityGates: prd.qualityGates,
-    mustHaveFeatures: prd.product.mustHaveFeatures,
-    nonGoals: prd.product.nonGoals,
-    successMetrics: prd.product.successMetrics,
-    constraints: prd.product.constraints,
-    step: prd.wizard.step,
-  };
   return [
     "You are mario-devx's PRD interviewer.",
-    "Conduct a deep PRD interview. Ask ONE concise but high-leverage follow-up question per turn.",
-    "The question should force specificity, remove ambiguity, and improve implementation readiness.",
+    "Conduct a deep PRD interview by analyzing the current state and asking ONE high-leverage question.",
     "You must return BOTH:",
     "1) a JSON envelope between <MARIO_JSON> tags",
     "2) the next question between <MARIO_QUESTION> tags",
     "",
-    "Required fields before done=true:",
-    "- idea",
-    "- platform (web|api|cli|library)",
-    "- frontend (true/false)",
-    "- uiVerificationRequired (true/false when frontend=true)",
-    "- uiDesignSystem (none|tailwind|shadcn|custom when frontend=true)",
-    "- uiStyleReferenceMode (url|screenshot|mixed when frontend=true)",
-    "- uiStyleReferences (optional URLs and/or screenshot paths when frontend=true)",
-    "- uiVisualDirection (non-empty string when frontend=true)",
-    "- uiUxRequirements (non-empty string[] when frontend=true)",
-    "- docsReadmeRequired (true/false)",
-    "- docsReadmeSections (non-empty string[] when docsReadmeRequired=true)",
-    "- language (typescript|python|go|rust|other)",
-    "- framework (string)",
-    "- targetUsers (non-empty string[])",
-    "- userProblems (non-empty string[])",
-    `- mustHaveFeatures (at least ${MIN_FEATURES} atomic action statements)`,
-    "- nonGoals (non-empty string[])",
-    "- successMetrics (non-empty string[])",
-    "- constraints (non-empty string[])",
-    `- qualityGates (at least ${MIN_QUALITY_GATES} runnable commands including both test and static checks)`,
-    "",
-    "Envelope schema:",
-    '{"done": boolean, "updates": {idea?, platform?, frontend?, uiVerificationRequired?, uiDesignSystem?, uiStyleReferenceMode?, uiStyleReferences?, uiVisualDirection?, uiUxRequirements?, docsReadmeRequired?, docsReadmeSections?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
-    "",
-    "Rules:",
-    "- updates MUST include only fields changed by this answer.",
-    "- Ask probing follow-ups until requirements are testable and implementation-ready.",
-    "- Ask direct natural-language questions; do NOT use A/B/C/D multiple-choice formatting.",
-    "- Ask about ONE missing field only; do not combine multiple fields in one question.",
-    "- Keep question short (max 22 words), concrete, and answerable in one message.",
-    "- For boolean fields, ask yes/no in plain language (never ask for true/false literals).",
-    "- Do not re-ask fields that are already satisfied in the readiness checklist.",
-    "- Plan implementation order as: scaffold baseline, quality-pipeline setup, README baseline, then feature tasks.",
-    "- qualityGates must be explicit runnable commands (eg: npm run lint).",
-    "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
-    "- Decompose must-have features into atomic, independently testable behaviors; task count is unbounded if needed.",
-    "- For frontend projects, capture UI direction deeply (design system, visual direction, UX requirements, optional reference URLs).",
-    "- style references can include both web URLs and screenshot file paths.",
-    "- Do not mark done=true unless ALL required fields pass the criteria above.",
-    "- if unsure, ask a question and keep done=false.",
-    "- no markdown except the two required tags.",
-    "",
-    "Readiness checklist:",
-    JSON.stringify(readiness, null, 2),
-    "",
-    "Current target field (ask only this):",
-    missingField,
-    "",
     "Current PRD state:",
-    JSON.stringify(current, null, 2),
+    JSON.stringify(prd, null, 2),
     "",
     "User answer:",
     input,
     "",
-    "Return format exactly:",
+    "Required fields before done=true:",
+    "- idea: one-line project description",
+    "- platform: web|api|cli|library",
+    "- frontend: true|false",
+    "- uiVerificationRequired: true|false (only if frontend=true)",
+    "- ui.designSystem: none|tailwind|shadcn|custom (only if frontend=true)",
+    "- ui.visualDirection: string (only if frontend=true)",
+    "- ui.uxRequirements: string[] (only if frontend=true)",
+    "- docs.readmeRequired: true|false",
+    "- docs.readmeSections: string[] (only if readmeRequired=true)",
+    "- language: typescript|python|go|rust|other",
+    "- framework: string",
+    "- product.targetUsers: string[]",
+    "- product.userProblems: string[]",
+    "- product.mustHaveFeatures: string[] (at least 3)",
+    "- product.nonGoals: string[]",
+    "- product.successMetrics: string[]",
+    "- product.constraints: string[]",
+    "- qualityGates: string[] (at least 2 commands)",
+    "",
+    "Instructions:",
+    "1. Analyze the Current PRD state above",
+    "2. Identify which required fields are still missing or incomplete",
+    "3. Ask ONE concise question to fill the most important missing field",
+    "4. Extract any updates from the user's answer and include them in the updates object",
+    "5. Set done=true only when ALL required fields are present and valid",
+    "",
+    "Rules for questions:",
+    "- Ask direct natural-language questions (no A/B/C/D options)",
+    "- Keep questions short (max 22 words) and concrete",
+    "- For booleans, ask yes/no in plain language",
+    "- Don't re-ask fields that are already complete",
+    "- Ask about ONE field at a time",
+    "",
+    "Envelope schema:",
+    '{"done": boolean, "updates": {...}, "next_question": string}',
+    "",
+    "Return format:",
     "<MARIO_JSON>",
-    '{"done":false,"updates":{},"next_question":"..."}',
+    '{"done":false,"updates":{},"next_question":"Your question here"}',
     "</MARIO_JSON>",
     "<MARIO_QUESTION>",
-    "...",
+    "Your question here",
     "</MARIO_QUESTION>",
   ].join("\n");
 };
@@ -727,74 +663,17 @@ export const createTools = (ctx: PluginContext) => {
           }
         }
 
-        const persistInterviewProgress = async (nextPrd: PrdJson): Promise<string> => {
-          const step = deriveWizardStep(nextPrd);
-          const done = isPrdComplete(nextPrd);
-          const nextQuestion = fallbackQuestion(nextPrd);
-          let updated = {
-            ...nextPrd,
-            wizard: {
-              ...nextPrd.wizard,
-              step,
-              totalSteps: WIZARD_TOTAL_STEPS,
-              status: done ? "completed" : "in_progress",
-              lastQuestionId: firstMissingField(nextPrd),
-              answers: {
-                ...nextPrd.wizard.answers,
-                ...(hasAnswer ? { [`turn-${Date.now()}`]: rawInput } : {}),
-                [LAST_QUESTION_KEY]: nextQuestion,
-              },
-            },
-          };
-
-          if (done) {
-            updated = await seedTasksFromPrd(repoRoot, updated);
-            updated = {
-              ...updated,
-              wizard: {
-                ...updated.wizard,
-                status: "completed",
-                step: WIZARD_TOTAL_STEPS,
-                lastQuestionId: "done",
-              },
-            };
-            await writePrdJson(repoRoot, updated);
-            return [
-              "PRD wizard: completed.",
-              `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
-              `Tasks: ${updated.tasks.length}`,
-              "Next: /mario-devx:run 1",
-            ].join("\n");
-          }
-
-          await writePrdJson(repoRoot, updated);
-          return [
-            `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
-            nextQuestion,
-            "Reply with your answer in natural language.",
-          ].join("\n");
-        };
-
         const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
         if (!hasAnswer && cachedQuestion) {
           return [
-            `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
+            "PRD interview",
             cachedQuestion,
             "Reply with your answer in natural language.",
           ].join("\n");
         }
 
-        if (hasAnswer && looksLikeUiChoiceArtifact(rawInput)) {
-          const questionText = cachedQuestion || fallbackQuestion(prd);
-          return [
-            `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
-            questionText,
-            "Please answer directly in your own words (the last input looked like a menu/option label).",
-          ].join("\n");
-        }
-
         const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
-        const interviewInput = hasAnswer ? rawInput : "Start the interview and ask the first unanswered question.";
+        const interviewInput = hasAnswer ? rawInput : "Start the interview and ask the first question.";
         const interviewResponse = await ctx.client.session.prompt({
           path: { id: ws.sessionId },
           body: {
@@ -809,24 +688,17 @@ export const createTools = (ctx: PluginContext) => {
           prd = applyInterviewUpdates(prd, envelope.updates);
         }
 
-        const step = deriveWizardStep(prd);
         const done = isPrdComplete(prd);
-        const modelQuestion = (question && question.trim()) || envelope?.next_question?.trim() || "";
-        const nextQuestion = looksTooBroadQuestion(modelQuestion) ? fallbackQuestion(prd) : (modelQuestion || fallbackQuestion(prd));
-        const repeatedBooleanQuestion = hasAnswer
-          && isLikelyBooleanReply(rawInput)
-          && sameQuestion(cachedQuestion, nextQuestion)
-          && typeof prd.uiVerificationRequired === "boolean";
-        const finalQuestion = repeatedBooleanQuestion ? fallbackQuestion(prd) : nextQuestion;
+        const finalQuestion = (question && question.trim()) || envelope?.next_question?.trim() || "What else should we capture?";
 
         prd = {
           ...prd,
           wizard: {
             ...prd.wizard,
-            step,
+            step: done ? WIZARD_TOTAL_STEPS : 0,
             totalSteps: WIZARD_TOTAL_STEPS,
             status: done ? "completed" : "in_progress",
-            lastQuestionId: firstMissingField(prd),
+            lastQuestionId: done ? "done" : "interview",
             answers: {
               ...prd.wizard.answers,
               ...(hasAnswer ? { [`turn-${Date.now()}`]: rawInput } : {}),
