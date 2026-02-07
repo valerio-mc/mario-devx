@@ -4,8 +4,8 @@ import { mkdir, readFile, stat, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
-import { ensureMario, bumpIteration, readWorkSessionState, writeWorkSessionState, readRunState, writeRunState } from "./state";
-import { FeatureAddInterviewState, RunState } from "./types";
+import { ensureMario, bumpIteration, readWorkSessionState, readRunState, writeRunState } from "./state";
+import { FeatureAddInterviewState } from "./types";
 import { getRepoRoot } from "./paths";
 import {
   ensureT0002QualityBootstrap,
@@ -25,6 +25,61 @@ import {
   runUiVerification,
   upsertAgentsKey,
 } from "./ui-verify";
+import {
+  LAST_QUESTION_KEY,
+  MIN_FEATURES,
+  MIN_QUALITY_GATES,
+  WIZARD_TOTAL_STEPS,
+  compactIdea,
+  deriveWizardStep,
+  escapeDoubleQuoted,
+  extractStyleReferencesFromText,
+  fallbackQuestion,
+  firstMissingField,
+  hasAtomicFeatures,
+  hasDiverseQualityGates,
+  hasMeaningfulList,
+  hasNonEmpty,
+  isAtomicFeatureStatement,
+  isLikelyBooleanReply,
+  isPrdComplete,
+  isVagueFeatureRequest,
+  looksLikeUiChoiceArtifact,
+  looksTooBroadQuestion,
+  mergeStyleReferences,
+  normalizeStyleReferences,
+  normalizeTextArray,
+  parseAtomicAcceptanceList,
+  parseBooleanReply,
+  parseFeatureListReply,
+  sameQuestion,
+  stripTrailingSentencePunctuation,
+} from "./interview";
+import {
+  decomposeFeatureRequestToTasks,
+  firstScaffoldHintFromNotes,
+  getNextPrdTask,
+  isScaffoldMissingGateCommand,
+  makeTask,
+  nextBacklogId,
+  nextTaskOrdinal,
+  normalizeMustHaveFeatureAtoms,
+  normalizeTaskId,
+  readmeSectionGate,
+  scaffoldPlanFromPrd,
+  setPrdTaskLastAttempt,
+  setPrdTaskStatus,
+} from "./planner";
+import {
+  ensureWorkSession,
+  ensureNotInWorkSession,
+  extractTextFromPromptResponse,
+  resetWorkSession,
+  setWorkSessionTitle,
+  updateRunState,
+  waitForSessionIdle,
+} from "./runner";
+import { runDoctor } from "./doctor";
 import {
   defaultPrdJson,
   readPrdJsonIfExists,
@@ -263,446 +318,6 @@ type InterviewEnvelope = {
   next_question?: string;
 };
 
-const WIZARD_TOTAL_STEPS = 17;
-const LAST_QUESTION_KEY = "__last_question";
-const MIN_FEATURES = 3;
-const MIN_QUALITY_GATES = 2;
-
-const hasNonEmpty = (value: string | null | undefined): boolean => typeof value === "string" && value.trim().length > 0;
-
-const normalizeTextArray = (value: string[] | undefined): string[] => {
-  return Array.isArray(value)
-    ? Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)))
-    : [];
-};
-
-const normalizeStyleReferences = (value: string[] | undefined): string[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const refs = value
-    .map((item) => String(item).trim())
-    .filter((item) => item.length > 0)
-    .filter((item) => /^https?:\/\//i.test(item) || /\.(png|jpe?g|webp|gif|svg)$/i.test(item) || item.includes("/"));
-  return Array.from(new Set(refs));
-};
-
-const mergeStyleReferences = (current: string[] | undefined, incoming: string[] | undefined): string[] => {
-  return normalizeStyleReferences([...(current ?? []), ...(incoming ?? [])]);
-};
-
-const extractStyleReferencesFromText = (input: string): string[] => {
-  const text = input.trim();
-  if (!text) return [];
-  const refs: string[] = [];
-
-  const urlMatches = text.match(/https?:\/\/[^\s,)\]]+/gi) ?? [];
-  refs.push(...urlMatches.map((u) => u.replace(/[.,;:!?]+$/, "")));
-
-  const pathMatches = text.match(/(?:\.{0,2}\/)?(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:png|jpe?g|webp|gif|svg)/gi) ?? [];
-  refs.push(...pathMatches.map((p) => p.replace(/[.,;:!?]+$/, "")));
-
-  return normalizeStyleReferences(refs);
-};
-
-const stripTrailingSentencePunctuation = (value: string): string => value.replace(/[.?!]+$/g, "").trim();
-
-const isAtomicFeatureStatement = (value: string): boolean => {
-  const feature = stripTrailingSentencePunctuation(value)
-    .replace(/^user\s+/i, "")
-    .trim();
-  if (!feature) return false;
-  if (/^(and|or|then)\b/i.test(feature)) return false;
-  if (/^(active|completed|overdue|todo|done|high|low|med)$/i.test(feature)) return false;
-  const wordCount = feature.split(/\s+/).filter(Boolean).length;
-  const hasActionVerb = /(create|edit|update|delete|mark|toggle|set|clear|filter|search|sort|persist|store|restore|show|hide|add|remove|snooze|schedule|confirm|open|close|validate|support|allow|enable|disable|track|view|answer|enter|generate|copy|pick|choose|select|share|save|submit|regenerate|import|export|upload|download|start|finish)\b/i.test(feature);
-  if (wordCount < 2) return false;
-  if (wordCount === 2 && !hasActionVerb) return false;
-  return hasActionVerb;
-};
-
-const hasAtomicFeatures = (value: string[] | undefined, min = MIN_FEATURES): boolean => {
-  const normalized = normalizeTextArray(value).map(stripTrailingSentencePunctuation).filter(Boolean);
-  return normalized.length >= min && normalized.every(isAtomicFeatureStatement);
-};
-
-const isVagueFeatureRequest = (input: string): boolean => {
-  const s = input.replace(/\s+/g, " ").trim();
-  if (!s) return true;
-  const wordCount = s.split(/\s+/).filter(Boolean).length;
-  if (s.length < 24 || wordCount < 5) return true;
-  if (/\b(something|stuff|etc\.?|misc|various)\b/i.test(s)) return true;
-  if (/^(improve|enhance|polish|update|fix)\b/i.test(s) && wordCount < 8) return true;
-  // If it doesn't contain any concrete action verb, treat as vague.
-  if (!/(add|create|edit|update|delete|remove|export|import|sync|filter|search|sort|toggle|enable|disable|support|integrate|refactor|optimi[sz]e|validate|track|render|show|hide)\b/i.test(s)) {
-    return true;
-  }
-  return false;
-};
-
-const parseAtomicAcceptanceList = (input: string): string[] => {
-  const parsed = parseFeatureListReply(input)
-    .map(stripTrailingSentencePunctuation)
-    .filter(Boolean)
-    .filter(isAtomicFeatureStatement);
-  return Array.from(new Set(parsed));
-};
-
-const hasMeaningfulList = (value: string[] | undefined, min = 1): boolean => normalizeTextArray(value).length >= min;
-
-const hasDiverseQualityGates = (gates: string[]): boolean => {
-  const normalized = normalizeTextArray(gates);
-  const hasTest = normalized.some((gate) => /(\btest\b|pytest|vitest|jest|playwright|cypress|go test|cargo test)/i.test(gate));
-  const hasStatic = normalized.some((gate) => /(lint|typecheck|mypy|ruff|flake8|eslint|tsc|build|check|fmt --check)/i.test(gate));
-  return hasTest && hasStatic;
-};
-
-const looksLikeUiChoiceArtifact = (input: string): boolean => {
-  const s = input.trim();
-  if (!s) {
-    return false;
-  }
-  if (/^answer in my own words/i.test(s)) {
-    return true;
-  }
-  return /(single-choice|multi-choice|free-text|show current status|stop for now|hardcoded|fixed questions|generate 3 questions)/i.test(s);
-};
-
-const looksTooBroadQuestion = (question: string): boolean => {
-  const q = question.trim();
-  if (!q) {
-    return true;
-  }
-  const wordCount = q.split(/\s+/).filter(Boolean).length;
-  const clauseSignals = (q.match(/,| and | or |;/gi) ?? []).length;
-  const hasListCue = /(include|cover|describe.*(flow|end-to-end)|what.*and.*what|first.*then)/i.test(q);
-  return wordCount > 30 || clauseSignals >= 4 || hasListCue;
-};
-
-const isLikelyBooleanReply = (input: string): boolean => {
-  const s = input.trim().toLowerCase();
-  return ["y", "yes", "true", "1", "n", "no", "false", "0"].includes(s);
-};
-
-const parseBooleanReply = (input: string): boolean | null => {
-  const s = input.trim().toLowerCase();
-  if (["y", "yes", "true", "1"].includes(s)) return true;
-  if (["n", "no", "false", "0"].includes(s)) return false;
-  return null;
-};
-
-const parseFeatureListReply = (input: string): string[] => {
-  const normalized = input
-    .replace(/\r\n?/g, "\n")
-    .replace(/\\n/g, "\n")
-    .trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const clean = (item: string): string => item
-    .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "")
-    .replace(/^user\s+/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const uniq = (items: string[]): string[] => Array.from(new Set(items));
-  const asAtomicIfEnough = (items: string[]): string[] | null => {
-    const normalizedItems = items.map(clean).map(stripTrailingSentencePunctuation).filter(Boolean);
-    const atomic = uniq(normalizedItems.filter(isAtomicFeatureStatement));
-    return atomic.length >= MIN_FEATURES ? atomic : null;
-  };
-
-  const inlineNumbered = normalized.match(/\d+[.)]\s+/g);
-  if (inlineNumbered && inlineNumbered.length >= MIN_FEATURES) {
-    const marked = normalized.replace(/(?:^|\s)(\d+[.)])\s+/g, "\n$1 ").trim();
-    const items = marked.split(/\n+/);
-    const atomic = asAtomicIfEnough(items);
-    if (atomic) {
-      return atomic;
-    }
-  }
-
-  const lines = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const plainLineItems = asAtomicIfEnough(lines);
-  if (plainLineItems) {
-    return plainLineItems;
-  }
-
-  const bulletLines = lines.filter((line) => /^(?:[-*•]|\d+[.)])\s+/.test(line));
-  if (bulletLines.length >= MIN_FEATURES) {
-    const atomic = asAtomicIfEnough(bulletLines);
-    if (atomic) {
-      return atomic;
-    }
-  }
-
-  const sentenceItems = asAtomicIfEnough(normalized
-    .split(/(?<=[.?!])\s+(?=[A-Z])/)
-  );
-  if (sentenceItems) {
-    return sentenceItems;
-  }
-
-  const semicolonParts = asAtomicIfEnough(normalized.split(/\s*;\s*/));
-  if (semicolonParts) {
-    return semicolonParts;
-  }
-
-  const commaParts = asAtomicIfEnough(normalized.split(","));
-  if (commaParts) {
-    return commaParts;
-  }
-
-  const pipeParts = asAtomicIfEnough(normalized.split(/\s*\|\s*/));
-  if (pipeParts) {
-    return pipeParts;
-  }
-
-  if (!/[.?!,;]/.test(normalized)) {
-    const andParts = asAtomicIfEnough(normalized.split(/\s+and\s+/i));
-    if (andParts) {
-      return andParts;
-    }
-  }
-
-  const fallback = uniq(
-    normalized
-      .split(/[\n,;|]+/)
-      .map(clean)
-      .map(stripTrailingSentencePunctuation)
-      .filter(Boolean)
-      .filter(isAtomicFeatureStatement),
-  );
-  if (fallback.length >= MIN_FEATURES) {
-    return fallback;
-  }
-
-  return uniq([stripTrailingSentencePunctuation(clean(normalized))].filter(Boolean));
-};
-
-const sameQuestion = (a: string | null | undefined, b: string | null | undefined): boolean => {
-  if (!a || !b) {
-    return false;
-  }
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-};
-
-const isPrdComplete = (prd: PrdJson): boolean => {
-  return (
-    hasNonEmpty(prd.idea)
-    && prd.platform !== null
-    && typeof prd.frontend === "boolean"
-    && (prd.frontend === false || typeof prd.uiVerificationRequired === "boolean")
-    && (prd.frontend === false || prd.ui.designSystem !== null)
-    && (prd.frontend === false || hasNonEmpty(prd.ui.visualDirection))
-    && (prd.frontend === false || hasMeaningfulList(prd.ui.uxRequirements))
-    && prd.language !== null
-    && hasNonEmpty(prd.framework)
-    && hasMeaningfulList(prd.product.targetUsers)
-    && hasMeaningfulList(prd.product.userProblems)
-    && hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES)
-    && hasMeaningfulList(prd.product.nonGoals)
-    && hasMeaningfulList(prd.product.successMetrics)
-    && hasMeaningfulList(prd.product.constraints)
-    && typeof prd.docs.readmeRequired === "boolean"
-    && (prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections))
-    && hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES)
-    && hasDiverseQualityGates(prd.qualityGates)
-  );
-};
-
-const deriveWizardStep = (prd: PrdJson): number => {
-  let step = 0;
-  if (hasNonEmpty(prd.idea)) step = 1;
-  if (prd.platform !== null) step = 2;
-  if (typeof prd.frontend === "boolean") step = 3;
-  if (prd.frontend === false || typeof prd.uiVerificationRequired === "boolean") step = 4;
-  if (prd.frontend === false || prd.ui.designSystem !== null) step = 5;
-  if (prd.frontend === false || hasNonEmpty(prd.ui.visualDirection)) step = 6;
-  if (prd.frontend === false || hasMeaningfulList(prd.ui.uxRequirements)) step = 7;
-  if (typeof prd.docs.readmeRequired === "boolean") step = 8;
-  if (prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections)) step = 9;
-  if (prd.language !== null) step = 10;
-  if (hasNonEmpty(prd.framework)) step = 11;
-  if (hasMeaningfulList(prd.product.targetUsers)) step = 12;
-  if (hasMeaningfulList(prd.product.userProblems)) step = 13;
-  if (hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 14;
-  if (hasMeaningfulList(prd.product.nonGoals)) step = 15;
-  if (hasMeaningfulList(prd.product.successMetrics)) step = 16;
-  if (hasMeaningfulList(prd.product.constraints) && hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates)) step = 17;
-  return Math.min(WIZARD_TOTAL_STEPS, step);
-};
-
-const firstMissingField = (prd: PrdJson): string => {
-  if (!hasNonEmpty(prd.idea)) return "idea";
-  if (prd.platform === null) return "platform";
-  if (typeof prd.frontend !== "boolean") return "frontend";
-  if (prd.frontend === true && typeof prd.uiVerificationRequired !== "boolean") return "uiVerificationRequired";
-  if (prd.frontend === true && prd.ui.designSystem === null) return "uiDesignSystem";
-  if (prd.frontend === true && !hasNonEmpty(prd.ui.visualDirection)) return "uiVisualDirection";
-  if (prd.frontend === true && !hasMeaningfulList(prd.ui.uxRequirements)) return "uiUxRequirements";
-  if (typeof prd.docs.readmeRequired !== "boolean") return "docsReadmeRequired";
-  if (prd.docs.readmeRequired === true && !hasMeaningfulList(prd.docs.readmeSections)) return "docsReadmeSections";
-  if (prd.language === null) return "language";
-  if (!hasNonEmpty(prd.framework)) return "framework";
-  if (!hasMeaningfulList(prd.product.targetUsers)) return "targetUsers";
-  if (!hasMeaningfulList(prd.product.userProblems)) return "userProblems";
-  if (!hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES)) return "mustHaveFeatures";
-  if (!hasMeaningfulList(prd.product.nonGoals)) return "nonGoals";
-  if (!hasMeaningfulList(prd.product.successMetrics)) return "successMetrics";
-  if (!hasMeaningfulList(prd.product.constraints)) return "constraints";
-  if (!hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) || !hasDiverseQualityGates(prd.qualityGates)) return "qualityGates";
-  return "done";
-};
-
-const fallbackQuestion = (prd: PrdJson): string => {
-  const missing = firstMissingField(prd);
-  switch (missing) {
-    case "idea":
-      return "What one-line idea should this project build?";
-    case "platform":
-      return "What are we building: web app, API service, CLI tool, or library?";
-    case "frontend":
-      return "Does this project need a browser UI?";
-    case "uiVerificationRequired":
-      return "Should automated UI browser verification be required on every run? (yes/no)";
-    case "uiDesignSystem":
-      return "Which UI stack should we use: Tailwind, shadcn/ui, custom CSS, or none?";
-    case "uiVisualDirection":
-      return "Describe the visual direction in one line (mood, typography, color style).";
-    case "uiUxRequirements":
-      return "List key UX requirements (states, responsiveness, accessibility).";
-    case "docsReadmeRequired":
-      return "Should this project maintain a human-readable README.md throughout development? (yes/no)";
-    case "docsReadmeSections":
-      return "List required README sections (for example: Overview, Setup, Env Vars, Usage).";
-    case "language":
-      return "What is the primary language: TypeScript, Python, Go, Rust, or other?";
-    case "framework":
-      return "Which framework/runtime should be the default?";
-    case "targetUsers":
-      return "Who are the primary target users? List user segments explicitly.";
-    case "userProblems":
-      return "What concrete user problems are we solving for those users?";
-    case "mustHaveFeatures":
-      return `List at least ${MIN_FEATURES} atomic must-have features for V1 (one per line, action-first).`;
-    case "nonGoals":
-      return "What is explicitly out of scope for V1?";
-    case "successMetrics":
-      return "How will success be measured? List measurable metrics.";
-    case "constraints":
-      return "List constraints: technical, timeline, budget, compliance, or deployment constraints.";
-    case "qualityGates":
-      return `List at least ${MIN_QUALITY_GATES} quality gate commands, including both test and static checks.`;
-    default:
-      return "Anything else I should capture before we run the first iteration?";
-  }
-};
-
-const compactIdea = (idea: string): string => {
-  const oneLine = idea.replace(/\s+/g, " ").trim();
-  if (oneLine.length <= 80) {
-    return oneLine;
-  }
-  return `${oneLine.slice(0, 77).trim()}...`;
-};
-
-const escapeDoubleQuoted = (value: string): string => value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
-
-const readmeSectionGate = (section: string): string => {
-  const escaped = escapeDoubleQuoted(section.trim());
-  return `node -e \"const fs=require('fs');const s=fs.readFileSync('README.md','utf8');process.exit(/^(?:#{1,3})\\s*${escaped}\\s*$/mi.test(s)?0:1)\"`;
-};
-
-const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ doneWhen: string[]; notes: string[] }> => {
-  const notes: string[] = [
-    "Seeded by PRD interviewer.",
-    "First task scaffolds project artifacts before strict quality gates are enforced.",
-    "Scaffold implementation is agent-chosen; command hints below are optional defaults.",
-  ];
-
-  const inferred = await inferBootstrapDoneWhen(repoRoot, prd);
-  const scaffoldCommand = await inferBootstrapCommand(repoRoot, prd);
-  notes.push("Preferred scaffold action (optional): initialize project skeleton for the chosen stack in this repository.");
-  if (scaffoldCommand) {
-    notes.push(`Preferred scaffold command (optional): ${scaffoldCommand}`);
-  }
-  return { doneWhen: inferred, notes };
-};
-
-const firstScaffoldHintFromNotes = (notes: string[] | undefined): string | null => {
-  if (!notes || notes.length === 0) {
-    return null;
-  }
-  const line = notes.find((n) => n.startsWith("Preferred scaffold command (optional):"));
-  return line ? line.replace(/^Preferred scaffold command \(optional\):\s*/, "").trim() : null;
-};
-
-const isScaffoldMissingGateCommand = (command: string): boolean => {
-  const c = command.trim();
-  return (
-    c === "test -f package.json || test -f app/package.json"
-    || c === "test -f package.json"
-    || c === "test -d app || test -d src/app"
-    || c === "test -f pyproject.toml || test -f requirements.txt"
-    || c === "test -f go.mod"
-    || c === "test -f Cargo.toml"
-  );
-};
-
-const inferBootstrapCommand = async (repoRoot: string, prd: PrdJson): Promise<string | null> => {
-  const hasRootPkg = !!(await readTextIfExists(path.join(repoRoot, "package.json")));
-  const hasAppPkg = !!(await readTextIfExists(path.join(repoRoot, "app", "package.json")));
-  if (hasRootPkg || hasAppPkg) {
-    return null;
-  }
-
-  if (prd.language === "typescript" || prd.platform === "web") {
-    return "mkdir -p app && npx --yes create-vite@latest app --template react-ts";
-  }
-  if (prd.language === "python") {
-    return "python3 -m venv .venv && python3 -m pip install --upgrade pip";
-  }
-  if (prd.language === "go") {
-    return "test -f go.mod || go mod init app";
-  }
-  if (prd.language === "rust") {
-    return "test -f Cargo.toml || cargo init --name app";
-  }
-  return null;
-};
-
-const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<string[]> => {
-  const hasPackageJson = !!(await readTextIfExists(path.join(repoRoot, "package.json")));
-  const hasAppPackageJson = !!(await readTextIfExists(path.join(repoRoot, "app", "package.json")));
-  const hasPyproject = !!(await readTextIfExists(path.join(repoRoot, "pyproject.toml")));
-  const hasRequirements = !!(await readTextIfExists(path.join(repoRoot, "requirements.txt")));
-  const hasGoMod = !!(await readTextIfExists(path.join(repoRoot, "go.mod")));
-  const hasCargoToml = !!(await readTextIfExists(path.join(repoRoot, "Cargo.toml")));
-
-  if (prd.language === "typescript" || prd.platform === "web") {
-    if (!hasPackageJson && !hasAppPackageJson) {
-      return ["test -f package.json || test -f app/package.json"];
-    }
-    return ["test -f package.json || test -f app/package.json"];
-  }
-  if (prd.language === "python") {
-    return ["test -f pyproject.toml || test -f requirements.txt"];
-  }
-  if (prd.language === "go") {
-    return ["test -f go.mod"];
-  }
-  if (prd.language === "rust") {
-    return ["test -f Cargo.toml"];
-  }
-
-  if (!hasPackageJson && !hasPyproject && !hasRequirements && !hasGoMod && !hasCargoToml) {
-    return ["test -f package.json || test -f pyproject.toml || test -f requirements.txt || test -f go.mod || test -f Cargo.toml"];
-  }
-  return ["true"];
-};
-
 const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson> => {
   if (Array.isArray(prd.tasks) && prd.tasks.length > 0) {
     return prd;
@@ -749,7 +364,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
     const sectionChecks = (prd.docs.readmeSections ?? [])
       .map((section) => section.trim())
       .filter(Boolean)
-      .map((section) => readmeSectionGate(section));
+      .map((section) => readmeSectionGate(section, escapeDoubleQuoted));
     tasks.push(
       makeTask({
         id: normalizeTaskId(n++),
@@ -787,103 +402,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
   };
 };
 
-const normalizeTaskId = (n: number): string => `T-${String(n).padStart(4, "0")}`;
-
-const nextTaskOrdinal = (tasks: PrdTask[]): number => {
-  let max = 0;
-  for (const task of tasks) {
-    const m = task.id.match(/^T-(\d{4,})$/);
-    if (!m) continue;
-    const n = Number.parseInt(m[1] ?? "0", 10);
-    if (Number.isFinite(n)) max = Math.max(max, n);
-  }
-  return max + 1;
-};
-
-const nextBacklogId = (prd: PrdJson): string => {
-  const ids = prd.backlog.featureRequests.map((item) => item.id);
-  let n = ids.length + 1;
-  while (ids.includes(`F-${String(n).padStart(4, "0")}`)) n += 1;
-  return `F-${String(n).padStart(4, "0")}`;
-};
-
-const decomposeFeatureRequestToTasks = (feature: string): string[] => {
-  const compact = feature.replace(/\s+/g, " ").trim();
-  if (!compact) return [];
-  const byCommas = compact.split(",").map((p) => p.trim()).filter(Boolean);
-  const candidates = byCommas.length > 1 ? byCommas : [compact];
-  const out: string[] = [];
-  for (const c of candidates) {
-    const sub = c.split(/\s+(?:and|then|plus)\s+/i).map((p) => p.trim()).filter(Boolean);
-    out.push(...(sub.length > 1 ? sub : [c]));
-  }
-  const cleaned = Array.from(new Set(out.map((item) => stripTrailingSentencePunctuation(item)).filter(Boolean)));
-  const atomic = cleaned.filter(isAtomicFeatureStatement);
-  if (atomic.length > 0) {
-    return atomic;
-  }
-  return [stripTrailingSentencePunctuation(compact)];
-};
-
-const normalizeMustHaveFeatureAtoms = (features: string[] | undefined): string[] => {
-  const source = normalizeTextArray(features);
-  const atoms = source
-    .flatMap((item) => parseFeatureListReply(item))
-    .map(stripTrailingSentencePunctuation)
-    .filter(Boolean)
-    .filter(isAtomicFeatureStatement);
-  return Array.from(new Set(atoms));
-};
-
-const makeTask = (params: {
-  id: string;
-  status?: PrdTaskStatus;
-  title: string;
-  scope?: string[];
-  parentId?: string;
-  dependsOn?: string[];
-  labels?: string[];
-  acceptance?: string[];
-  doneWhen: string[];
-  evidence?: string[];
-  notes?: string[];
-}): PrdTask => {
-  return {
-    id: params.id,
-    status: params.status ?? "open",
-    title: params.title,
-    scope: params.scope ?? ["**/*"],
-    ...(params.parentId ? { parentId: params.parentId } : {}),
-    ...(params.dependsOn ? { dependsOn: params.dependsOn } : {}),
-    ...(params.labels ? { labels: params.labels } : {}),
-    ...(params.acceptance ? { acceptance: params.acceptance } : {}),
-    doneWhen: params.doneWhen,
-    evidence: params.evidence ?? [],
-    ...(params.notes ? { notes: params.notes } : {}),
-  };
-};
-
-const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
-  const tasks = prd.tasks ?? [];
-  for (const task of tasks) {
-    if (task.status !== "completed" && task.status !== "cancelled") {
-      return task;
-    }
-  }
-  return null;
-};
-
 const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
-
-const setPrdTaskStatus = (prd: PrdJson, taskId: string, status: PrdTaskStatus): PrdJson => {
-  const tasks = (prd.tasks ?? []).map((t) => (t.id === taskId ? { ...t, status } : t));
-  return { ...prd, tasks };
-};
-
-const setPrdTaskLastAttempt = (prd: PrdJson, taskId: string, lastAttempt: PrdTaskAttempt): PrdJson => {
-  const tasks = (prd.tasks ?? []).map((t) => (t.id === taskId ? { ...t, lastAttempt } : t));
-  return { ...prd, tasks };
-};
 
 const interviewPrompt = (prd: PrdJson, input: string): string => {
   const missingField = firstMissingField(prd);
@@ -1275,168 +794,6 @@ const notifyControlSession = async (
   } catch {
     // Best-effort only.
   }
-};
-
-const waitForSessionIdle = async (
-  ctx: PluginContext,
-  sessionId: string,
-  timeoutMs: number,
-): Promise<boolean> => {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const statuses = await ctx.client.session.status();
-    const status = (statuses as Record<string, { type?: string }>)[sessionId];
-    if (!status || status.type === "idle") {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  return false;
-};
-
-const getBaselineText = (repoRoot: string): string => {
-  return [
-    "# mario-devx work session",
-    "",
-    "This is the mario-devx work session for this repo.",
-    "",
-    "Hard rules:",
-    "- Never edit the control plane: do not modify .opencode/plugins/mario-devx/**",
-    "- Keep work state in .mario/ and git.",
-    "- One task per build iteration.",
-    "",
-    "Canonical files:",
-    "- PRD + tasks: .mario/prd.json",
-    "- Agent config: .mario/AGENTS.md",
-    "- State: .mario/state/state.json",
-    "",
-    `Repo: ${repoRoot}`,
-  ].join("\n");
-};
-
-const extractSessionId = (response: unknown): string | null => {
-  const candidate = response as { data?: { id?: string } };
-  return candidate.data?.id ?? null;
-};
-
-const extractMessageId = (response: unknown): string | null => {
-  const candidate = response as { data?: { info?: { id?: string } }; info?: { id?: string } };
-  return candidate.data?.info?.id ?? candidate.info?.id ?? null;
-};
-
-const ensureWorkSession = async (
-  ctx: PluginContext,
-  repoRoot: string,
-  agent: string | undefined,
-): Promise<{ sessionId: string; baselineMessageId: string }> => {
-  await ensureMario(repoRoot, false);
-  const existing = await readWorkSessionState(repoRoot);
-  if (existing?.sessionId && existing?.baselineMessageId) {
-    return { sessionId: existing.sessionId, baselineMessageId: existing.baselineMessageId };
-  }
-
-  const created = await ctx.client.session.create();
-  const sessionId = extractSessionId(created);
-  if (!sessionId) {
-    throw new Error("Failed to create work session");
-  }
-
-  await ctx.client.session.update({
-    path: { id: sessionId },
-    body: { title: "mario-devx (work)" },
-  });
-
-  const baseline = getBaselineText(repoRoot);
-  const baselineResp = await ctx.client.session.prompt({
-    path: { id: sessionId },
-    body: {
-      noReply: true,
-      ...(agent ? { agent } : {}),
-      parts: [{ type: "text", text: baseline }],
-    },
-  });
-  const baselineMessageId = extractMessageId(baselineResp);
-  if (!baselineMessageId) {
-    throw new Error("Failed to create baseline message in work session");
-  }
-
-  const now = nowIso();
-  await writeWorkSessionState(repoRoot, {
-    sessionId,
-    baselineMessageId,
-    createdAt: now,
-    updatedAt: now,
-  });
-  return { sessionId, baselineMessageId };
-};
-
-const resetWorkSession = async (
-  ctx: PluginContext,
-  repoRoot: string,
-  agent: string | undefined,
-): Promise<{ sessionId: string; baselineMessageId: string }> => {
-  const ws = await ensureWorkSession(ctx, repoRoot, agent);
-  await ctx.client.session.revert({
-    path: { id: ws.sessionId },
-    body: { messageID: ws.baselineMessageId },
-  });
-  return ws;
-};
-
-const setWorkSessionTitle = async (
-  ctx: PluginContext,
-  sessionId: string,
-  title: string,
-): Promise<void> => {
-  try {
-    await ctx.client.session.update({
-      path: { id: sessionId },
-      body: { title },
-    });
-  } catch {
-    // Best-effort only.
-  }
-};
-
-const ensureNotInWorkSession = async (
-  repoRoot: string,
-  context: ToolContext,
-): Promise<{ ok: true } | { ok: false; message: string }> => {
-  const ws = await readWorkSessionState(repoRoot);
-  if (!ws?.sessionId) {
-    return { ok: true };
-  }
-  if (context.sessionID && context.sessionID === ws.sessionId) {
-    return {
-      ok: false,
-      message: "You are in the mario-devx work session. Run this command from a control session (open a new session and run it there).",
-    };
-  }
-  return { ok: true };
-};
-
-const updateRunState = async (repoRoot: string, patch: Partial<RunState>): Promise<void> => {
-  const existing = await readRunState(repoRoot);
-  await writeRunState(repoRoot, {
-    ...existing,
-    ...patch,
-    updatedAt: nowIso(),
-  });
-};
-
-const extractTextFromPromptResponse = (response: unknown): string => {
-  if (!response) {
-    return "";
-  }
-  const candidate = response as {
-    data?: { parts?: { type?: string; text?: string }[] };
-    parts?: { type?: string; text?: string }[];
-  };
-  const parts = candidate.parts ?? candidate.data?.parts ?? [];
-  return parts
-    .filter((part) => part.type === "text")
-    .map((part) => part.text ?? "")
-    .join("\n");
 };
 
 export const createTools = (ctx: PluginContext) => {
@@ -2809,107 +2166,7 @@ export const createTools = (ctx: PluginContext) => {
       args: {},
       async execute() {
         await ensureMario(repoRoot, false);
-
-        const issues: string[] = [];
-        const fixes: string[] = [];
-
-        // PRD JSON
-        const prd = await readPrdJsonIfExists(repoRoot);
-        if (!prd) {
-          issues.push("Missing or invalid .mario/prd.json");
-          fixes.push("Run /mario-devx:new <idea>");
-        } else {
-          if (prd.wizard.status !== "completed") {
-            issues.push("PRD wizard not completed (prd.json.wizard.status != completed)."
-            );
-            fixes.push("Run /mario-devx:new and answer the wizard questions.");
-          }
-          if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
-            issues.push("No quality gates configured in .mario/prd.json (qualityGates is empty)."
-            );
-            fixes.push("Edit .mario/prd.json: add commands under qualityGates (example: npm test)."
-            );
-          }
-          if (!Array.isArray(prd.tasks) || prd.tasks.length === 0) {
-            issues.push("No tasks in .mario/prd.json (tasks is empty)."
-            );
-            fixes.push("Run /mario-devx:new to seed tasks or add tasks manually to .mario/prd.json."
-            );
-          }
-          const inProgress = (prd.tasks ?? []).filter((t) => t.status === "in_progress").map((t) => t.id);
-          if (inProgress.length > 1) {
-            issues.push(`Invalid task state: multiple tasks are in_progress (${inProgress.join(", ")}).`);
-            fixes.push("Edit .mario/prd.json so at most one task is in_progress (set the others to open/blocked/cancelled). Then rerun /mario-devx:run 1.");
-          }
-          const blocked = (prd.tasks ?? []).filter((t) => t.status === "blocked").map((t) => t.id);
-          if (blocked.length > 0) {
-            issues.push(`Blocked tasks: ${blocked.join(", ")}`);
-            fixes.push("For each blocked task, read prd.json.tasks[].lastAttempt.judge.nextActions, fix them, then rerun /mario-devx:run 1.");
-          }
-        }
-
-        // UI verification prerequisites
-        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-        const agentsRaw = await readTextIfExists(agentsPath);
-        const agentsParsed = agentsRaw ? parseAgentsEnv(agentsRaw) : { env: {}, warnings: [] };
-        const agentsEnv = agentsParsed.env;
-        if (agentsParsed.warnings.length > 0) {
-          issues.push(`AGENTS.md parse warnings (${agentsParsed.warnings.length}).`);
-          fixes.push("Fix malformed lines in .mario/AGENTS.md (must be KEY=VALUE; use # for comments)." );
-        }
-        const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
-        if (uiVerifyEnabled) {
-          const isWebApp = await isLikelyWebApp(repoRoot);
-          const scaffoldBlocked = !!prd?.tasks?.some(
-            (t) => (t.labels ?? []).includes("scaffold") && (t.status === "open" || t.status === "in_progress" || t.status === "blocked"),
-          );
-          if (!isWebApp) {
-            if (!scaffoldBlocked) {
-              issues.push("UI_VERIFY=1 but this repo does not look like a Node web app yet.");
-              fixes.push("Either scaffold the web app first, or set UI_VERIFY=0 in .mario/AGENTS.md.");
-            }
-          } else {
-            const cliOk = await hasAgentBrowserCli(ctx);
-            const skillOk = await hasAgentBrowserSkill(repoRoot);
-          if (!cliOk || !skillOk) {
-            issues.push(`UI_VERIFY=1 but agent-browser prerequisites missing (${[!cliOk ? "cli" : null, !skillOk ? "skill" : null].filter(Boolean).join(", ")}).`);
-            fixes.push("Install: npx skills add vercel-labs/agent-browser");
-            fixes.push("Install: npm install -g agent-browser && agent-browser install");
-            fixes.push("Optional: set UI_VERIFY=0 in .mario/AGENTS.md to disable best-effort UI checks.");
-          }
-          }
-        }
-
-        // Work session sanity
-        const ws = await readWorkSessionState(repoRoot);
-        if (!ws?.sessionId || !ws.baselineMessageId) {
-          issues.push("Work session state missing (will be created on next /mario-devx:new or /mario-devx:run).");
-        } else {
-          try {
-            await ctx.client.session.get({ path: { id: ws.sessionId } });
-          } catch {
-            issues.push("Work session id in state file does not exist anymore.");
-            fixes.push("Delete .mario/state/state.json and rerun /mario-devx:new.");
-          }
-          try {
-            await ctx.client.session.message({ path: { id: ws.sessionId, messageID: ws.baselineMessageId } });
-          } catch {
-            issues.push("Work session baseline message id is missing.");
-            fixes.push("Delete .mario/state/state.json and rerun /mario-devx:new.");
-          }
-        }
-
-        if (issues.length === 0) {
-          return "Doctor: OK (no obvious issues found).";
-        }
-
-        return [
-          "Doctor: issues found",
-          ...issues.map((i) => `- ${i}`),
-          "",
-          "Suggested fixes",
-          ...Array.from(new Set(fixes)).map((f) => `- ${f}`),
-        ].join("\n");
+        return runDoctor(ctx, repoRoot);
       },
     }),
 
