@@ -119,6 +119,16 @@ export const parseBooleanReply = (input: string): boolean | null => {
   return null;
 };
 
+export const inferPlatformFromText = (input: string): "web" | "api" | "cli" | "library" | null => {
+  const s = input.trim().toLowerCase();
+  if (!s) return null;
+  if (/\b(web\s*app|website|frontend|browser)\b/.test(s)) return "web";
+  if (/\b(api|rest|graphql|backend|server)\b/.test(s)) return "api";
+  if (/\b(cli|command\s*line|terminal\s*tool)\b/.test(s)) return "cli";
+  if (/\b(library|sdk|package|module)\b/.test(s)) return "library";
+  return null;
+};
+
 export const parseFeatureListReply = (input: string): string[] => {
   const normalized = input
     .replace(/\r\n?/g, "\n")

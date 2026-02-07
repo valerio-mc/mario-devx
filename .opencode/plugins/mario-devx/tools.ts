@@ -40,6 +40,7 @@ import {
   hasDiverseQualityGates,
   hasMeaningfulList,
   hasNonEmpty,
+  inferPlatformFromText,
   isAtomicFeatureStatement,
   isLikelyBooleanReply,
   isPrdComplete,
@@ -862,6 +863,60 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         const missingBefore = firstMissingField(prd);
+        if (hasAnswer && missingBefore === "platform") {
+          const inferredPlatform = inferPlatformFromText(rawInput);
+          if (inferredPlatform) {
+            prd = {
+              ...prd,
+              platform: inferredPlatform,
+              frontend: typeof prd.frontend === "boolean" ? prd.frontend : inferredPlatform === "web",
+            };
+            const step = deriveWizardStep(prd);
+            const done = isPrdComplete(prd);
+            const nextQuestion = fallbackQuestion(prd);
+            prd = {
+              ...prd,
+              wizard: {
+                ...prd.wizard,
+                step,
+                totalSteps: WIZARD_TOTAL_STEPS,
+                status: done ? "completed" : "in_progress",
+                lastQuestionId: firstMissingField(prd),
+                answers: {
+                  ...prd.wizard.answers,
+                  [`turn-${Date.now()}`]: rawInput,
+                  [LAST_QUESTION_KEY]: nextQuestion,
+                },
+              },
+            };
+            if (done) {
+              prd = await seedTasksFromPrd(repoRoot, prd);
+              prd = {
+                ...prd,
+                wizard: {
+                  ...prd.wizard,
+                  status: "completed",
+                  step: WIZARD_TOTAL_STEPS,
+                  lastQuestionId: "done",
+                },
+              };
+              await writePrdJson(repoRoot, prd);
+              return [
+                "PRD wizard: completed.",
+                `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+                `Tasks: ${prd.tasks.length}`,
+                "Next: /mario-devx:run 1",
+              ].join("\n");
+            }
+            await writePrdJson(repoRoot, prd);
+            return [
+              `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+              nextQuestion,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
+        }
+
         if (hasAnswer && missingBefore === "uiVerificationRequired") {
           const boolReply = parseBooleanReply(rawInput);
           if (typeof boolReply === "boolean") {
