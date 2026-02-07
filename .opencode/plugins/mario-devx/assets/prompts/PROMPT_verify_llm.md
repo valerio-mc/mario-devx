@@ -28,13 +28,16 @@ Task completion checklist (all required unless task explicitly says otherwise):
 
 Output format (respond with exactly this in chat):
 
-Status: PASS|FAIL
-EXIT_SIGNAL: true|false
-Reason:
-- <bullets>
-Next actions:
-- <bullets>
+<VERIFIER_JSON>
+{
+  "status": "PASS|FAIL",
+  "reason": ["<bullet 1>", "<bullet 2>"],
+  "nextActions": ["<action 1>", "<action 2>"]
+}
+</VERIFIER_JSON>
 
 Additional rules:
-- If (and only if) the task is truly complete, set `Status: PASS` and `EXIT_SIGNAL: true`.
-- Otherwise set `Status: FAIL` and `EXIT_SIGNAL: false`.
+- If (and only if) the task is truly complete, set `status: "PASS"`.
+- Otherwise set `status: "FAIL"`.
+- Each reason bullet must cite either a repo file path or a specific gate result.
+- Next actions should be concrete steps the builder can take.

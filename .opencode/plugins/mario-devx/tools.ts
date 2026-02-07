@@ -581,129 +581,65 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
 };
 
 const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
+  // Try JSON format first
+  const jsonMatch = text.match(/<VERIFIER_JSON>([\s\S]*?)<\/VERIFIER_JSON>/i);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1].trim());
+      if (parsed.status && (parsed.status === "PASS" || parsed.status === "FAIL")) {
+        return {
+          status: parsed.status,
+          exitSignal: parsed.status === "PASS",
+          reason: Array.isArray(parsed.reason) ? parsed.reason : [String(parsed.reason || "No reason provided")],
+          nextActions: Array.isArray(parsed.nextActions) ? parsed.nextActions : ["Fix issues and rerun /mario-devx:run 1."],
+          rawText: text,
+        };
+      }
+    } catch {
+      // Fall through to text parsing
+    }
+  }
+  
+  // Fallback: simple text parsing for backwards compatibility
   const lines = text.split(/\r?\n/);
-
   let status: "PASS" | "FAIL" = "FAIL";
-  let statusSeen: "PASS" | "FAIL" | null = null;
   let statusExplicit = false;
-  let statusConflict = false;
-  let exitSignal = false;
-  let exitExplicit = false;
-  let section: "none" | "reason" | "next" = "none";
   const reason: string[] = [];
   const nextActions: string[] = [];
-  const unmatched: string[] = [];
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) {
-      continue;
-    }
-    const sm = line.match(/^Status:\s*(PASS|FAIL)\s*$/i);
-    if (sm) {
-      const next = (sm[1] ?? "FAIL").toUpperCase() as "PASS" | "FAIL";
-      if (statusSeen && statusSeen !== next) {
-        statusConflict = true;
-      }
-      statusSeen = statusSeen ?? next;
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    
+    const statusMatch = trimmed.match(/^Status:\s*(PASS|FAIL)/i);
+    if (statusMatch) {
+      status = statusMatch[1].toUpperCase() as "PASS" | "FAIL";
       statusExplicit = true;
-      status = next;
       continue;
     }
-    const em = line.match(/^EXIT_SIGNAL:\s*(true|false)\s*$/i);
-    if (em) {
-      exitSignal = (em[1] ?? "false").toLowerCase() === "true";
-      exitExplicit = true;
-      continue;
+    
+    if (trimmed.match(/^(Reason|Reasons):/i)) continue;
+    if (trimmed.match(/^(Next|Next actions|Next steps):/i)) continue;
+    
+    const content = trimmed.replace(/^[-\s]+/, "").trim();
+    if (!content) continue;
+    
+    if (trimmed.startsWith("-") && nextActions.length === 0) {
+      reason.push(content);
+    } else if (trimmed.startsWith("-")) {
+      nextActions.push(content);
+    } else if (reason.length === 0) {
+      reason.push(content);
     }
-    if (/^(Reason|Reasons):\s*$/i.test(line)) {
-      section = "reason";
-      continue;
-    }
-    if (/^(Next actions|Next steps):\s*$/i.test(line)) {
-      section = "next";
-      continue;
-    }
-
-    const isBullet = line.startsWith("-");
-    const content = isBullet ? line.replace(/^[-\s]+/, "").trim() : line;
-    if (!content) {
-      continue;
-    }
-
-    if (section === "reason") {
-      if (isBullet || reason.length === 0) {
-        reason.push(content);
-      } else {
-        reason[reason.length - 1] = `${reason[reason.length - 1]} ${content}`;
-      }
-      continue;
-    }
-    if (section === "next") {
-      if (isBullet || nextActions.length === 0) {
-        nextActions.push(content);
-      } else {
-        nextActions[nextActions.length - 1] = `${nextActions[nextActions.length - 1]} ${content}`;
-      }
-      continue;
-    }
-
-    // Preserve unmatched non-empty lines as fallback context.
-    unmatched.push(content);
   }
-
-  if (statusConflict) {
-    return {
-      status: "FAIL",
-      exitSignal: false,
-      reason: ["Verifier output invalid: conflicting Status lines found."],
-      nextActions: ["Fix the verifier output to include exactly one Status line, then rerun /mario-devx:run 1."],
-      rawText: text,
-    };
-  }
-
-  const normalizedReason = reason.length > 0 ? reason : unmatched.length > 0 ? unmatched : ["Verifier did not provide a parsable Reason list."];
-  const normalizedNext = nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."];
-
-  if (!statusExplicit || !exitExplicit) {
-    return {
-      status: "FAIL",
-      exitSignal: false,
-      reason: [
-        `Verifier output invalid: missing required header(s):${statusExplicit ? "" : " Status:"}${exitExplicit ? "" : " EXIT_SIGNAL:"}`.trim(),
-      ],
-      nextActions: [
-        "Re-run verifier and return exact format: Status, EXIT_SIGNAL, Reason bullets, Next actions bullets.",
-      ],
-      rawText: text,
-    };
-  }
-
-  if (status === "PASS" && exitSignal !== true) {
-    return {
-      status: "FAIL",
-      exitSignal: false,
-      reason: ["Verifier output invalid: Status: PASS requires EXIT_SIGNAL: true."],
-      nextActions: ["Fix the verifier output format (PASS must set EXIT_SIGNAL: true), then rerun /mario-devx:run 1."],
-      rawText: text,
-    };
-  }
-
+  
   return {
     status,
-    exitSignal: status === "PASS" ? true : false,
-    reason: normalizedReason,
-    nextActions: normalizedNext,
+    exitSignal: status === "PASS",
+    reason: reason.length > 0 ? reason : [statusExplicit ? "Task completed" : "Could not parse verifier output"],
+    nextActions: nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."],
     rawText: text,
   };
-};
-
-const judgeNeedsStrictRetry = (judge: PrdJudgeAttempt): boolean => {
-  return (
-    judge.status === "FAIL"
-    && Array.isArray(judge.reason)
-    && judge.reason.some((line) => line.toLowerCase().includes("verifier output invalid"))
-  );
 };
 
 const showToast = async (
@@ -1570,37 +1506,7 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
           const verifierText = extractTextFromPromptResponse(verifierResponse);
-          let judge = parseJudgeAttemptFromText(verifierText);
-          if (judgeNeedsStrictRetry(judge)) {
-            const strictRetryPrompt = [
-              "Re-evaluate and return ONLY the required verifier format.",
-              "Required exact headers:",
-              "Status: PASS|FAIL",
-              "EXIT_SIGNAL: true|false",
-              "Reason:",
-              "- <bullets>",
-              "Next actions:",
-              "- <bullets>",
-              "",
-              "Do not include prose before headers.",
-              "Previous invalid output:",
-              verifierText,
-            ].join("\n");
-            const strictResp = await ctx.client.session.prompt({
-              path: { id: ws.sessionId },
-              body: {
-                ...(context.agent ? { agent: context.agent } : {}),
-                parts: [{ type: "text", text: strictRetryPrompt }],
-              },
-            });
-            if (!(await heartbeatRunLock(repoRoot))) {
-              await blockForHeartbeatFailure("after-judge-retry");
-              await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
-              break;
-            }
-            const strictText = extractTextFromPromptResponse(strictResp);
-            judge = parseJudgeAttemptFromText(strictText);
-          }
+          const judge = parseJudgeAttemptFromText(verifierText);
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
             iteration: state.iteration,
