@@ -61,16 +61,13 @@ Mario DevX forces the only kind of memory that actually helps:
 /mario-devx:doctor        # healthcheck + concrete fixes
 ```
 
-## Control vs work session
+## Control vs Work session
 
 ```text
-Control session (you): runs /mario-devx:* commands
-        |
-        v
-Work session (internal): build + verify + judge
-        |
-        v
-Canonical state on disk: .mario/*
++-----------------------+        +---------------------------+        +---------------------+
+| Control Session (you) |  --->  | Work Session (mario-devx) |  --->  | Canonical State     |
+| (runs slash commands) |        | (build + verify + judge)  |        | (.mario/* on disk)  |
++-----------------------+        +---------------------------+        +---------------------+
 ```
 
 ## First run
