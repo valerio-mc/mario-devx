@@ -5,7 +5,7 @@ import path from "path";
 import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { ensureMario, bumpIteration, readWorkSessionState, readRunState, writeRunState } from "./state";
-import { FeatureAddInterviewState } from "./types";
+
 import { getRepoRoot } from "./paths";
 import {
   ensureT0002QualityBootstrap,
@@ -46,7 +46,6 @@ import {
   normalizeStyleReferences,
   normalizeTextArray,
   sameQuestion,
-  stripTrailingSentencePunctuation,
 } from "./interview";
 import {
   decomposeFeatureRequestToTasks,
@@ -1699,133 +1698,101 @@ export const createTools = (ctx: PluginContext) => {
           return "Feature request is empty. Provide a short description.";
         }
 
+        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const runState = await readRunState(repoRoot);
-        const activeInterview = runState.featureAddInterview?.active ? runState.featureAddInterview : null;
-        if (activeInterview) {
-          if (activeInterview.step === 1) {
-            const acceptance = feature.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-            if (acceptance.length < 2) {
-              const q = `For '${activeInterview.originalRequest}', list 2-5 concrete behaviors (one per line).`;
-              const next: FeatureAddInterviewState = {
-                ...activeInterview,
-                lastQuestion: q,
-              };
-              await writeRunState(repoRoot, { ...runState, featureAddInterview: next, updatedAt: nowIso() });
-              return [
-                "Feature interview (1/3)",
-                q,
-                "Reply with your answer in natural language.",
-              ].join("\n");
-            }
-            const q = "Any constraints or explicit non-goals for this feature? (Reply 'none' if nothing.)";
-            const next: FeatureAddInterviewState = {
-              ...activeInterview,
-              acceptance,
-              step: 2,
-              lastQuestion: q,
-            };
-            await writeRunState(repoRoot, { ...runState, featureAddInterview: next, updatedAt: nowIso() });
-            return [
-              "Feature interview (2/3)",
-              q,
-              "Reply with your answer in natural language.",
-            ].join("\n");
-          }
-
-          if (activeInterview.step === 2) {
-            const s = feature.trim();
-            const constraints = /^none$/i.test(s)
-              ? []
-              : s.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-            const q = "Any UX notes or edge cases? (Where it appears, interactions, confirmations, empty states. Reply 'none' if nothing.)";
-            const next: FeatureAddInterviewState = {
-              ...activeInterview,
-              constraints,
-              step: 3,
-              lastQuestion: q,
-            };
-            await writeRunState(repoRoot, { ...runState, featureAddInterview: next, updatedAt: nowIso() });
-            return [
-              "Feature interview (3/3)",
-              q,
-              "Reply with your answer in natural language.",
-            ].join("\n");
-          }
-
-          if (activeInterview.step === 3) {
-            const uxNotes = /^none$/i.test(feature.trim()) ? "" : feature.trim();
-            const constraints = activeInterview.constraints ?? [];
-            const backlogId = nextBacklogId(prd);
-            const gates = prd.verificationPolicy?.globalGates?.length
-              ? prd.verificationPolicy.globalGates
-              : prd.qualityGates;
-            const startN = nextTaskOrdinal(prd.tasks ?? []);
-            let n = startN;
-
-            const acceptance = (activeInterview.acceptance ?? []).map(stripTrailingSentencePunctuation).filter(Boolean);
-            const taskAtoms = acceptance.length > 0 ? acceptance : decomposeFeatureRequestToTasks(activeInterview.originalRequest);
-            const newTasks = taskAtoms.map((item) => makeTask({
-              id: normalizeTaskId(n++),
-              title: `Implement: ${item}`,
-              doneWhen: gates,
-              labels: ["feature", "backlog"],
-              acceptance: [item],
-              ...(uxNotes ? { notes: [uxNotes] } : {}),
-            }));
-
-            const request = [
-              activeInterview.originalRequest,
-              acceptance.length > 0 ? `\nAcceptance:\n${acceptance.map((a) => `- ${a}`).join("\n")}` : "",
-              constraints.length > 0 ? `\nConstraints / non-goals:\n${constraints.map((c) => `- ${c}`).join("\n")}` : "",
-              uxNotes ? `\nUX notes:\n${uxNotes}` : "",
-            ]
-              .join("\n")
-              .trim();
-
-            prd = {
-              ...prd,
-              tasks: [...(prd.tasks ?? []), ...newTasks],
-              backlog: {
-                ...prd.backlog,
-                featureRequests: [
-                  ...prd.backlog.featureRequests,
-                  {
-                    id: backlogId,
-                    title: compactIdea(activeInterview.originalRequest),
-                    request,
-                    createdAt: nowIso(),
-                    status: "planned",
-                    taskIds: newTasks.map((t) => t.id),
-                  },
-                ],
-              },
-            };
-            await writePrdJson(repoRoot, prd);
-            await writeRunState(repoRoot, { ...runState, featureAddInterview: undefined, updatedAt: nowIso() });
-
-            return [
-              `Feature added: ${backlogId}`,
-              `New tasks: ${newTasks.length}`,
-              `Task IDs: ${newTasks.map((t) => t.id).join(", ")}`,
-              `Next: /mario-devx:run 1`,
-            ].join("\n");
-          }
+        
+        // LLM-driven feature interview
+        const featurePrompt = [
+          "You are mario-devx's feature interviewer.",
+          "Help the user break down a feature request into implementable tasks.",
+          "",
+          "Current feature request:",
+          feature,
+          "",
+          "Quality gates for this project:",
+          JSON.stringify(prd.qualityGates ?? []),
+          "",
+          "Instructions:",
+          "- Ask follow-up questions if the feature is vague or needs clarification",
+          "- Once you have enough detail, return a JSON envelope with the breakdown",
+          "- Decompose the feature into 2-5 atomic implementation tasks",
+          "- Each task should be independently verifiable",
+          "",
+          "Return format:",
+          "<FEATURE_JSON>",
+          '{"ready": boolean, "tasks": string[], "acceptanceCriteria": string[], "constraints": string[], "uxNotes": string, "next_question": string | null}',
+          "</FEATURE_JSON>",
+          "",
+          "If ready=false, ask a follow-up question in next_question.",
+          "If ready=true, provide the breakdown and set next_question=null.",
+        ].join("\n");
+        
+        const featureResponse = await ctx.client.session.prompt({
+          path: { id: ws.sessionId },
+          body: {
+            ...(context.agent ? { agent: context.agent } : {}),
+            parts: [{ type: "text", text: featurePrompt }],
+          },
+        });
+        
+        const responseText = extractTextFromPromptResponse(featureResponse);
+        const jsonMatch = responseText.match(/<FEATURE_JSON>([\s\S]*?)<\/FEATURE_JSON>/i);
+        
+        if (!jsonMatch) {
+          return "Error: Could not parse feature breakdown. Please try again with more detail.";
         }
-
+        
+        let envelope: {
+          ready: boolean;
+          tasks?: string[];
+          acceptanceCriteria?: string[];
+          constraints?: string[];
+          uxNotes?: string;
+          next_question?: string | null;
+        };
+        
+        try {
+          envelope = JSON.parse(jsonMatch[1].trim());
+        } catch {
+          return "Error: Invalid JSON in feature response. Please try again.";
+        }
+        
+        // If not ready, ask follow-up question
+        if (!envelope.ready || envelope.next_question) {
+          return [
+            "Feature interview",
+            envelope.next_question || "Please provide more detail about this feature.",
+            "Reply with your answer in natural language.",
+          ].join("\n");
+        }
+        
+        // Create tasks from LLM breakdown
         const backlogId = nextBacklogId(prd);
-        const taskAtoms = decomposeFeatureRequestToTasks(feature);
         const gates = prd.verificationPolicy?.globalGates?.length
           ? prd.verificationPolicy.globalGates
           : prd.qualityGates;
         const startN = nextTaskOrdinal(prd.tasks ?? []);
         let n = startN;
+        
+        const taskAtoms = envelope.tasks?.length ? envelope.tasks : [feature];
         const newTasks = taskAtoms.map((item) => makeTask({
           id: normalizeTaskId(n++),
           title: `Implement: ${item}`,
           doneWhen: gates,
           labels: ["feature", "backlog"],
-          acceptance: [item],
+          acceptance: envelope.acceptanceCriteria?.length ? envelope.acceptanceCriteria : [item],
+          ...(envelope.uxNotes ? { notes: [envelope.uxNotes] } : {}),
         }));
+        
+        const request = [
+          feature,
+          envelope.acceptanceCriteria?.length ? `\nAcceptance:\n${envelope.acceptanceCriteria.map((a) => `- ${a}`).join("\n")}` : "",
+          envelope.constraints?.length ? `\nConstraints:\n${envelope.constraints.map((c) => `- ${c}`).join("\n")}` : "",
+          envelope.uxNotes ? `\nUX notes:\n${envelope.uxNotes}` : "",
+        ]
+          .join("\n")
+          .trim();
+        
         prd = {
           ...prd,
           tasks: [...(prd.tasks ?? []), ...newTasks],
@@ -1836,7 +1803,7 @@ export const createTools = (ctx: PluginContext) => {
               {
                 id: backlogId,
                 title: compactIdea(feature),
-                request: feature,
+                request: request || feature,
                 createdAt: nowIso(),
                 status: "planned",
                 taskIds: newTasks.map((t) => t.id),
@@ -1845,6 +1812,7 @@ export const createTools = (ctx: PluginContext) => {
           },
         };
         await writePrdJson(repoRoot, prd);
+        
         return [
           `Feature added: ${backlogId}`,
           `New tasks: ${newTasks.length}`,
