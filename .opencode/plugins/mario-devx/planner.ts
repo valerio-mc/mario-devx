@@ -1,7 +1,7 @@
 import path from "path";
 import { readTextIfExists } from "./fs";
 import type { PrdJson, PrdTask, PrdTaskAttempt, PrdTaskStatus } from "./prd";
-import { hasNonEmpty, normalizeTextArray, parseFeatureListReply, stripTrailingSentencePunctuation, isAtomicFeatureStatement } from "./interview";
+import { hasNonEmpty, normalizeTextArray } from "./interview";
 
 export const readmeSectionGate = (section: string, escapeDoubleQuoted: (value: string) => string): string => {
   const escaped = escapeDoubleQuoted(section.trim());
@@ -130,29 +130,13 @@ export const nextBacklogId = (items: PrdJson["backlog"]["featureRequests"]): str
 export const decomposeFeatureRequestToTasks = (feature: string): string[] => {
   const compact = feature.replace(/\s+/g, " ").trim();
   if (!compact) return [];
+  // Simple decomposition: split by commas or return as single item
   const byCommas = compact.split(",").map((p) => p.trim()).filter(Boolean);
-  const candidates = byCommas.length > 1 ? byCommas : [compact];
-  const out: string[] = [];
-  for (const c of candidates) {
-    const sub = c.split(/\s+(?:and|then|plus)\s+/i).map((p) => p.trim()).filter(Boolean);
-    out.push(...(sub.length > 1 ? sub : [c]));
-  }
-  const cleaned = Array.from(new Set(out.map((item) => stripTrailingSentencePunctuation(item)).filter(Boolean)));
-  const atomic = cleaned.filter(isAtomicFeatureStatement);
-  if (atomic.length > 0) {
-    return atomic;
-  }
-  return [stripTrailingSentencePunctuation(compact)];
+  return byCommas.length > 1 ? byCommas : [compact];
 };
 
 export const normalizeMustHaveFeatureAtoms = (features: string[] | undefined): string[] => {
-  const source = normalizeTextArray(features);
-  const atoms = source
-    .flatMap((item) => parseFeatureListReply(item))
-    .map(stripTrailingSentencePunctuation)
-    .filter(Boolean)
-    .filter(isAtomicFeatureStatement);
-  return Array.from(new Set(atoms));
+  return normalizeTextArray(features);
 };
 
 export const makeTask = (params: {
