@@ -25,6 +25,8 @@ Mario DevX forces the only kind of memory that actually helps:
 ```
 /mario-devx:new <idea>    # PRD wizard -> seeds .mario/prd.json (requirements + tasks)
 /mario-devx:run <N>       # build + gates + judge for the next N tasks
+/mario-devx:add <feature> # add a new feature request and decompose into new tasks
+/mario-devx:replan        # regenerate open-task plan from backlog requests
 /mario-devx:status        # what's running + focus task + last verdict + next action
 /mario-devx:doctor        # healthcheck + concrete fixes
 ```
@@ -60,7 +62,13 @@ opencode .
 ```
 
 Answer the PRD interview questions in your current session using natural language.
-The interviewer is intentionally strict: it will probe for target users, concrete problems, measurable success metrics, constraints, non-goals, runnable quality gates, and whether UI browser verification should be required (for frontend projects) before it marks the PRD complete.
+The interviewer is intentionally strict and now captures deeper planning fields:
+- target users/problems + constraints + measurable outcomes
+- runnable quality gates (project-defined backpressure)
+- frontend UI conceptualization (design system, visual direction, UX requirements, optional style references)
+- README policy for human-readable docs
+
+Task decomposition is unbounded: simple ideas may generate ~5 tasks, complex ideas can generate 30+ atomic tasks.
 You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
 
 5) **Run the loop**
@@ -104,8 +112,16 @@ Note: nothing runs code until you call `/mario-devx:run`.
 
 Task order is scaffold-first by design:
 - `T-0001`: scaffold baseline
-- `T-0002`: setup quality pipeline (make declared gates runnable)
+- `T-0002`: setup quality pipeline (using PRD-defined gates)
+- docs task (README) when enabled
 - remaining tasks: feature implementation
+
+You can add features at any time:
+
+```text
+/mario-devx:add add CSV export and saved filters
+/mario-devx:replan
+```
 
 ## What gets created
 
@@ -113,7 +129,7 @@ In your project:
 
 ```text
 .mario/
-  prd.json                   # requirements + tasks + Quality Gates (+ UI verify preference)
+  prd.json                   # requirements + planning + tasks + backlog + verification policy
   AGENTS.md                  # harness knobs (UI_VERIFY*)
   state/state.json           # internal state (iteration, run status, work session ids)
 ```
@@ -142,7 +158,7 @@ How it works:
 - Starts your dev server (`UI_VERIFY_CMD`) and drives a real browser at `UI_VERIFY_URL` using Vercel's `agent-browser` (Playwright-based).
 - Stores the latest UI result on the task under `.mario/prd.json` (`tasks[].lastAttempt.ui`).
 
-If prerequisites are missing, UI verify is skipped unless you set `UI_VERIFY_REQUIRED=1`.
+If prerequisites are missing and UI verify is enabled, mario-devx auto-attempts install first.
 When UI verify is enabled and prerequisites are missing, mario-devx also auto-attempts install:
 - `npm install -g agent-browser`
 - `agent-browser install`

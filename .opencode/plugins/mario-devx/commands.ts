@@ -35,6 +35,16 @@ export const createCommands = (): CommandDefinition[] => [
     "Invoke mario_devx_run exactly once with max_items=$ARGUMENTS. Do not invoke any other tool. Return only the tool output.",
   ),
   command(
+    "add",
+    "Add a feature request and decompose into tasks",
+    "Call tool mario_devx_add with feature=\"$ARGUMENTS\" exactly once. Return only the tool output.",
+  ),
+  command(
+    "replan",
+    "Rebuild open-task plan from backlog",
+    "Call tool mario_devx_replan with no arguments exactly once. Return only the tool output.",
+  ),
+  command(
     "status",
     "Show mario-devx status",
     "Call tool mario_devx_status with no arguments.",

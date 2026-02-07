@@ -11,7 +11,7 @@ Rules:
 - Before doing anything else, read `.mario/prd.json` for the current task and its `lastAttempt` (if any).
 - Implement exactly ONE task (the tool invocation provides the task ID and a task block).
 - Search first; do not assume missing.
-- Apply backpressure: run the verification commands configured in `.mario/prd.json` (`qualityGates`).
+- Apply backpressure using project-defined verification in `.mario/prd.json` (`tasks[].doneWhen`, `verificationPolicy.taskGates`, `verificationPolicy.globalGates`).
 - If deterministic verification is not possible, report the limitation in chat and continue with smallest verifiable code change; do NOT edit `.mario/prd.json` directly.
 - Do not modify `.opencode/plugins/mario-devx/**`.
 - Do not edit control-plane files directly: `.mario/prd.json`, `.mario/state/state.json`, `.mario/AGENTS.md`.

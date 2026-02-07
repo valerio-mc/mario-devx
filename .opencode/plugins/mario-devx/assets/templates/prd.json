@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "meta": {
     "createdAt": "",
     "updatedAt": ""
@@ -7,7 +7,7 @@
   "wizard": {
     "status": "in_progress",
     "step": 0,
-    "totalSteps": 13,
+    "totalSteps": 17,
     "lastQuestionId": null,
     "answers": {}
   },
@@ -18,6 +18,42 @@
   "language": null,
   "framework": null,
   "qualityGates": [],
+  "planning": {
+    "decompositionStrategy": "Split features into smallest independently verifiable tasks.",
+    "granularityRules": [
+      "Each task should fit in one focused iteration.",
+      "Each task must include explicit acceptance criteria."
+    ],
+    "stopWhen": [
+      "All must-have features are mapped to tasks.",
+      "All tasks have deterministic verification."
+    ]
+  },
+  "verificationPolicy": {
+    "globalGates": [],
+    "taskGates": {},
+    "uiPolicy": "best_effort"
+  },
+  "ui": {
+    "designSystem": null,
+    "styleReferences": [],
+    "visualDirection": "",
+    "uxRequirements": []
+  },
+  "docs": {
+    "readmeRequired": true,
+    "readmeSections": [
+      "Overview",
+      "Tech Stack",
+      "Setup",
+      "Environment Variables",
+      "Scripts",
+      "Usage"
+    ]
+  },
+  "backlog": {
+    "featureRequests": []
+  },
   "product": {
     "targetUsers": [],
     "userProblems": [],

@@ -140,9 +140,49 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
       meta: { ...existing.meta, createdAt },
       wizard: {
         ...existing.wizard,
-        totalSteps: Math.max(existing.wizard?.totalSteps ?? 0, 13),
+        totalSteps: Math.max(existing.wizard?.totalSteps ?? 0, 17),
       },
+      version: 4,
       uiVerificationRequired: typeof existing.uiVerificationRequired === "boolean" ? existing.uiVerificationRequired : null,
+      planning: {
+        decompositionStrategy: hasNonEmpty(existing.planning?.decompositionStrategy)
+          ? existing.planning.decompositionStrategy
+          : "Split features into smallest independently verifiable tasks.",
+        granularityRules: Array.isArray(existing.planning?.granularityRules)
+          ? existing.planning.granularityRules
+          : ["Each task should fit in one focused iteration.", "Each task must include explicit acceptance criteria."],
+        stopWhen: Array.isArray(existing.planning?.stopWhen)
+          ? existing.planning.stopWhen
+          : ["All must-have features are mapped to tasks.", "All tasks have deterministic verification."],
+      },
+      verificationPolicy: {
+        globalGates: Array.isArray(existing.verificationPolicy?.globalGates)
+          ? existing.verificationPolicy.globalGates
+          : (Array.isArray(existing.qualityGates) ? existing.qualityGates : []),
+        taskGates: (existing.verificationPolicy?.taskGates && typeof existing.verificationPolicy.taskGates === "object")
+          ? existing.verificationPolicy.taskGates
+          : {},
+        uiPolicy: existing.verificationPolicy?.uiPolicy === "required"
+          ? "required"
+          : existing.verificationPolicy?.uiPolicy === "off"
+            ? "off"
+            : "best_effort",
+      },
+      ui: {
+        designSystem: existing.ui?.designSystem ?? null,
+        styleReferences: Array.isArray(existing.ui?.styleReferences) ? existing.ui.styleReferences : [],
+        visualDirection: typeof existing.ui?.visualDirection === "string" ? existing.ui.visualDirection : "",
+        uxRequirements: Array.isArray(existing.ui?.uxRequirements) ? existing.ui.uxRequirements : [],
+      },
+      docs: {
+        readmeRequired: typeof existing.docs?.readmeRequired === "boolean" ? existing.docs.readmeRequired : true,
+        readmeSections: Array.isArray(existing.docs?.readmeSections)
+          ? existing.docs.readmeSections
+          : ["Overview", "Tech Stack", "Setup", "Environment Variables", "Scripts", "Usage"],
+      },
+      backlog: {
+        featureRequests: Array.isArray(existing.backlog?.featureRequests) ? existing.backlog.featureRequests : [],
+      },
       product: {
         targetUsers: Array.isArray(existing.product?.targetUsers) ? existing.product.targetUsers : [],
         userProblems: Array.isArray(existing.product?.userProblems) ? existing.product.userProblems : [],
@@ -168,6 +208,12 @@ type InterviewUpdates = {
   platform?: "web" | "api" | "cli" | "library";
   frontend?: boolean;
   uiVerificationRequired?: boolean;
+  uiDesignSystem?: "none" | "tailwind" | "shadcn" | "custom";
+  uiStyleReferences?: string[];
+  uiVisualDirection?: string;
+  uiUxRequirements?: string[];
+  docsReadmeRequired?: boolean;
+  docsReadmeSections?: string[];
   language?: "typescript" | "python" | "go" | "rust" | "other";
   framework?: string | null;
   targetUsers?: string[];
@@ -185,7 +231,7 @@ type InterviewEnvelope = {
   next_question?: string;
 };
 
-const WIZARD_TOTAL_STEPS = 13;
+const WIZARD_TOTAL_STEPS = 17;
 const LAST_QUESTION_KEY = "__last_question";
 const MIN_FEATURES = 3;
 const MIN_QUALITY_GATES = 2;
@@ -273,6 +319,9 @@ const isPrdComplete = (prd: PrdJson): boolean => {
     && prd.platform !== null
     && typeof prd.frontend === "boolean"
     && (prd.frontend === false || typeof prd.uiVerificationRequired === "boolean")
+    && (prd.frontend === false || prd.ui.designSystem !== null)
+    && (prd.frontend === false || hasNonEmpty(prd.ui.visualDirection))
+    && (prd.frontend === false || hasMeaningfulList(prd.ui.uxRequirements))
     && prd.language !== null
     && hasNonEmpty(prd.framework)
     && hasMeaningfulList(prd.product.targetUsers)
@@ -281,6 +330,8 @@ const isPrdComplete = (prd: PrdJson): boolean => {
     && hasMeaningfulList(prd.product.nonGoals)
     && hasMeaningfulList(prd.product.successMetrics)
     && hasMeaningfulList(prd.product.constraints)
+    && typeof prd.docs.readmeRequired === "boolean"
+    && (prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections))
     && hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES)
     && hasDiverseQualityGates(prd.qualityGates)
   );
@@ -292,15 +343,19 @@ const deriveWizardStep = (prd: PrdJson): number => {
   if (prd.platform !== null) step = 2;
   if (typeof prd.frontend === "boolean") step = 3;
   if (prd.frontend === false || typeof prd.uiVerificationRequired === "boolean") step = 4;
-  if (prd.language !== null) step = 5;
-  if (hasNonEmpty(prd.framework)) step = 6;
-  if (hasMeaningfulList(prd.product.targetUsers)) step = 7;
-  if (hasMeaningfulList(prd.product.userProblems)) step = 8;
-  if (hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 9;
-  if (hasMeaningfulList(prd.product.nonGoals)) step = 10;
-  if (hasMeaningfulList(prd.product.successMetrics)) step = 11;
-  if (hasMeaningfulList(prd.product.constraints)) step = 12;
-  if (hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates)) step = 13;
+  if (prd.frontend === false || prd.ui.designSystem !== null) step = 5;
+  if (prd.frontend === false || hasNonEmpty(prd.ui.visualDirection)) step = 6;
+  if (prd.frontend === false || hasMeaningfulList(prd.ui.uxRequirements)) step = 7;
+  if (typeof prd.docs.readmeRequired === "boolean") step = 8;
+  if (prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections)) step = 9;
+  if (prd.language !== null) step = 10;
+  if (hasNonEmpty(prd.framework)) step = 11;
+  if (hasMeaningfulList(prd.product.targetUsers)) step = 12;
+  if (hasMeaningfulList(prd.product.userProblems)) step = 13;
+  if (hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 14;
+  if (hasMeaningfulList(prd.product.nonGoals)) step = 15;
+  if (hasMeaningfulList(prd.product.successMetrics)) step = 16;
+  if (hasMeaningfulList(prd.product.constraints) && hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates)) step = 17;
   return Math.min(WIZARD_TOTAL_STEPS, step);
 };
 
@@ -309,6 +364,11 @@ const firstMissingField = (prd: PrdJson): string => {
   if (prd.platform === null) return "platform";
   if (typeof prd.frontend !== "boolean") return "frontend";
   if (prd.frontend === true && typeof prd.uiVerificationRequired !== "boolean") return "uiVerificationRequired";
+  if (prd.frontend === true && prd.ui.designSystem === null) return "uiDesignSystem";
+  if (prd.frontend === true && !hasNonEmpty(prd.ui.visualDirection)) return "uiVisualDirection";
+  if (prd.frontend === true && !hasMeaningfulList(prd.ui.uxRequirements)) return "uiUxRequirements";
+  if (typeof prd.docs.readmeRequired !== "boolean") return "docsReadmeRequired";
+  if (prd.docs.readmeRequired === true && !hasMeaningfulList(prd.docs.readmeSections)) return "docsReadmeSections";
   if (prd.language === null) return "language";
   if (!hasNonEmpty(prd.framework)) return "framework";
   if (!hasMeaningfulList(prd.product.targetUsers)) return "targetUsers";
@@ -332,6 +392,16 @@ const fallbackQuestion = (prd: PrdJson): string => {
       return "Does this project need a browser UI?";
     case "uiVerificationRequired":
       return "Should automated UI browser verification be required on every run? (yes/no)";
+    case "uiDesignSystem":
+      return "Which UI stack should we use: Tailwind, shadcn/ui, custom CSS, or none?";
+    case "uiVisualDirection":
+      return "Describe the visual direction in one line (mood, typography, color style).";
+    case "uiUxRequirements":
+      return "List key UX requirements (states, responsiveness, accessibility).";
+    case "docsReadmeRequired":
+      return "Should this project maintain a human-readable README.md throughout development? (yes/no)";
+    case "docsReadmeSections":
+      return "List required README sections (for example: Overview, Setup, Env Vars, Usage).";
     case "language":
       return "What is the primary language: TypeScript, Python, Go, Rust, or other?";
     case "framework":
@@ -413,47 +483,126 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
   }
   const bootstrapPlan = await scaffoldPlanFromPrd(repoRoot, prd);
   const doneWhen = prd.qualityGates ?? [];
+
+  const toAtomicFeatureTasks = (feature: string): string[] => {
+    const compact = feature.replace(/\s+/g, " ").trim();
+    if (!compact) return [];
+    const parts = compact
+      .split(/\s+(?:and|then|plus)\s+/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    return parts.length > 1 ? parts : [compact];
+  };
+
   const tasks: PrdTask[] = [];
   let n = 1;
+  const scaffoldId = normalizeTaskId(n++);
   tasks.push(
     makeTask({
-      id: normalizeTaskId(n++),
+      id: scaffoldId,
       title: prd.idea.trim() ? `Scaffold project baseline: ${compactIdea(prd.idea)}` : "Scaffold project baseline",
       doneWhen: bootstrapPlan.doneWhen,
       notes: bootstrapPlan.notes,
+      labels: ["scaffold", "foundation"],
+      acceptance: ["Project skeleton exists and can be iterated on safely."],
     }),
   );
   if (doneWhen.length > 0) {
+    const qualitySetupId = normalizeTaskId(n++);
     tasks.push(
       makeTask({
-        id: normalizeTaskId(n++),
+        id: qualitySetupId,
         title: "Setup quality pipeline so configured gates are runnable",
         doneWhen,
+        dependsOn: [scaffoldId],
+        labels: ["quality", "foundation"],
+        acceptance: ["All declared quality gates execute successfully in this repository."],
         notes: [
           "Implement project-specific verification setup so declared quality gates run successfully.",
         ],
       }),
     );
   }
-  for (const feature of prd.product.mustHaveFeatures ?? []) {
+  if (prd.docs.readmeRequired) {
     tasks.push(
       makeTask({
         id: normalizeTaskId(n++),
-        title: `Implement: ${feature}`,
-        doneWhen,
+        title: "Initialize and maintain human-readable README.md",
+        doneWhen: ["test -f README.md"],
+        dependsOn: [scaffoldId],
+        labels: ["docs"],
+        acceptance: [
+          `README.md includes: ${(prd.docs.readmeSections ?? []).join(", ")}`,
+        ],
       }),
     );
   }
-  return { ...prd, tasks };
+  for (const feature of prd.product.mustHaveFeatures ?? []) {
+    const atoms = toAtomicFeatureTasks(feature);
+    for (const atom of atoms) {
+    tasks.push(
+      makeTask({
+        id: normalizeTaskId(n++),
+          title: `Implement: ${atom}`,
+        doneWhen,
+          labels: ["feature"],
+          acceptance: [atom],
+      }),
+    );
+    }
+  }
+  return {
+    ...prd,
+    tasks,
+    verificationPolicy: {
+      ...prd.verificationPolicy,
+      globalGates: doneWhen,
+    },
+  };
 };
 
 const normalizeTaskId = (n: number): string => `T-${String(n).padStart(4, "0")}`;
+
+const nextTaskOrdinal = (tasks: PrdTask[]): number => {
+  let max = 0;
+  for (const task of tasks) {
+    const m = task.id.match(/^T-(\d{4,})$/);
+    if (!m) continue;
+    const n = Number.parseInt(m[1] ?? "0", 10);
+    if (Number.isFinite(n)) max = Math.max(max, n);
+  }
+  return max + 1;
+};
+
+const nextBacklogId = (prd: PrdJson): string => {
+  const ids = prd.backlog.featureRequests.map((item) => item.id);
+  let n = ids.length + 1;
+  while (ids.includes(`F-${String(n).padStart(4, "0")}`)) n += 1;
+  return `F-${String(n).padStart(4, "0")}`;
+};
+
+const decomposeFeatureRequestToTasks = (feature: string): string[] => {
+  const compact = feature.replace(/\s+/g, " ").trim();
+  if (!compact) return [];
+  const byCommas = compact.split(",").map((p) => p.trim()).filter(Boolean);
+  const candidates = byCommas.length > 1 ? byCommas : [compact];
+  const out: string[] = [];
+  for (const c of candidates) {
+    const sub = c.split(/\s+(?:and|then|plus)\s+/i).map((p) => p.trim()).filter(Boolean);
+    out.push(...(sub.length > 1 ? sub : [c]));
+  }
+  return Array.from(new Set(out));
+};
 
 const makeTask = (params: {
   id: string;
   status?: PrdTaskStatus;
   title: string;
   scope?: string[];
+  parentId?: string;
+  dependsOn?: string[];
+  labels?: string[];
+  acceptance?: string[];
   doneWhen: string[];
   evidence?: string[];
   notes?: string[];
@@ -463,6 +612,10 @@ const makeTask = (params: {
     status: params.status ?? "open",
     title: params.title,
     scope: params.scope ?? ["**/*"],
+    ...(params.parentId ? { parentId: params.parentId } : {}),
+    ...(params.dependsOn ? { dependsOn: params.dependsOn } : {}),
+    ...(params.labels ? { labels: params.labels } : {}),
+    ...(params.acceptance ? { acceptance: params.acceptance } : {}),
     doneWhen: params.doneWhen,
     evidence: params.evidence ?? [],
     ...(params.notes ? { notes: params.notes } : {}),
@@ -535,6 +688,11 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     platform: prd.platform !== null,
     frontend: typeof prd.frontend === "boolean",
     uiVerificationRequired: prd.frontend === false || typeof prd.uiVerificationRequired === "boolean",
+    uiDesignSystem: prd.frontend === false || prd.ui.designSystem !== null,
+    uiVisualDirection: prd.frontend === false || hasNonEmpty(prd.ui.visualDirection),
+    uiUxRequirements: prd.frontend === false || hasMeaningfulList(prd.ui.uxRequirements),
+    docsReadmeRequired: typeof prd.docs.readmeRequired === "boolean",
+    docsReadmeSections: prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections),
     language: prd.language !== null,
     framework: hasNonEmpty(prd.framework),
     targetUsers: hasMeaningfulList(prd.product.targetUsers),
@@ -550,6 +708,13 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     platform: prd.platform,
     frontend: prd.frontend,
     uiVerificationRequired: prd.uiVerificationRequired,
+    uiDesignSystem: prd.ui.designSystem,
+    uiStyleReferences: prd.ui.styleReferences,
+    uiVisualDirection: prd.ui.visualDirection,
+    uiUxRequirements: prd.ui.uxRequirements,
+    docsReadmeRequired: prd.docs.readmeRequired,
+    docsReadmeSections: prd.docs.readmeSections,
+    planning: prd.planning,
     language: prd.language,
     framework: prd.framework,
     targetUsers: prd.product.targetUsers,
@@ -574,6 +739,11 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- platform (web|api|cli|library)",
     "- frontend (true/false)",
     "- uiVerificationRequired (true/false when frontend=true)",
+    "- uiDesignSystem (none|tailwind|shadcn|custom when frontend=true)",
+    "- uiVisualDirection (non-empty string when frontend=true)",
+    "- uiUxRequirements (non-empty string[] when frontend=true)",
+    "- docsReadmeRequired (true/false)",
+    "- docsReadmeSections (non-empty string[] when docsReadmeRequired=true)",
     "- language (typescript|python|go|rust|other)",
     "- framework (string)",
     "- targetUsers (non-empty string[])",
@@ -585,7 +755,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     `- qualityGates (at least ${MIN_QUALITY_GATES} runnable commands including both test and static checks)`,
     "",
     "Envelope schema:",
-    '{"done": boolean, "updates": {idea?, platform?, frontend?, uiVerificationRequired?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
+    '{"done": boolean, "updates": {idea?, platform?, frontend?, uiVerificationRequired?, uiDesignSystem?, uiStyleReferences?, uiVisualDirection?, uiUxRequirements?, docsReadmeRequired?, docsReadmeSections?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
     "",
     "Rules:",
     "- updates MUST include only fields changed by this answer.",
@@ -595,9 +765,11 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- Keep question short (max 22 words), concrete, and answerable in one message.",
     "- For boolean fields, ask yes/no in plain language (never ask for true/false literals).",
     "- Do not re-ask fields that are already satisfied in the readiness checklist.",
-    "- Plan implementation order as: scaffold baseline, setup quality pipeline so gates are runnable, then feature tasks.",
+    "- Plan implementation order as: scaffold baseline, quality-pipeline setup, README baseline, then feature tasks.",
     "- qualityGates must be explicit runnable commands (eg: npm run lint).",
     "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
+    "- Decompose must-have features into atomic, independently testable behaviors; task count is unbounded if needed.",
+    "- For frontend projects, capture UI direction deeply (design system, visual direction, UX requirements, optional reference URLs).",
     "- Do not mark done=true unless ALL required fields pass the criteria above.",
     "- if unsure, ask a question and keep done=false.",
     "- no markdown except the two required tags.",
@@ -647,6 +819,30 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   if (updates.platform) next.platform = updates.platform;
   if (typeof updates.frontend === "boolean") next.frontend = updates.frontend;
   if (typeof updates.uiVerificationRequired === "boolean") next.uiVerificationRequired = updates.uiVerificationRequired;
+  if (typeof updates.uiVerificationRequired === "boolean") {
+    next.verificationPolicy = {
+      ...next.verificationPolicy,
+      uiPolicy: updates.uiVerificationRequired ? "required" : "best_effort",
+    };
+  }
+  if (updates.uiDesignSystem) {
+    next.ui = { ...next.ui, designSystem: updates.uiDesignSystem };
+  }
+  if (Array.isArray(updates.uiStyleReferences)) {
+    next.ui = { ...next.ui, styleReferences: normalizeTextArray(updates.uiStyleReferences) };
+  }
+  if (typeof updates.uiVisualDirection === "string") {
+    next.ui = { ...next.ui, visualDirection: updates.uiVisualDirection.trim() };
+  }
+  if (Array.isArray(updates.uiUxRequirements)) {
+    next.ui = { ...next.ui, uxRequirements: normalizeTextArray(updates.uiUxRequirements) };
+  }
+  if (typeof updates.docsReadmeRequired === "boolean") {
+    next.docs = { ...next.docs, readmeRequired: updates.docsReadmeRequired };
+  }
+  if (Array.isArray(updates.docsReadmeSections)) {
+    next.docs = { ...next.docs, readmeSections: normalizeTextArray(updates.docsReadmeSections) };
+  }
   if (updates.language) next.language = updates.language;
   if (typeof updates.framework === "string" || updates.framework === null) next.framework = updates.framework;
   if (Array.isArray(updates.targetUsers)) {
@@ -657,6 +853,10 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   }
   if (Array.isArray(updates.qualityGates)) {
     next.qualityGates = normalizeTextArray(updates.qualityGates);
+    next.verificationPolicy = {
+      ...next.verificationPolicy,
+      globalGates: next.qualityGates,
+    };
   }
   if (Array.isArray(updates.mustHaveFeatures)) {
     next.product = {
@@ -679,6 +879,15 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   }
   if (next.frontend === false) {
     next.uiVerificationRequired = false;
+    next.ui = {
+      ...next.ui,
+      designSystem: "none",
+      visualDirection: next.ui.visualDirection || "non-UI project",
+      uxRequirements: next.ui.uxRequirements.length > 0 ? next.ui.uxRequirements : ["No browser UI required."],
+    };
+  }
+  if (next.docs.readmeRequired === false) {
+    next.docs = { ...next.docs, readmeSections: [] };
   }
   if (typeof next.framework === "string" && next.framework.trim().length === 0) {
     next.framework = null;
@@ -1378,6 +1587,43 @@ export const createTools = (ctx: PluginContext) => {
           }
         }
 
+        if (hasAnswer && missingBefore === "docsReadmeRequired") {
+          const boolReply = parseBooleanReply(rawInput);
+          if (typeof boolReply === "boolean") {
+            prd = {
+              ...prd,
+              docs: {
+                ...prd.docs,
+                readmeRequired: boolReply,
+                readmeSections: boolReply ? prd.docs.readmeSections : [],
+              },
+            };
+            const step = deriveWizardStep(prd);
+            const nextQuestion = fallbackQuestion(prd);
+            prd = {
+              ...prd,
+              wizard: {
+                ...prd.wizard,
+                step,
+                totalSteps: WIZARD_TOTAL_STEPS,
+                status: isPrdComplete(prd) ? "completed" : "in_progress",
+                lastQuestionId: firstMissingField(prd),
+                answers: {
+                  ...prd.wizard.answers,
+                  [`turn-${Date.now()}`]: rawInput,
+                  [LAST_QUESTION_KEY]: nextQuestion,
+                },
+              },
+            };
+            await writePrdJson(repoRoot, prd);
+            return [
+              `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+              nextQuestion,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
+        }
+
         if (hasAnswer && missingBefore === "mustHaveFeatures") {
           const features = parseFeatureListReply(rawInput);
           if (features.length >= MIN_FEATURES) {
@@ -1673,7 +1919,14 @@ export const createTools = (ctx: PluginContext) => {
             if (!task) {
               break;
             }
-            const effectiveDoneWhen = task.doneWhen.length > 0 ? task.doneWhen : (prd.qualityGates ?? []);
+            const taskPolicyGates = prd.verificationPolicy?.taskGates?.[task.id] ?? [];
+            const effectiveDoneWhen = task.doneWhen.length > 0
+              ? task.doneWhen
+              : taskPolicyGates.length > 0
+                ? taskPolicyGates
+                : (prd.verificationPolicy?.globalGates?.length
+                  ? prd.verificationPolicy.globalGates
+                  : (prd.qualityGates ?? []));
             const gateCommands = effectiveDoneWhen.map((command, idx) => ({
               name: `gate-${idx + 1}`,
               command,
@@ -2152,6 +2405,108 @@ export const createTools = (ctx: PluginContext) => {
       },
     }),
 
+    mario_devx_add: tool({
+      description: "Add a feature request and decompose into tasks",
+      args: {
+        feature: tool.schema.string().describe("Feature request to add"),
+      },
+      async execute(args, context: ToolContext) {
+        const notInWork = await ensureNotInWorkSession(repoRoot, context);
+        if (!notInWork.ok) {
+          return notInWork.message;
+        }
+        await ensureMario(repoRoot, false);
+        let prd = await ensurePrd(repoRoot);
+        const feature = (args.feature ?? "").trim();
+        if (!feature) {
+          return "Feature request is empty. Provide a short description.";
+        }
+        const backlogId = nextBacklogId(prd);
+        const taskAtoms = decomposeFeatureRequestToTasks(feature);
+        const startN = nextTaskOrdinal(prd.tasks ?? []);
+        let n = startN;
+        const newTasks = taskAtoms.map((item) => makeTask({
+          id: normalizeTaskId(n++),
+          title: `Implement: ${item}`,
+          doneWhen: prd.qualityGates,
+          labels: ["feature", "backlog"],
+          acceptance: [item],
+        }));
+        prd = {
+          ...prd,
+          tasks: [...(prd.tasks ?? []), ...newTasks],
+          backlog: {
+            ...prd.backlog,
+            featureRequests: [
+              ...prd.backlog.featureRequests,
+              {
+                id: backlogId,
+                title: compactIdea(feature),
+                request: feature,
+                createdAt: nowIso(),
+                status: "planned",
+                taskIds: newTasks.map((t) => t.id),
+              },
+            ],
+          },
+        };
+        await writePrdJson(repoRoot, prd);
+        return [
+          `Feature added: ${backlogId}`,
+          `New tasks: ${newTasks.length}`,
+          `Task IDs: ${newTasks.map((t) => t.id).join(", ")}`,
+          `Next: /mario-devx:run 1`,
+        ].join("\n");
+      },
+    }),
+
+    mario_devx_replan: tool({
+      description: "Rebuild open-task plan from backlog",
+      args: {},
+      async execute(_args, context: ToolContext) {
+        const notInWork = await ensureNotInWorkSession(repoRoot, context);
+        if (!notInWork.ok) {
+          return notInWork.message;
+        }
+        await ensureMario(repoRoot, false);
+        let prd = await ensurePrd(repoRoot);
+        const openBacklog = prd.backlog.featureRequests.filter((f) => f.status === "open");
+        if (openBacklog.length === 0) {
+          return "No open backlog items to replan.";
+        }
+        let n = nextTaskOrdinal(prd.tasks ?? []);
+        const generated: PrdTask[] = [];
+        const updatedBacklog = prd.backlog.featureRequests.map((f) => {
+          if (f.status !== "open") return f;
+          const atoms = decomposeFeatureRequestToTasks(f.request);
+          const tasks = atoms.map((atom) => makeTask({
+            id: normalizeTaskId(n++),
+            title: `Implement: ${atom}`,
+            doneWhen: prd.qualityGates,
+            labels: ["feature", "backlog"],
+            acceptance: [atom],
+          }));
+          generated.push(...tasks);
+          return {
+            ...f,
+            status: "planned" as const,
+            taskIds: tasks.map((t) => t.id),
+          };
+        });
+        prd = {
+          ...prd,
+          tasks: [...(prd.tasks ?? []), ...generated],
+          backlog: { ...prd.backlog, featureRequests: updatedBacklog },
+        };
+        await writePrdJson(repoRoot, prd);
+        return [
+          `Replan complete.`,
+          `Backlog items planned: ${openBacklog.length}`,
+          `New tasks: ${generated.length}`,
+        ].join("\n");
+      },
+    }),
+
     mario_devx_status: tool({
       description: "Show mario-devx status",
       args: {},
@@ -2188,6 +2543,7 @@ export const createTools = (ctx: PluginContext) => {
           `Work session: ${ws.sessionId}`,
           `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
           `PRD wizard: ${prd.wizard.status}${prd.wizard.status !== "completed" ? ` (${prd.wizard.step}/${prd.wizard.totalSteps})` : ""}`,
+          `Backlog open: ${prd.backlog.featureRequests.filter((f) => f.status === "open").length}`,
           focusTask
             ? `Focus task: ${focusTask.id} (${focusTask.status}) - ${focusTask.title}`
             : "Focus task: (none)",
