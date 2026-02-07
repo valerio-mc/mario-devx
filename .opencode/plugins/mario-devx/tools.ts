@@ -40,6 +40,7 @@ import {
   hasDiverseQualityGates,
   hasMeaningfulList,
   hasNonEmpty,
+  inferLanguageFromText,
   inferPlatformFromText,
   inferUiDesignSystemFromText,
   isAtomicFeatureStatement,
@@ -54,6 +55,7 @@ import {
   parseAtomicAcceptanceList,
   parseBooleanReply,
   parseFeatureListReply,
+  parseLooseListReply,
   sameQuestion,
   stripTrailingSentencePunctuation,
 } from "./interview";
@@ -845,6 +847,55 @@ export const createTools = (ctx: PluginContext) => {
             };
           }
         }
+
+        const persistInterviewProgress = async (nextPrd: PrdJson): Promise<string> => {
+          const step = deriveWizardStep(nextPrd);
+          const done = isPrdComplete(nextPrd);
+          const nextQuestion = fallbackQuestion(nextPrd);
+          let updated = {
+            ...nextPrd,
+            wizard: {
+              ...nextPrd.wizard,
+              step,
+              totalSteps: WIZARD_TOTAL_STEPS,
+              status: done ? "completed" : "in_progress",
+              lastQuestionId: firstMissingField(nextPrd),
+              answers: {
+                ...nextPrd.wizard.answers,
+                ...(hasAnswer ? { [`turn-${Date.now()}`]: rawInput } : {}),
+                [LAST_QUESTION_KEY]: nextQuestion,
+              },
+            },
+          };
+
+          if (done) {
+            updated = await seedTasksFromPrd(repoRoot, updated);
+            updated = {
+              ...updated,
+              wizard: {
+                ...updated.wizard,
+                status: "completed",
+                step: WIZARD_TOTAL_STEPS,
+                lastQuestionId: "done",
+              },
+            };
+            await writePrdJson(repoRoot, updated);
+            return [
+              "PRD wizard: completed.",
+              `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+              `Tasks: ${updated.tasks.length}`,
+              "Next: /mario-devx:run 1",
+            ].join("\n");
+          }
+
+          await writePrdJson(repoRoot, updated);
+          return [
+            `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+            nextQuestion,
+            "Reply with your answer in natural language.",
+          ].join("\n");
+        };
+
         const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
         if (!hasAnswer && cachedQuestion) {
           return [
@@ -864,6 +915,107 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         const missingBefore = firstMissingField(prd);
+        if (hasAnswer && missingBefore === "frontend") {
+          const boolReply = parseBooleanReply(rawInput);
+          if (typeof boolReply === "boolean") {
+            prd = { ...prd, frontend: boolReply };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "language") {
+          const inferredLanguage = inferLanguageFromText(rawInput);
+          if (inferredLanguage) {
+            prd = { ...prd, language: inferredLanguage };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "framework") {
+          if (hasNonEmpty(rawInput)) {
+            prd = { ...prd, framework: rawInput.trim() };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "uiVisualDirection") {
+          if (hasNonEmpty(rawInput)) {
+            prd = { ...prd, ui: { ...prd.ui, visualDirection: rawInput.trim() } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "uiUxRequirements") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = { ...prd, ui: { ...prd.ui, uxRequirements: items } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "docsReadmeSections") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = { ...prd, docs: { ...prd.docs, readmeSections: items } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "targetUsers") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = { ...prd, product: { ...prd.product, targetUsers: items } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "userProblems") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = { ...prd, product: { ...prd.product, userProblems: items } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "nonGoals") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = { ...prd, product: { ...prd.product, nonGoals: items } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "successMetrics") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = { ...prd, product: { ...prd.product, successMetrics: items } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "constraints") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = { ...prd, product: { ...prd.product, constraints: items } };
+            return persistInterviewProgress(prd);
+          }
+        }
+
+        if (hasAnswer && missingBefore === "qualityGates") {
+          const items = parseLooseListReply(rawInput);
+          if (items.length > 0) {
+            prd = {
+              ...prd,
+              qualityGates: items,
+              verificationPolicy: {
+                ...prd.verificationPolicy,
+                globalGates: items,
+              },
+            };
+            return persistInterviewProgress(prd);
+          }
+        }
+
         if (hasAnswer && missingBefore === "platform") {
           const inferredPlatform = inferPlatformFromText(rawInput);
           if (inferredPlatform) {

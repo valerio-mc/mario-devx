@@ -129,6 +129,46 @@ export const inferPlatformFromText = (input: string): "web" | "api" | "cli" | "l
   return null;
 };
 
+export const inferLanguageFromText = (input: string): "typescript" | "python" | "go" | "rust" | "other" | null => {
+  const s = input.trim().toLowerCase();
+  if (!s) return null;
+  if (/\b(ts|typescript|node|javascript|js)\b/.test(s)) return "typescript";
+  if (/\b(py|python)\b/.test(s)) return "python";
+  if (/\b(go|golang)\b/.test(s)) return "go";
+  if (/\b(rust|cargo)\b/.test(s)) return "rust";
+  if (/\b(other|unknown|not sure)\b/.test(s)) return "other";
+  return null;
+};
+
+export const parseLooseListReply = (input: string): string[] => {
+  const normalized = input
+    .replace(/\r\n?/g, "\n")
+    .replace(/\\n/g, "\n")
+    .trim();
+  if (!normalized) return [];
+
+  const cleanup = (item: string): string => item
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const candidates: string[][] = [
+    normalized.split(/\n+/),
+    normalized.split(/\s*;\s*/),
+    normalized.split(/\s*\|\s*/),
+    normalized.split(/\s*,\s*/),
+  ];
+
+  for (const parts of candidates) {
+    const cleaned = Array.from(new Set(parts.map(cleanup).filter(Boolean)));
+    if (cleaned.length >= 2) {
+      return cleaned;
+    }
+  }
+
+  return [cleanup(normalized)].filter(Boolean);
+};
+
 export const inferUiDesignSystemFromText = (input: string): "none" | "tailwind" | "shadcn" | "custom" | null => {
   const s = input.trim().toLowerCase();
   if (!s) return null;
