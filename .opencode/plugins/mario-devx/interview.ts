@@ -358,23 +358,23 @@ export const fallbackQuestion = (prd: PrdJson): string => {
     case "idea":
       return "What one-line idea should this project build?";
     case "platform":
-      return "What are we building: web app, API service, CLI tool, or library?";
+      return "What are we building? Choose one: web app | API service | CLI tool | library.";
     case "frontend":
-      return "Does this project need a browser UI?";
+      return "Does this project need a browser UI? Choose one: Yes | No.";
     case "uiVerificationRequired":
-      return "Should automated UI browser verification be required on every run? (yes/no)";
+      return "Should automated UI browser verification be required on every run? Choose one: Yes | No.";
     case "uiDesignSystem":
-      return "Which UI stack should we use: Tailwind, shadcn/ui, custom CSS, or none?";
+      return "Which UI stack should we use? Choose one: Tailwind | shadcn/ui | custom CSS | none.";
     case "uiVisualDirection":
       return "Describe the visual direction in one line (mood, typography, color style).";
     case "uiUxRequirements":
       return "List key UX requirements (states, responsiveness, accessibility).";
     case "docsReadmeRequired":
-      return "Should this project maintain a human-readable README.md throughout development? (yes/no)";
+      return "Should this project maintain a human-readable README.md throughout development? Choose one: Yes | No.";
     case "docsReadmeSections":
       return "List required README sections (for example: Overview, Setup, Env Vars, Usage).";
     case "language":
-      return "What is the primary language: TypeScript, Python, Go, Rust, or other?";
+      return "What is the primary language? Choose one: TypeScript | Python | Go | Rust | other.";
     case "framework":
       return "Which framework/runtime should be the default?";
     case "targetUsers":
