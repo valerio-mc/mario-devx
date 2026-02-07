@@ -167,6 +167,18 @@ const acquireRunLock = async (
   return { ok: true };
 };
 
+/**
+ * Updates the heartbeat timestamp in the run lock file.
+ * 
+ * BACKPRESSURE: This is the core of the backpressure system. The lock file
+ * acts as a heartbeat - if we can't update it (disk full, permissions, etc.),
+ * execution stops immediately. This prevents:
+ * - Runaway processes
+ - Multiple concurrent runs
+ * - Silent failures
+ * 
+ * Called at checkpoints throughout task execution.
+ */
 const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
   const lockPath = runLockPath(repoRoot);
   try {
@@ -390,6 +402,23 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
 
 const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
 
+/**
+ * Generates the PRD interview prompt for the LLM.
+ * 
+ * ARCHITECTURE: This is the core of the LLM-driven wizard. Instead of hardcoded
+ * field tracking and question selection, we:
+ * 1. Dump the entire PRD state to the LLM
+ * 2. Ask the LLM to analyze what's missing
+ * 3. Let the LLM decide what question to ask next
+ * 4. Parse JSON response for structured updates
+ * 
+ * This eliminates the need for:
+ * - firstMissingField() - 20 lines of conditionals
+ * - fallbackQuestion() - 40 lines of switch/case
+ * - deriveWizardStep() - complex step tracking
+ * 
+ * The LLM has full context and makes intelligent decisions about what to ask.
+ */
 const interviewPrompt = (prd: PrdJson, input: string): string => {
   return [
     "You are mario-devx's PRD interviewer.",
@@ -451,6 +480,22 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
   ].join("\n");
 };
 
+/**
+ * Parses LLM interview response to extract structured JSON envelope.
+ * 
+ * Expected format:
+ * <MARIO_JSON>
+ * {"done": boolean, "updates": {...}, "next_question": string}
+ * </MARIO_JSON>
+ * <MARIO_QUESTION>
+ * Your question here
+ * </MARIO_QUESTION>
+ * 
+ * The envelope contains:
+ * - done: Whether the PRD is complete
+ * - updates: Field updates extracted from user's answer
+ * - next_question: What to ask next (null if done)
+ */
 const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | null; question: string | null; error?: string } => {
   const jsonMatch = text.match(/<MARIO_JSON>([\s\S]*?)<\/MARIO_JSON>/i);
   const questionMatch = text.match(/<MARIO_QUESTION>([\s\S]*?)<\/MARIO_QUESTION>/i);
@@ -485,6 +530,19 @@ const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | n
   }
 };
 
+/**
+ * Applies interview updates to the PRD with automatic normalization.
+ * 
+ * ARCHITECTURE: Instead of 40+ explicit IF statements checking each field,
+ * we use a recursive merge function that:
+ * 1. Automatically trims strings
+ * 2. Normalizes arrays (deduplicates, filters empty)
+ * 3. Deep merges objects
+ * 4. Derives dependent fields (platform → frontend, etc.)
+ * 
+ * This eliminates the massive switch statement that previously handled
+ * each field individually.
+ */
 const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefined): PrdJson => {
   if (!updates) return prd;
   
@@ -536,6 +594,19 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   return next;
 };
 
+/**
+ * Parses verifier output from the LLM.
+ * 
+ * ARCHITECTURE: Previously used 100+ lines of regex/state machine to parse
+ * text format like "Status: PASS\nEXIT_SIGNAL: true\nReason:\n- ...".
+ * 
+ * Now expects structured JSON:
+ * <VERIFIER_JSON>
+ * {"status": "PASS|FAIL", "reason": [...], "nextActions": [...]}
+ * </VERIFIER_JSON>
+ * 
+ * This is more reliable and eliminates complex text parsing.
+ */
 const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   // Try JSON format first
   const jsonMatch = text.match(/<VERIFIER_JSON>([\s\S]*?)<\/VERIFIER_JSON>/i);
@@ -1505,7 +1576,20 @@ export const createTools = (ctx: PluginContext) => {
         const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const runState = await readRunState(repoRoot);
         
-        // LLM-driven feature interview
+        /**
+         * LLM-driven feature interview
+         * 
+         * ARCHITECTURE: Replaced the old 3-step state machine with a single
+         * LLM prompt that:
+         * 1. Analyzes the feature request
+         * 2. Asks follow-up questions if vague
+         * 3. Decomposes into atomic tasks when ready
+         * 
+         * Old approach: Hardcoded step 1 → step 2 → step 3 with validation
+         * New approach: LLM decides what's needed and returns structured JSON
+         * 
+         * This eliminates 120+ lines of state machine code.
+         */
         const featurePrompt = [
           "You are mario-devx's feature interviewer.",
           "Help the user break down a feature request into implementable tasks.",
