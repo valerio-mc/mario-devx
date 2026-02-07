@@ -9,6 +9,36 @@ If you're looking for vibes, inspirational essays, or a 200-message thread that 
 
 **Mario DevX** is an OpenCode plugin that runs Ralph-style, file-based, deterministic agent loops inside the OpenCode TUI.
 
+## Why you'll like it
+
+- Deterministic loops with on-disk state (`.mario/*`), not fragile chat memory.
+- Strict verifier output (`PASS|FAIL` + next actions) so failures are actionable.
+- Incremental scope management (`/mario-devx:add`, `/mario-devx:replan`) without restarting from scratch.
+
+## Loop overview
+
+![Mario DevX loop flowchart](mario_devx_flowchart.png)
+
+## 30-second quickstart
+
+```bash
+mkdir my-project && cd my-project && git init
+mkdir -p .opencode/plugins
+tmpdir="$(mktemp -d)" && \
+  curl -fsSL https://github.com/valerio-mc/mario-devx/archive/refs/heads/main.tar.gz | tar -xz -C "$tmpdir" && \
+  cp -R "$tmpdir"/mario-devx-main/.opencode/plugins/mario-devx ./.opencode/plugins/ && \
+  cp "$tmpdir"/mario-devx-main/.opencode/plugins/mario-devx.ts ./.opencode/plugins/ && \
+  cp "$tmpdir"/mario-devx-main/.opencode/package.json ./.opencode/
+opencode .
+```
+
+Then in OpenCode:
+
+```text
+/mario-devx:new your idea
+/mario-devx:run 1
+```
+
 <br clear="right" />
 
 ## Motivations
@@ -29,6 +59,18 @@ Mario DevX forces the only kind of memory that actually helps:
 /mario-devx:replan        # regenerate open-task plan from backlog requests
 /mario-devx:status        # what's running + focus task + last verdict + next action
 /mario-devx:doctor        # healthcheck + concrete fixes
+```
+
+## Control vs work session
+
+```text
+Control session (you): runs /mario-devx:* commands
+        |
+        v
+Work session (internal): build + verify + judge
+        |
+        v
+Canonical state on disk: .mario/*
 ```
 
 ## First run
@@ -84,6 +126,17 @@ You can pass each answer directly, for example: `/mario-devx:new we need OAuth l
 
 `N` is the maximum number of tasks to attempt in this run.
 Use `/mario-devx:run 1` for tight control (recommended), or a larger number to let it continue across multiple tasks until one fails or it reaches the limit.
+
+Typical `/run` output:
+
+```text
+Run finished. Attempted: 1. Completed: 0. Stopped early due to failure.
+Task: T-0004 (blocked) - Implement: ...
+Gates: 3/4 PASS
+UI verify: FAIL (required)
+Judge: FAIL (exit=false)
+Reason: Deterministic gate failed: npm run test (exit 1).
+```
 
 ## Usage
 
@@ -164,7 +217,7 @@ How it works:
 - Stores the latest UI result on the task under `.mario/prd.json` (`tasks[].lastAttempt.ui`).
 
 If prerequisites are missing and UI verify is enabled, mario-devx auto-attempts install first.
-When UI verify is enabled and prerequisites are missing, mario-devx also auto-attempts install:
+When UI verify is enabled and prerequisites are missing, mario-devx auto-attempts:
 - `npm install -g agent-browser`
 - `agent-browser install`
 - `npx skills add vercel-labs/agent-browser`
