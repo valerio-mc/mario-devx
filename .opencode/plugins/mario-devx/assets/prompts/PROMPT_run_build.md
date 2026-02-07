@@ -31,6 +31,13 @@ Minimal-change rule:
 - Prefer the smallest change that satisfies `doneWhen`.
 - Delete dead code instead of adding wrappers; do not add boilerplate comments.
 
+UI style-reference rule:
+- If `.mario/prd.json` includes `ui.styleReferences`, inspect them before implementing UI-facing changes.
+- For URL references, fetch and analyze the visual direction (layout density, typography hierarchy, color mood, spacing, radius/shadow patterns).
+- For local image references, read the file and extract the same visual cues.
+- If direct inspection is not possible with available tools, try `agent-browser` commands when appropriate (for example to open/snapshot a referenced URL), then proceed with best-effort implementation and state the limitation in chat.
+- Convert extracted cues into concrete implementation choices (tokens/variables/classes/components) instead of generic imitation.
+
 
 Next.js scaffolding note (common failure):
 - If you scaffold a Next.js app in a repo that already contains `.mario/` and `.opencode/`, `create-next-app .` often refuses because the directory is not empty.
