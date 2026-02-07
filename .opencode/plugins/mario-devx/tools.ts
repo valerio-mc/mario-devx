@@ -241,6 +241,25 @@ const parseBooleanReply = (input: string): boolean | null => {
   return null;
 };
 
+const parseFeatureListReply = (input: string): string[] => {
+  const normalized = input
+    .replace(/\band\b/gi, ",")
+    .replace(/\s*[;\n]+\s*/g, ",")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  if (!normalized) {
+    return [];
+  }
+  return Array.from(
+    new Set(
+      normalized
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  );
+};
+
 const sameQuestion = (a: string | null | undefined, b: string | null | undefined): boolean => {
   if (!a || !b) {
     return false;
@@ -1402,6 +1421,67 @@ export const createTools = (ctx: PluginContext) => {
               "Reply with your answer in natural language.",
             ].join("\n");
           }
+        }
+
+        if (hasAnswer && missingBefore === "mustHaveFeatures") {
+          const features = parseFeatureListReply(rawInput);
+          if (features.length >= MIN_FEATURES) {
+            prd = {
+              ...prd,
+              product: {
+                ...prd.product,
+                mustHaveFeatures: features,
+              },
+            };
+            const step = deriveWizardStep(prd);
+            const done = isPrdComplete(prd);
+            const nextQuestion = fallbackQuestion(prd);
+            prd = {
+              ...prd,
+              wizard: {
+                ...prd.wizard,
+                step,
+                totalSteps: WIZARD_TOTAL_STEPS,
+                status: done ? "completed" : "in_progress",
+                lastQuestionId: firstMissingField(prd),
+                answers: {
+                  ...prd.wizard.answers,
+                  [`turn-${Date.now()}`]: rawInput,
+                  [LAST_QUESTION_KEY]: nextQuestion,
+                },
+              },
+            };
+            if (done) {
+              prd = await seedTasksFromPrd(repoRoot, prd);
+              prd = {
+                ...prd,
+                wizard: {
+                  ...prd.wizard,
+                  status: "completed",
+                  step: WIZARD_TOTAL_STEPS,
+                  lastQuestionId: "done",
+                },
+              };
+              await writePrdJson(repoRoot, prd);
+              return [
+                "PRD wizard: completed.",
+                `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+                `Tasks: ${prd.tasks.length}`,
+                "Next: /mario-devx:run 1",
+              ].join("\n");
+            }
+            await writePrdJson(repoRoot, prd);
+            return [
+              `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+              nextQuestion,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
+          return [
+            `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
+            `I captured ${features.length} feature(s). Please list at least ${MIN_FEATURES} must-have features in one line, separated by commas.`,
+            "Reply with your answer in natural language.",
+          ].join("\n");
         }
 
         const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
