@@ -8,6 +8,24 @@ import { ensureMario, bumpIteration, readWorkSessionState, writeWorkSessionState
 import { FeatureAddInterviewState, RunState } from "./types";
 import { getRepoRoot } from "./paths";
 import {
+  ensureT0002QualityBootstrap,
+  extractScriptFromCommand,
+  hasNodeModules,
+  missingPackageScriptForCommand,
+  resolveNodeWorkspaceRoot,
+  runGateCommands,
+} from "./gates";
+import {
+  ensureAgentBrowserPrereqs,
+  hasAgentBrowserCli,
+  hasAgentBrowserSkill,
+  hasAgentsKey,
+  isLikelyWebApp,
+  parseAgentsEnv,
+  runUiVerification,
+  upsertAgentsKey,
+} from "./ui-verify";
+import {
   defaultPrdJson,
   readPrdJsonIfExists,
   writePrdJson,
@@ -855,145 +873,7 @@ const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
   return null;
 };
 
-const extractScriptFromCommand = (command: string): string | null => {
-  const trimmed = command.trim();
-  const marioEnv = trimmed.match(/^MARIO_SCRIPT=([a-zA-Z0-9:_-]+)\s+node\s+-e\s+/);
-  if (marioEnv) return marioEnv[1] ?? null;
-  const npm = trimmed.match(/^npm\s+run\s+([a-zA-Z0-9:_-]+)$/);
-  if (npm) return npm[1] ?? null;
-  const pnpmRun = trimmed.match(/^pnpm\s+run\s+([a-zA-Z0-9:_-]+)$/);
-  if (pnpmRun) return pnpmRun[1] ?? null;
-  const pnpmDirect = trimmed.match(/^pnpm\s+([a-zA-Z0-9:_-]+)$/);
-  if (pnpmDirect && !["install", "add", "dlx", "exec"].includes((pnpmDirect[1] ?? "").toLowerCase())) return pnpmDirect[1] ?? null;
-  const yarnRun = trimmed.match(/^yarn\s+run\s+([a-zA-Z0-9:_-]+)$/);
-  if (yarnRun) return yarnRun[1] ?? null;
-  const yarnDirect = trimmed.match(/^yarn\s+([a-zA-Z0-9:_-]+)$/);
-  if (yarnDirect && !["install", "add", "dlx", "exec"].includes((yarnDirect[1] ?? "").toLowerCase())) return yarnDirect[1] ?? null;
-  const bunRun = trimmed.match(/^bun\s+run\s+([a-zA-Z0-9:_-]+)$/);
-  if (bunRun) return bunRun[1] ?? null;
-  return null;
-};
-
-const resolveNodeWorkspaceRoot = async (repoRoot: string): Promise<"." | "app"> => {
-  const rootPkg = await readTextIfExists(path.join(repoRoot, "package.json"));
-  if (rootPkg) {
-    return ".";
-  }
-  const appPkg = await readTextIfExists(path.join(repoRoot, "app", "package.json"));
-  return appPkg ? "app" : ".";
-};
-
-const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
-
-const hasNodeModules = async (repoRoot: string, workspaceRoot: "." | "app"): Promise<boolean> => {
-  const nodeModulesPath = workspaceRoot === "."
-    ? path.join(repoRoot, "node_modules")
-    : path.join(repoRoot, workspaceRoot, "node_modules");
-  return (await readTextIfExists(path.join(nodeModulesPath, ".yarn-integrity"))) !== null
-    || (await readTextIfExists(path.join(nodeModulesPath, ".package-lock.json"))) !== null
-    || (await readTextIfExists(path.join(nodeModulesPath, ".modules.yaml"))) !== null
-    || (await readTextIfExists(path.join(nodeModulesPath, "react", "package.json"))) !== null;
-};
-
-const workspacePath = (repoRoot: string, workspaceRoot: "." | "app", relPath: string): string => {
-  return workspaceRoot === "." ? path.join(repoRoot, relPath) : path.join(repoRoot, workspaceRoot, relPath);
-};
-
-const ensureT0002QualityBootstrap = async (
-  repoRoot: string,
-  workspaceRoot: "." | "app",
-  gateCommands: { name: string; command: string }[],
-): Promise<{ changed: boolean; notes: string[] }> => {
-  const notes: string[] = [];
-  const pkgPath = workspacePath(repoRoot, workspaceRoot, "package.json");
-  const pkgRaw = await readTextIfExists(pkgPath);
-  if (!pkgRaw) {
-    return { changed: false, notes: [`No package.json found at ${workspaceRoot === "." ? "./package.json" : `${workspaceRoot}/package.json`}.`] };
-  }
-
-  let pkg: {
-    scripts?: Record<string, string>;
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-  };
-  try {
-    pkg = JSON.parse(pkgRaw) as {
-      scripts?: Record<string, string>;
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-    };
-  } catch {
-    return { changed: false, notes: [`package.json at ${pkgPath} is invalid JSON.`] };
-  }
-
-  const neededScripts = Array.from(new Set(gateCommands
-    .map((g) => extractScriptFromCommand(g.command))
-    .filter((s): s is string => typeof s === "string" && s.length > 0)));
-
-  const scripts = { ...(pkg.scripts ?? {}) };
-  let changed = false;
-
-  const addScriptIfMissing = (name: string, value: string): void => {
-    if (!scripts[name]) {
-      scripts[name] = value;
-      changed = true;
-      notes.push(`Added missing script '${name}' in ${workspaceRoot === "." ? "package.json" : `${workspaceRoot}/package.json`}.`);
-    }
-  };
-
-  if (neededScripts.includes("typecheck")) {
-    addScriptIfMissing("typecheck", "tsc --noEmit");
-    const hasTypescript = Boolean(pkg.devDependencies?.typescript || pkg.dependencies?.typescript);
-    if (!hasTypescript) {
-      pkg.devDependencies = { ...(pkg.devDependencies ?? {}), typescript: "^5.6.3" };
-      changed = true;
-      notes.push("Added devDependency 'typescript' for type checking.");
-    }
-  }
-
-  if (neededScripts.includes("test:e2e")) {
-    addScriptIfMissing("test:e2e", "node -e \"process.exit(0)\"");
-  }
-
-  if (neededScripts.includes("build") && !scripts.build) {
-    const hasVite = Boolean(pkg.devDependencies?.vite || pkg.dependencies?.vite);
-    if (hasVite) {
-      addScriptIfMissing("build", "vite build");
-    }
-  }
-
-  if (!changed) {
-    return { changed: false, notes };
-  }
-
-  pkg.scripts = scripts;
-  await writeText(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-  notes.push("Updated quality-gate scripts for T-0002 bootstrap.");
-  return { changed: true, notes };
-};
-
 const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
-
-const missingPackageScriptForCommand = async (repoRoot: string, workspaceRoot: "." | "app", command: string): Promise<string | null> => {
-  const scriptName = extractScriptFromCommand(command);
-  if (!scriptName) {
-    return null;
-  }
-  const pkgRaw = await readTextIfExists(
-    workspaceRoot === "."
-      ? path.join(repoRoot, "package.json")
-      : path.join(repoRoot, workspaceRoot, "package.json"),
-  );
-  if (!pkgRaw) {
-    return scriptName;
-  }
-  try {
-    const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
-    return pkg.scripts && typeof pkg.scripts[scriptName] === "string" ? null : scriptName;
-  } catch {
-    return scriptName;
-  }
-};
 
 const setPrdTaskStatus = (prd: PrdJson, taskId: string, status: PrdTaskStatus): PrdJson => {
   const tasks = (prd.tasks ?? []).map((t) => (t.id === taskId ? { ...t, status } : t));
@@ -1360,212 +1240,6 @@ const judgeNeedsStrictRetry = (judge: PrdJudgeAttempt): boolean => {
   );
 };
 
-const getXdgConfigHome = (): string => {
-  return process.env.XDG_CONFIG_HOME ?? path.join(process.env.HOME ?? "", ".config");
-};
-
-const getGlobalSkillPath = (skillName: string): string => {
-  return path.join(getXdgConfigHome(), "opencode", "skill", skillName, "SKILL.md");
-};
-
-const parseEnvValue = (value: string): string => {
-  const trimmed = value.trim();
-  if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-};
-
-const parseAgentsEnv = (content: string): { env: Record<string, string>; warnings: string[] } => {
-  const env: Record<string, string> = {};
-  const warnings: string[] = [];
-  const lines = content.split(/\r?\n/);
-  const envKeyPattern = /^[A-Z][A-Z0-9_]*$/;
-  for (let i = 0; i < lines.length; i += 1) {
-    const rawLine = lines[i] ?? "";
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) {
-      continue;
-    }
-    const idx = line.indexOf("=");
-    if (idx === -1) {
-      continue;
-    }
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1);
-    if (!envKeyPattern.test(key)) {
-      continue;
-    }
-    env[key] = parseEnvValue(value);
-  }
-  return { env, warnings };
-};
-
-const upsertAgentsKey = (content: string, key: string, value: string): string => {
-  const lines = content.split(/\r?\n/);
-  const nextLine = `${key}='${value.replace(/'/g, "'\\''")}'`;
-  let updated = false;
-  const nextLines = lines.map((line) => {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith("#") || !trimmed.startsWith(`${key}=`)) {
-      return line;
-    }
-    updated = true;
-    return nextLine;
-  });
-  if (updated) {
-    return nextLines.join("\n");
-  }
-  return `${content.trimEnd()}\n${nextLine}\n`;
-};
-
-const hasAgentsKey = (content: string, key: string): boolean => {
-  const pattern = new RegExp(`^\\s*${key}=`, "m");
-  return pattern.test(content);
-};
-
-const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
-  const pkgRaw = await readTextIfExists(path.join(repoRoot, "package.json"));
-  const appPkgRaw = await readTextIfExists(path.join(repoRoot, "app", "package.json"));
-  const candidates = [pkgRaw, appPkgRaw].filter((v): v is string => typeof v === "string");
-  if (candidates.length === 0) {
-    return false;
-  }
-  for (const candidate of candidates) {
-    try {
-      const pkg = JSON.parse(candidate) as {
-      dependencies?: Record<string, string>;
-      devDependencies?: Record<string, string>;
-      };
-      const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-      if (deps.next || deps.vite || deps["react-scripts"]) {
-        return true;
-      }
-    } catch {
-      // Keep checking other package manifests.
-    }
-  }
-  return false;
-};
-
-const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
-  const localCandidates = [
-    path.join(repoRoot, ".opencode", "skill", "agent-browser", "SKILL.md"),
-    path.join(repoRoot, ".opencode", "skills", "agent-browser", "SKILL.md"),
-    path.join(repoRoot, ".claude", "skills", "agent-browser", "SKILL.md"),
-  ];
-  for (const candidate of localCandidates) {
-    if ((await readTextIfExists(candidate)) !== null) {
-      return true;
-    }
-  }
-  // Many OpenCode setups install skills globally under XDG_CONFIG_HOME.
-  if ((await readTextIfExists(getGlobalSkillPath("agent-browser"))) !== null) {
-    return true;
-  }
-  return false;
-};
-
-const hasAgentBrowserCli = async (ctx: PluginContext): Promise<boolean> => {
-  if (!ctx.$) {
-    return false;
-  }
-  const result = await ctx.$`sh -c ${"command -v agent-browser"}`.nothrow();
-  return result.exitCode === 0;
-};
-
-const ensureAgentBrowserPrereqs = async (
-  ctx: PluginContext,
-  repoRoot: string,
-): Promise<{ cliOk: boolean; skillOk: boolean; attempted: string[] }> => {
-  const attempted: string[] = [];
-  let cliOk = await hasAgentBrowserCli(ctx);
-  let skillOk = await hasAgentBrowserSkill(repoRoot);
-
-  if (!ctx.$ || (cliOk && skillOk)) {
-    return { cliOk, skillOk, attempted };
-  }
-
-  if (!cliOk) {
-    attempted.push("npm install -g agent-browser");
-    await ctx.$`sh -c ${"npm install -g agent-browser"}`.nothrow();
-    attempted.push("agent-browser install");
-    await ctx.$`sh -c ${"agent-browser install"}`.nothrow();
-    cliOk = await hasAgentBrowserCli(ctx);
-  }
-
-  if (!skillOk) {
-    attempted.push("npx skills add vercel-labs/agent-browser");
-    await ctx.$`sh -c ${"npx skills add vercel-labs/agent-browser"}`.nothrow();
-    skillOk = await hasAgentBrowserSkill(repoRoot);
-  }
-
-  return { cliOk, skillOk, attempted };
-};
-
-const runUiVerification = async (params: {
-  ctx: PluginContext;
-  devCmd: string;
-  url: string;
-}): Promise<{ ok: boolean; note?: string }> => {
-  const { ctx, devCmd, url } = params;
-  if (!ctx.$) {
-    return { ok: false, note: "Bun shell not available to run UI verification." };
-  }
-
-  let pid = "";
-
-  const cleanup = async (): Promise<void> => {
-    // Always attempt to close the browser and stop the dev server.
-    await ctx.$`sh -c ${"agent-browser close >/dev/null 2>&1 || true"}`.nothrow();
-    if (pid) {
-      await ctx.$`sh -c ${`kill ${pid} >/dev/null 2>&1 || true`}`.nothrow();
-    }
-  };
-
-  try {
-    // Start dev server in background.
-    const start = await ctx.$`sh -c ${`${devCmd} >/dev/null 2>&1 & echo $!`}`.nothrow();
-    pid = start.stdout.toString().trim();
-    if (!pid) {
-      return { ok: false, note: "Failed to start dev server." };
-    }
-
-    // Wait for URL to respond.
-    const waitCmd = `i=0; while [ $i -lt 60 ]; do curl -fsS ${url} >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1`;
-    const waited = await ctx.$`sh -c ${waitCmd}`.nothrow();
-    if (waited.exitCode !== 0) {
-      return { ok: false, note: `Dev server did not become ready at ${url}.` };
-    }
-
-    // Drive browser with agent-browser.
-    const cmds: { label: string; cmd: string }[] = [
-      { label: "open", cmd: `agent-browser open ${url}` },
-      { label: "snapshot", cmd: "agent-browser snapshot -i --json" },
-      { label: "console", cmd: "agent-browser console --json" },
-      { label: "errors", cmd: "agent-browser errors --json" },
-      { label: "close", cmd: "agent-browser close" },
-    ];
-
-    for (const item of cmds) {
-      const r = await ctx.$`sh -c ${item.cmd}`.nothrow();
-      if (r.exitCode !== 0) {
-        return {
-          ok: false,
-          note: `agent-browser failed at '${item.label}'. If this is first run, you may need: agent-browser install`,
-        };
-      }
-    }
-
-    return { ok: true, note: "UI verification completed." };
-  } finally {
-    await cleanup();
-  }
-};
-
 const showToast = async (
   ctx: PluginContext,
   message: string,
@@ -1618,75 +1292,6 @@ const waitForSessionIdle = async (
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   return false;
-};
-
-const runGateCommands = async (
-  commands: { name: string; command: string }[],
-  $: PluginContext["$"] | undefined,
-  workdirAbs?: string,
-): Promise<{
-  ok: boolean;
-  failed?: { name: string; command: string; exitCode: number };
-  results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number }>;
-  note?: string;
-}> => {
-  if (commands.length === 0) {
-    return { ok: false, note: "No quality gates detected.", results: [] };
-  }
-  if (!$) {
-    return { ok: false, note: "Bun shell not available to run gates.", results: [] };
-  }
-
-  const results: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number }> = [];
-  let ok = true;
-  let failed: { name: string; command: string; exitCode: number } | undefined;
-
-  for (const command of commands) {
-    const cmd = command.command.trim();
-    if (cmd.length === 0) {
-      ok = false;
-      results.push({ name: command.name, command: "", ok: false, exitCode: 1, durationMs: 0 });
-      break;
-    }
-
-    if (cmd.includes("\n") || cmd.includes("\r")) {
-      ok = false;
-      results.push({
-        name: command.name,
-        command: cmd,
-        ok: false,
-        exitCode: 1,
-        durationMs: 0,
-      });
-      break;
-    }
-
-    const startedAt = Date.now();
-    const wrapped = workdirAbs
-      ? `cd ${shellSingleQuote(workdirAbs)} && ${cmd}`
-      : cmd;
-    const result = await $`sh -c ${wrapped}`.nothrow();
-    const durationMs = Date.now() - startedAt;
-    const isOk = result.exitCode === 0;
-    results.push({
-      name: command.name,
-      command: cmd,
-      ok: isOk,
-      exitCode: result.exitCode,
-      durationMs,
-    });
-
-    if (result.exitCode !== 0) {
-      ok = false;
-      failed = { name: command.name, command: cmd, exitCode: result.exitCode };
-      break;
-    }
-  }
-  return {
-    ok,
-    results,
-    ...(failed ? { failed } : {}),
-  };
 };
 
 const getBaselineText = (repoRoot: string): string => {
