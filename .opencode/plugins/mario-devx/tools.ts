@@ -36,30 +36,18 @@ import {
   extractStyleReferencesFromText,
   fallbackQuestion,
   firstMissingField,
-  hasAtomicFeatures,
-  hasDiverseQualityGates,
   hasMeaningfulList,
   hasNonEmpty,
-  inferLanguageFromText,
-  inferPlatformFromText,
-  inferUiDesignSystemFromText,
-  isAtomicFeatureStatement,
   isLikelyBooleanReply,
   isPrdComplete,
-  isVagueFeatureRequest,
   looksLikeUiChoiceArtifact,
   looksTooBroadQuestion,
   mergeStyleReferences,
   normalizeStyleReferences,
   normalizeTextArray,
-  parseAtomicAcceptanceList,
-  parseBooleanReply,
-  parseFeatureListReply,
-  parseLooseListReply,
   sameQuestion,
   stripTrailingSentencePunctuation,
 } from "./interview";
-import { applyDeterministicInterviewUpdate } from "./interview-engine";
 import {
   decomposeFeatureRequestToTasks,
   firstScaffoldHintFromNotes,
@@ -425,11 +413,11 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     framework: hasNonEmpty(prd.framework),
     targetUsers: hasMeaningfulList(prd.product.targetUsers),
     userProblems: hasMeaningfulList(prd.product.userProblems),
-    mustHaveFeatures: hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES),
+    mustHaveFeatures: hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES),
     nonGoals: hasMeaningfulList(prd.product.nonGoals),
     successMetrics: hasMeaningfulList(prd.product.successMetrics),
     constraints: hasMeaningfulList(prd.product.constraints),
-    qualityGates: hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates),
+    qualityGates: hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES),
   };
   const current = {
     idea: prd.idea,
@@ -594,17 +582,9 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
     };
   }
   if (Array.isArray(updates.mustHaveFeatures)) {
-    const normalizedMustHave = Array.from(
-      new Set(
-        normalizeTextArray(updates.mustHaveFeatures)
-          .flatMap((item) => parseFeatureListReply(item))
-          .map(stripTrailingSentencePunctuation)
-          .filter(Boolean),
-      ),
-    );
     next.product = {
       ...next.product,
-      mustHaveFeatures: normalizedMustHave,
+      mustHaveFeatures: normalizeTextArray(updates.mustHaveFeatures),
     };
   }
   if (Array.isArray(updates.nonGoals)) {
@@ -913,22 +893,6 @@ export const createTools = (ctx: PluginContext) => {
             questionText,
             "Please answer directly in your own words (the last input looked like a menu/option label).",
           ].join("\n");
-        }
-
-        const missingBefore = firstMissingField(prd);
-        if (hasAnswer) {
-          const deterministic = applyDeterministicInterviewUpdate(prd, missingBefore, rawInput);
-          if (deterministic.handled) {
-            if (deterministic.error) {
-              return [
-                `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
-                deterministic.error,
-                "Reply with your answer in natural language.",
-              ].join("\n");
-            }
-            prd = deterministic.prd;
-            return persistInterviewProgress(prd);
-          }
         }
 
         const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
@@ -1776,9 +1740,9 @@ export const createTools = (ctx: PluginContext) => {
         const activeInterview = runState.featureAddInterview?.active ? runState.featureAddInterview : null;
         if (activeInterview) {
           if (activeInterview.step === 1) {
-            const acceptance = parseAtomicAcceptanceList(feature);
+            const acceptance = feature.split(/\n+/).map((line) => line.trim()).filter(Boolean);
             if (acceptance.length < 2) {
-              const q = `For '${activeInterview.originalRequest}', list 2-5 concrete behaviors (one per line, action-first).`;
+              const q = `For '${activeInterview.originalRequest}', list 2-5 concrete behaviors (one per line).`;
               const next: FeatureAddInterviewState = {
                 ...activeInterview,
                 lastQuestion: q,
@@ -1809,9 +1773,7 @@ export const createTools = (ctx: PluginContext) => {
             const s = feature.trim();
             const constraints = /^none$/i.test(s)
               ? []
-              : parseFeatureListReply(s)
-                .map(stripTrailingSentencePunctuation)
-                .filter(Boolean);
+              : s.split(/\n+/).map((line) => line.trim()).filter(Boolean);
             const q = "Any UX notes or edge cases? (Where it appears, interactions, confirmations, empty states. Reply 'none' if nothing.)";
             const next: FeatureAddInterviewState = {
               ...activeInterview,
@@ -1887,23 +1849,6 @@ export const createTools = (ctx: PluginContext) => {
           }
         }
 
-        if (isVagueFeatureRequest(feature)) {
-          const q = `Before I add tasks, clarify '${feature}': list 2-5 concrete behaviors (one per line, action-first).`;
-          const interview: FeatureAddInterviewState = {
-            active: true,
-            startedAt: nowIso(),
-            step: 1,
-            originalRequest: feature,
-            lastQuestion: q,
-          };
-          await writeRunState(repoRoot, { ...runState, featureAddInterview: interview, updatedAt: nowIso() });
-          return [
-            "Feature interview (1/3)",
-            q,
-            "Reply with your answer in natural language.",
-          ].join("\n");
-        }
-
         const backlogId = nextBacklogId(prd);
         const taskAtoms = decomposeFeatureRequestToTasks(feature);
         const gates = prd.verificationPolicy?.globalGates?.length
@@ -1963,21 +1908,10 @@ export const createTools = (ctx: PluginContext) => {
         let n = nextTaskOrdinal(prd.tasks ?? []);
         const generated: PrdTask[] = [];
 
-        const malformedFeatureTaskIds = new Set(
-          (prd.tasks ?? [])
-            .filter((t) => (t.labels ?? []).includes("feature") && t.status !== "completed" && t.status !== "cancelled")
-            .filter((t) => {
-              const title = t.title.replace(/^Implement:\s*/i, "").trim();
-              const acceptance = (t.acceptance ?? [title]).join(" ").trim();
-              return !isAtomicFeatureStatement(title) || !isAtomicFeatureStatement(acceptance);
-            })
-            .map((t) => t.id),
-        );
-
         const normalizedMustHave = normalizeMustHaveFeatureAtoms(prd.product.mustHaveFeatures);
         const existingFeatureTitles = new Set(
           (prd.tasks ?? [])
-            .filter((t) => (t.labels ?? []).includes("feature") && !malformedFeatureTaskIds.has(t.id) && t.status !== "cancelled")
+            .filter((t) => (t.labels ?? []).includes("feature") && t.status !== "cancelled")
             .map((t) => t.title.replace(/^Implement:\s*/i, "").trim()),
         );
         const regeneratedFromMustHave = normalizedMustHave
