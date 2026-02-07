@@ -364,39 +364,14 @@ const compactIdea = (idea: string): string => {
 };
 
 const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ doneWhen: string[]; notes: string[] }> => {
-  const framework = (prd.framework ?? "").toLowerCase();
   const notes: string[] = [
     "Seeded by PRD interviewer.",
     "First task scaffolds project artifacts before strict quality gates are enforced.",
     "Scaffold implementation is agent-chosen; command hints below are optional defaults.",
   ];
 
-  if (prd.platform === "web" && prd.language === "typescript" && framework.includes("next")) {
-    notes.push("Preferred scaffold command (optional): npx create-next-app@latest tmp-next --ts --eslint --app --src-dir --use-npm --yes && rsync -a tmp-next/ ./ --exclude .git --exclude node_modules && rm -rf tmp-next && npm install");
-    return {
-      doneWhen: ["test -f package.json", "test -d app || test -d src/app"],
-      notes,
-    };
-  }
-
-  if (prd.platform === "web" && prd.language === "typescript" && (framework.includes("vite") || framework.includes("react"))) {
-    notes.push("Preferred scaffold command (optional): npm create vite@latest tmp-vite -- --template react-ts && rsync -a tmp-vite/ ./ --exclude .git --exclude node_modules && rm -rf tmp-vite && npm install");
-    return {
-      doneWhen: ["test -f package.json", "test -f src/main.tsx"],
-      notes,
-    };
-  }
-
-  if (prd.platform === "api" && prd.language === "python" && framework.includes("fastapi")) {
-    notes.push("Preferred scaffold command (optional): python -m pip install fastapi uvicorn[standard]");
-    return {
-      doneWhen: ["test -f pyproject.toml || test -f requirements.txt"],
-      notes,
-    };
-  }
-
   const inferred = await inferBootstrapDoneWhen(repoRoot, prd);
-  notes.push("Preferred scaffold command (optional): initialize project skeleton for selected stack before implementing features.");
+  notes.push("Preferred scaffold action (optional): initialize project skeleton for the chosen stack in this repository.");
   return { doneWhen: inferred, notes };
 };
 
@@ -420,34 +395,16 @@ const isScaffoldMissingGateCommand = (command: string): boolean => {
 };
 
 const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<string[]> => {
-  const qualityGates = prd.qualityGates ?? [];
-  const qualityText = qualityGates.join("\n");
   const hasPackageJson = !!(await readTextIfExists(path.join(repoRoot, "package.json")));
   const hasPyproject = !!(await readTextIfExists(path.join(repoRoot, "pyproject.toml")));
   const hasRequirements = !!(await readTextIfExists(path.join(repoRoot, "requirements.txt")));
   const hasGoMod = !!(await readTextIfExists(path.join(repoRoot, "go.mod")));
   const hasCargoToml = !!(await readTextIfExists(path.join(repoRoot, "Cargo.toml")));
 
-  const wantsNode = prd.language === "typescript"
-    || /\b(npm|pnpm|yarn|bun)\b/i.test(qualityText)
-    || prd.platform === "web";
-  const wantsPython = prd.language === "python" || /\b(pytest|python|poetry|uv|mypy|ruff|flake8)\b/i.test(qualityText);
-  const wantsGo = prd.language === "go" || /\bgo\b/i.test(qualityText);
-  const wantsRust = prd.language === "rust" || /\bcargo\b/i.test(qualityText);
-
-  if (wantsNode && !hasPackageJson) {
-    return ["test -f package.json"];
+  if (!hasPackageJson && !hasPyproject && !hasRequirements && !hasGoMod && !hasCargoToml) {
+    return ["test -f package.json || test -f pyproject.toml || test -f requirements.txt || test -f go.mod || test -f Cargo.toml"];
   }
-  if (wantsPython && !hasPyproject && !hasRequirements) {
-    return ["test -f pyproject.toml || test -f requirements.txt"];
-  }
-  if (wantsGo && !hasGoMod) {
-    return ["test -f go.mod"];
-  }
-  if (wantsRust && !hasCargoToml) {
-    return ["test -f Cargo.toml"];
-  }
-  return qualityGates;
+  return prd.qualityGates ?? [];
 };
 
 const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson> => {
@@ -456,7 +413,6 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
   }
   const bootstrapPlan = await scaffoldPlanFromPrd(repoRoot, prd);
   const doneWhen = prd.qualityGates ?? [];
-  const extractedScripts = Array.from(new Set(doneWhen.map((gate) => extractScriptFromCommand(gate)).filter((s): s is string => Boolean(s))));
   const tasks: PrdTask[] = [];
   let n = 1;
   tasks.push(
@@ -467,17 +423,14 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
       notes: bootstrapPlan.notes,
     }),
   );
-  if (extractedScripts.length > 0) {
+  if (doneWhen.length > 0) {
     tasks.push(
       makeTask({
         id: normalizeTaskId(n++),
         title: "Setup quality pipeline so configured gates are runnable",
-        doneWhen: [
-          "test -f package.json",
-          ...extractedScripts.map((script) => `node -e \"const p=require('./package.json');process.exit(p.scripts&&p.scripts['${script}']?0:1)\"`),
-        ],
+        doneWhen,
         notes: [
-          "Create missing scripts/config for the declared quality gates before feature implementation.",
+          "Implement project-specific verification setup so declared quality gates run successfully.",
         ],
       }),
     );
@@ -531,6 +484,8 @@ const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
 
 const extractScriptFromCommand = (command: string): string | null => {
   const trimmed = command.trim();
+  const marioEnv = trimmed.match(/^MARIO_SCRIPT=([a-zA-Z0-9:_-]+)\s+node\s+-e\s+/);
+  if (marioEnv) return marioEnv[1] ?? null;
   const npm = trimmed.match(/^npm\s+run\s+([a-zA-Z0-9:_-]+)$/);
   if (npm) return npm[1] ?? null;
   const pnpmRun = trimmed.match(/^pnpm\s+run\s+([a-zA-Z0-9:_-]+)$/);
