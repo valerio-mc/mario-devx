@@ -52,7 +52,7 @@ export const isAtomicFeatureStatement = (value: string): boolean => {
   if (/^(and|or|then)\b/i.test(feature)) return false;
   if (/^(active|completed|overdue|todo|done|high|low|med)$/i.test(feature)) return false;
   const wordCount = feature.split(/\s+/).filter(Boolean).length;
-  const hasActionVerb = /(create|edit|update|delete|mark|toggle|set|clear|filter|search|sort|persist|store|restore|show|hide|add|remove|snooze|schedule|confirm|open|close|validate|support|allow|enable|disable|track|view|answer|enter|generate|copy|pick|choose|select|share|save|submit|regenerate|import|export|upload|download|start|finish)\b/i.test(feature);
+  const hasActionVerb = /(create|edit|update|delete|mark|toggle|set|clear|filter|search|sort|persist|store|restore|show|display|hide|add|remove|snooze|schedule|confirm|open|close|validate|support|allow|enable|disable|track|view|answer|ask|enter|collect|generate|copy|pick|choose|select|share|save|submit|regenerate|import|export|upload|download|start|finish)\b/i.test(feature);
   if (wordCount < 2) return false;
   if (wordCount === 2 && !hasActionVerb) return false;
   return hasActionVerb;
