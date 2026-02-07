@@ -287,6 +287,23 @@ const extractStyleReferencesFromText = (input: string): string[] => {
   return normalizeStyleReferences(refs);
 };
 
+const stripTrailingSentencePunctuation = (value: string): string => value.replace(/[.?!]+$/g, "").trim();
+
+const isAtomicFeatureStatement = (value: string): boolean => {
+  const feature = stripTrailingSentencePunctuation(value).trim();
+  if (!feature) return false;
+  if (/^(and|or|then)\b/i.test(feature)) return false;
+  if (/^(active|completed|overdue|todo|done|high|low|med)$/i.test(feature)) return false;
+  const wordCount = feature.split(/\s+/).filter(Boolean).length;
+  if (wordCount < 3) return false;
+  return /(create|edit|update|delete|mark|toggle|set|clear|filter|search|sort|persist|store|restore|show|hide|add|remove|snooze|schedule|confirm|open|close|validate|support|allow|enable|disable|track|view)\b/i.test(feature);
+};
+
+const hasAtomicFeatures = (value: string[] | undefined, min = MIN_FEATURES): boolean => {
+  const normalized = normalizeTextArray(value).map(stripTrailingSentencePunctuation).filter(Boolean);
+  return normalized.length >= min && normalized.every(isAtomicFeatureStatement);
+};
+
 const hasMeaningfulList = (value: string[] | undefined, min = 1): boolean => normalizeTextArray(value).length >= min;
 
 const hasDiverseQualityGates = (gates: string[]): boolean => {
@@ -347,36 +364,58 @@ const parseFeatureListReply = (input: string): string[] => {
     const items = marked
       .split(/\n+/)
       .map(clean)
+      .map(stripTrailingSentencePunctuation)
       .filter(Boolean);
-    return Array.from(new Set(items));
-  }
-
-  const lines = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const bulletLines = lines.filter((line) => /^(?:[-*•]|\d+[.)])\s+/.test(line));
-  if (bulletLines.length >= MIN_FEATURES) {
-    return Array.from(new Set(bulletLines.map(clean).filter(Boolean)));
-  }
-
-  const semicolonParts = normalized.split(/\s*;\s*/).map(clean).filter(Boolean);
-  if (semicolonParts.length >= MIN_FEATURES) {
-    return Array.from(new Set(semicolonParts));
-  }
-
-  if (normalized.includes(",")) {
-    const commaParts = normalized.split(",").map(clean).filter(Boolean);
-    if (commaParts.length >= MIN_FEATURES) {
-      return Array.from(new Set(commaParts));
+    if (items.every(isAtomicFeatureStatement)) {
+      return Array.from(new Set(items));
     }
   }
 
-  const andParts = normalized.split(/\s+and\s+/i).map(clean).filter(Boolean);
-  if (andParts.length >= MIN_FEATURES) {
-    return Array.from(new Set(andParts));
+  const lines = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const plainLineItems = lines.map(clean).map(stripTrailingSentencePunctuation).filter(Boolean);
+  if (plainLineItems.length >= MIN_FEATURES && plainLineItems.every(isAtomicFeatureStatement)) {
+    return Array.from(new Set(plainLineItems));
+  }
+
+  const bulletLines = lines.filter((line) => /^(?:[-*•]|\d+[.)])\s+/.test(line));
+  if (bulletLines.length >= MIN_FEATURES) {
+    const items = bulletLines.map(clean).map(stripTrailingSentencePunctuation).filter(Boolean);
+    if (items.every(isAtomicFeatureStatement)) {
+      return Array.from(new Set(items));
+    }
+  }
+
+  const sentenceItems = normalized
+    .split(/(?<=[.?!])\s+(?=[A-Z])/)
+    .map(clean)
+    .map(stripTrailingSentencePunctuation)
+    .filter(Boolean);
+  if (sentenceItems.length >= MIN_FEATURES && sentenceItems.every(isAtomicFeatureStatement)) {
+    return Array.from(new Set(sentenceItems));
+  }
+
+  const semicolonParts = normalized.split(/\s*;\s*/).map(clean).filter(Boolean);
+  if (semicolonParts.length >= MIN_FEATURES && semicolonParts.every(isAtomicFeatureStatement)) {
+    return Array.from(new Set(semicolonParts.map(stripTrailingSentencePunctuation)));
+  }
+
+  if (!/[.?!]/.test(normalized) && normalized.includes(",")) {
+    const commaParts = normalized.split(",").map(clean).filter(Boolean);
+    if (commaParts.length >= MIN_FEATURES && commaParts.every(isAtomicFeatureStatement)) {
+      return Array.from(new Set(commaParts.map(stripTrailingSentencePunctuation)));
+    }
+  }
+
+  if (!/[.?!,;]/.test(normalized)) {
+    const andParts = normalized.split(/\s+and\s+/i).map(clean).filter(Boolean);
+    if (andParts.length >= MIN_FEATURES && andParts.every(isAtomicFeatureStatement)) {
+      return Array.from(new Set(andParts.map(stripTrailingSentencePunctuation)));
+    }
   }
 
   return Array.from(
     new Set(
-      [clean(normalized)].filter(Boolean),
+      [stripTrailingSentencePunctuation(clean(normalized))].filter(Boolean),
     ),
   );
 };
@@ -401,7 +440,7 @@ const isPrdComplete = (prd: PrdJson): boolean => {
     && hasNonEmpty(prd.framework)
     && hasMeaningfulList(prd.product.targetUsers)
     && hasMeaningfulList(prd.product.userProblems)
-    && hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)
+    && hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES)
     && hasMeaningfulList(prd.product.nonGoals)
     && hasMeaningfulList(prd.product.successMetrics)
     && hasMeaningfulList(prd.product.constraints)
@@ -427,7 +466,7 @@ const deriveWizardStep = (prd: PrdJson): number => {
   if (hasNonEmpty(prd.framework)) step = 11;
   if (hasMeaningfulList(prd.product.targetUsers)) step = 12;
   if (hasMeaningfulList(prd.product.userProblems)) step = 13;
-  if (hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 14;
+  if (hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES)) step = 14;
   if (hasMeaningfulList(prd.product.nonGoals)) step = 15;
   if (hasMeaningfulList(prd.product.successMetrics)) step = 16;
   if (hasMeaningfulList(prd.product.constraints) && hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES) && hasDiverseQualityGates(prd.qualityGates)) step = 17;
@@ -448,7 +487,7 @@ const firstMissingField = (prd: PrdJson): string => {
   if (!hasNonEmpty(prd.framework)) return "framework";
   if (!hasMeaningfulList(prd.product.targetUsers)) return "targetUsers";
   if (!hasMeaningfulList(prd.product.userProblems)) return "userProblems";
-  if (!hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)) return "mustHaveFeatures";
+  if (!hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES)) return "mustHaveFeatures";
   if (!hasMeaningfulList(prd.product.nonGoals)) return "nonGoals";
   if (!hasMeaningfulList(prd.product.successMetrics)) return "successMetrics";
   if (!hasMeaningfulList(prd.product.constraints)) return "constraints";
@@ -486,7 +525,7 @@ const fallbackQuestion = (prd: PrdJson): string => {
     case "userProblems":
       return "What concrete user problems are we solving for those users?";
     case "mustHaveFeatures":
-      return `List at least ${MIN_FEATURES} must-have features for V1.`;
+      return `List at least ${MIN_FEATURES} atomic must-have features for V1 (one per line, action-first).`;
     case "nonGoals":
       return "What is explicitly out of scope for V1?";
     case "successMetrics":
@@ -523,7 +562,11 @@ const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ do
   ];
 
   const inferred = await inferBootstrapDoneWhen(repoRoot, prd);
+  const scaffoldCommand = await inferBootstrapCommand(repoRoot, prd);
   notes.push("Preferred scaffold action (optional): initialize project skeleton for the chosen stack in this repository.");
+  if (scaffoldCommand) {
+    notes.push(`Preferred scaffold command (optional): ${scaffoldCommand}`);
+  }
   return { doneWhen: inferred, notes };
 };
 
@@ -538,7 +581,8 @@ const firstScaffoldHintFromNotes = (notes: string[] | undefined): string | null 
 const isScaffoldMissingGateCommand = (command: string): boolean => {
   const c = command.trim();
   return (
-    c === "test -f package.json"
+    c === "test -f package.json || test -f app/package.json"
+    || c === "test -f package.json"
     || c === "test -d app || test -d src/app"
     || c === "test -f pyproject.toml || test -f requirements.txt"
     || c === "test -f go.mod"
@@ -546,18 +590,41 @@ const isScaffoldMissingGateCommand = (command: string): boolean => {
   );
 };
 
+const inferBootstrapCommand = async (repoRoot: string, prd: PrdJson): Promise<string | null> => {
+  const hasRootPkg = !!(await readTextIfExists(path.join(repoRoot, "package.json")));
+  const hasAppPkg = !!(await readTextIfExists(path.join(repoRoot, "app", "package.json")));
+  if (hasRootPkg || hasAppPkg) {
+    return null;
+  }
+
+  if (prd.language === "typescript" || prd.platform === "web") {
+    return "mkdir -p app && npx --yes create-vite@latest app --template react-ts";
+  }
+  if (prd.language === "python") {
+    return "python3 -m venv .venv && python3 -m pip install --upgrade pip";
+  }
+  if (prd.language === "go") {
+    return "test -f go.mod || go mod init app";
+  }
+  if (prd.language === "rust") {
+    return "test -f Cargo.toml || cargo init --name app";
+  }
+  return null;
+};
+
 const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<string[]> => {
   const hasPackageJson = !!(await readTextIfExists(path.join(repoRoot, "package.json")));
+  const hasAppPackageJson = !!(await readTextIfExists(path.join(repoRoot, "app", "package.json")));
   const hasPyproject = !!(await readTextIfExists(path.join(repoRoot, "pyproject.toml")));
   const hasRequirements = !!(await readTextIfExists(path.join(repoRoot, "requirements.txt")));
   const hasGoMod = !!(await readTextIfExists(path.join(repoRoot, "go.mod")));
   const hasCargoToml = !!(await readTextIfExists(path.join(repoRoot, "Cargo.toml")));
 
   if (prd.language === "typescript" || prd.platform === "web") {
-    if (!hasPackageJson) {
-      return ["test -f package.json"];
+    if (!hasPackageJson && !hasAppPackageJson) {
+      return ["test -f package.json || test -f app/package.json"];
     }
-    return ["test -f package.json"];
+    return ["test -f package.json || test -f app/package.json"];
   }
   if (prd.language === "python") {
     return ["test -f pyproject.toml || test -f requirements.txt"];
@@ -635,7 +702,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
       }),
     );
   }
-  for (const feature of prd.product.mustHaveFeatures ?? []) {
+  for (const feature of normalizeMustHaveFeatureAtoms(prd.product.mustHaveFeatures)) {
     const atoms = toAtomicFeatureTasks(feature);
     for (const atom of atoms) {
     tasks.push(
@@ -689,7 +756,22 @@ const decomposeFeatureRequestToTasks = (feature: string): string[] => {
     const sub = c.split(/\s+(?:and|then|plus)\s+/i).map((p) => p.trim()).filter(Boolean);
     out.push(...(sub.length > 1 ? sub : [c]));
   }
-  return Array.from(new Set(out));
+  const cleaned = Array.from(new Set(out.map((item) => stripTrailingSentencePunctuation(item)).filter(Boolean)));
+  const atomic = cleaned.filter(isAtomicFeatureStatement);
+  if (atomic.length > 0) {
+    return atomic;
+  }
+  return [stripTrailingSentencePunctuation(compact)];
+};
+
+const normalizeMustHaveFeatureAtoms = (features: string[] | undefined): string[] => {
+  const source = normalizeTextArray(features);
+  const atoms = source
+    .flatMap((item) => parseFeatureListReply(item))
+    .map(stripTrailingSentencePunctuation)
+    .filter(Boolean)
+    .filter(isAtomicFeatureStatement);
+  return Array.from(new Set(atoms));
 };
 
 const makeTask = (params: {
@@ -846,7 +928,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- framework (string)",
     "- targetUsers (non-empty string[])",
     "- userProblems (non-empty string[])",
-    `- mustHaveFeatures (at least ${MIN_FEATURES} string items)`,
+    `- mustHaveFeatures (at least ${MIN_FEATURES} atomic action statements)`,
     "- nonGoals (non-empty string[])",
     "- successMetrics (non-empty string[])",
     "- constraints (non-empty string[])",
@@ -961,9 +1043,17 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
     };
   }
   if (Array.isArray(updates.mustHaveFeatures)) {
+    const normalizedMustHave = Array.from(
+      new Set(
+        normalizeTextArray(updates.mustHaveFeatures)
+          .flatMap((item) => parseFeatureListReply(item))
+          .map(stripTrailingSentencePunctuation)
+          .filter(Boolean),
+      ),
+    );
     next.product = {
       ...next.product,
-      mustHaveFeatures: normalizeTextArray(updates.mustHaveFeatures),
+      mustHaveFeatures: normalizedMustHave,
     };
   }
   if (Array.isArray(updates.nonGoals)) {
@@ -1187,19 +1277,26 @@ const upsertAgentsKey = (content: string, key: string, value: string): string =>
 
 const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
   const pkgRaw = await readTextIfExists(path.join(repoRoot, "package.json"));
-  if (!pkgRaw) {
+  const appPkgRaw = await readTextIfExists(path.join(repoRoot, "app", "package.json"));
+  const candidates = [pkgRaw, appPkgRaw].filter((v): v is string => typeof v === "string");
+  if (candidates.length === 0) {
     return false;
   }
-  try {
-    const pkg = JSON.parse(pkgRaw) as {
+  for (const candidate of candidates) {
+    try {
+      const pkg = JSON.parse(candidate) as {
       dependencies?: Record<string, string>;
       devDependencies?: Record<string, string>;
-    };
-    const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-    return Boolean(deps.next || deps.vite || deps["react-scripts"]);
-  } catch {
-    return false;
+      };
+      const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+      if (deps.next || deps.vite || deps["react-scripts"]) {
+        return true;
+      }
+    } catch {
+      // Keep checking other package manifests.
+    }
   }
+  return false;
 };
 
 const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
@@ -1616,7 +1713,7 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         const hasAnswer = rawInput.length > 0;
-        if (hasAnswer && prd.frontend === true) {
+        if (hasAnswer) {
           const extractedStyleRefs = extractStyleReferencesFromText(rawInput);
           if (extractedStyleRefs.length > 0) {
             prd = {
@@ -1739,7 +1836,7 @@ export const createTools = (ctx: PluginContext) => {
 
         if (hasAnswer && missingBefore === "mustHaveFeatures") {
           const features = parseFeatureListReply(rawInput);
-          if (features.length >= MIN_FEATURES) {
+          if (features.length >= MIN_FEATURES && features.every(isAtomicFeatureStatement)) {
             prd = {
               ...prd,
               product: {
@@ -1793,7 +1890,7 @@ export const createTools = (ctx: PluginContext) => {
           }
           return [
             `PRD interview (${deriveWizardStep(prd)}/${WIZARD_TOTAL_STEPS})`,
-            `I captured ${features.length} feature(s). Please list at least ${MIN_FEATURES} must-have features in one line, separated by commas.`,
+            `I captured ${features.length} feature(s). Please list at least ${MIN_FEATURES} atomic must-have features (one per line; each should start with a concrete action verb).`,
             "Reply with your answer in natural language.",
           ].join("\n");
         }
@@ -2344,10 +2441,7 @@ export const createTools = (ctx: PluginContext) => {
               ? await missingPackageScriptForCommand(repoRoot, gateResult.failed.command)
               : null;
             const elapsedMs = Date.now() - taskRepairStartedAt;
-            await failEarly([
-              `Deterministic gate failed: ${failed}.`,
-              `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s across ${repairAttempts} attempt(s) (no-progress or time budget reached).`,
-            ], [
+            const nextActions = [
               ...(missingScript
                 ? [
                     `Add script '${missingScript}' in package.json (and setup files it depends on).`,
@@ -2359,8 +2453,16 @@ export const createTools = (ctx: PluginContext) => {
                     `Optional default command: ${scaffoldHint}`,
                   ]
                 : []),
-              "Then rerun /mario-devx:run 1.",
-            ]);
+            ];
+            if (nextActions.length === 0) {
+              nextActions.push(`Fix deterministic gate '${failed}'.`);
+              nextActions.push("If this is initial setup, scaffold the project baseline first (root or app/).");
+            }
+            nextActions.push("Then rerun /mario-devx:run 1.");
+            await failEarly([
+              `Deterministic gate failed: ${failed}.`,
+              `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s across ${repairAttempts} attempt(s) (no-progress or time budget reached).`,
+            ], nextActions);
             await showToast(ctx, `Run stopped: gates failed on ${task.id}`, "warning");
             break;
           }
@@ -2609,14 +2711,40 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
         const replanCandidates = prd.backlog.featureRequests.filter((f) => f.status === "open" || f.status === "planned");
-        if (replanCandidates.length === 0) {
-          return "No backlog items to replan.";
-        }
         const gates = prd.verificationPolicy?.globalGates?.length
           ? prd.verificationPolicy.globalGates
           : prd.qualityGates;
         let n = nextTaskOrdinal(prd.tasks ?? []);
         const generated: PrdTask[] = [];
+
+        const malformedFeatureTaskIds = new Set(
+          (prd.tasks ?? [])
+            .filter((t) => (t.labels ?? []).includes("feature") && t.status !== "completed" && t.status !== "cancelled")
+            .filter((t) => {
+              const title = t.title.replace(/^Implement:\s*/i, "").trim();
+              const acceptance = (t.acceptance ?? [title]).join(" ").trim();
+              return !isAtomicFeatureStatement(title) || !isAtomicFeatureStatement(acceptance);
+            })
+            .map((t) => t.id),
+        );
+
+        const normalizedMustHave = normalizeMustHaveFeatureAtoms(prd.product.mustHaveFeatures);
+        const existingFeatureTitles = new Set(
+          (prd.tasks ?? [])
+            .filter((t) => (t.labels ?? []).includes("feature") && !malformedFeatureTaskIds.has(t.id) && t.status !== "cancelled")
+            .map((t) => t.title.replace(/^Implement:\s*/i, "").trim()),
+        );
+        const regeneratedFromMustHave = normalizedMustHave
+          .filter((atom) => !existingFeatureTitles.has(atom))
+          .map((atom) => makeTask({
+            id: normalizeTaskId(n++),
+            title: `Implement: ${atom}`,
+            doneWhen: gates,
+            labels: ["feature", "replan"],
+            acceptance: [atom],
+          }));
+        generated.push(...regeneratedFromMustHave);
+
         const updatedBacklog = prd.backlog.featureRequests.map((f) => {
           if (f.status === "implemented") return f;
           if (f.status === "planned" && Array.isArray(f.taskIds) && f.taskIds.length > 0) return f;
@@ -2637,13 +2765,20 @@ export const createTools = (ctx: PluginContext) => {
         });
         prd = {
           ...prd,
-          tasks: [...(prd.tasks ?? []), ...generated],
+          tasks: [
+            ...(prd.tasks ?? []).map((t) => (malformedFeatureTaskIds.has(t.id) ? { ...t, status: "cancelled" as const } : t)),
+            ...generated,
+          ],
           backlog: { ...prd.backlog, featureRequests: updatedBacklog },
         };
         await writePrdJson(repoRoot, prd);
+        if (replanCandidates.length === 0 && malformedFeatureTaskIds.size === 0 && generated.length === 0) {
+          return "No backlog items to replan.";
+        }
         return [
           `Replan complete.`,
           `Backlog items considered: ${replanCandidates.length}`,
+          `Malformed feature tasks cancelled: ${malformedFeatureTaskIds.size}`,
           `New tasks: ${generated.length}`,
         ].join("\n");
       },
@@ -2754,9 +2889,14 @@ export const createTools = (ctx: PluginContext) => {
         const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
         if (uiVerifyEnabled) {
           const isWebApp = await isLikelyWebApp(repoRoot);
+          const scaffoldBlocked = !!prd?.tasks?.some(
+            (t) => (t.labels ?? []).includes("scaffold") && (t.status === "open" || t.status === "in_progress" || t.status === "blocked"),
+          );
           if (!isWebApp) {
-            issues.push("UI_VERIFY=1 but this repo does not look like a Node web app yet.");
-            fixes.push("Either scaffold the web app first, or set UI_VERIFY=0 in .mario/AGENTS.md.");
+            if (!scaffoldBlocked) {
+              issues.push("UI_VERIFY=1 but this repo does not look like a Node web app yet.");
+              fixes.push("Either scaffold the web app first, or set UI_VERIFY=0 in .mario/AGENTS.md.");
+            }
           } else {
             const cliOk = await hasAgentBrowserCli(ctx);
             const skillOk = await hasAgentBrowserSkill(repoRoot);

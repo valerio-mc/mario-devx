@@ -108,11 +108,13 @@ The interviewer is intentionally strict and now captures deeper planning fields:
 - README policy for human-readable docs
 
 Style references can be provided as URLs and/or screenshot paths in your answers.
+Mario DevX now merges style references mentioned in any interview answer (even before the dedicated UI question), so early references are retained.
 
 Example:
 - `Style references: https://linear.app, https://stripe.com, ./references/hero-layout.png`
 
 Task decomposition is unbounded: simple ideas may generate ~5 tasks, complex ideas can generate 30+ atomic tasks.
+For `mustHaveFeatures`, the interviewer now requires atomic action statements (one behavior per line) and will keep asking until they are concrete.
 You can pass each answer directly, for example: `/mario-devx:new we need OAuth login and team workspaces`.
 
 5) **Run the loop**
@@ -171,12 +173,18 @@ Task order is scaffold-first by design:
 - docs task (README) when enabled
 - remaining tasks: feature implementation
 
+Scaffold nuance:
+- For web/TypeScript ideas in non-empty repos, the default scaffold may be created in `app/` (not root) to avoid clobbering existing files.
+- Scaffold completion accepts either `package.json` at root or `app/package.json`.
+
 You can add features at any time:
 
 ```text
 /mario-devx:add add CSV export and saved filters
 /mario-devx:replan
 ```
+
+`/mario-devx:replan` also repairs malformed open feature tasks by canceling non-atomic fragments and regenerating clean atomic tasks from PRD/backlog.
 
 ## What gets created
 
@@ -243,6 +251,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 ## Troubleshooting
 
 - Quality Gates failing instantly: verify `.mario/prd.json` has runnable commands under `qualityGates`.
+- Scaffold keeps blocking on `T-0001`: inspect `tasks[].lastAttempt.judge.nextActions` in `.mario/prd.json`; follow the suggested scaffold command (root or `app/`), then rerun `/mario-devx:run 1`.
 - UI verify doesn't run: check install output for `agent-browser`; if auto-install failed, rerun the install commands manually and verify `.mario/AGENTS.md` has `UI_VERIFY=1`.
 - If `/run` shows AGENTS parse warnings: fix malformed lines in `.mario/AGENTS.md` (must be `KEY=VALUE`; comments must start with `#`).
 - Still confused: run `/mario-devx:doctor`.
