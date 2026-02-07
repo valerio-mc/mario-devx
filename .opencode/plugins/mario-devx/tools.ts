@@ -32,7 +32,6 @@ import {
   WIZARD_TOTAL_STEPS,
   compactIdea,
   deriveWizardStep,
-  escapeDoubleQuoted,
   extractStyleReferencesFromText,
   hasMeaningfulList,
   hasNonEmpty,
@@ -51,8 +50,6 @@ import {
   nextTaskOrdinal,
   normalizeMustHaveFeatureAtoms,
   normalizeTaskId,
-  readmeSectionGate,
-  scaffoldPlanFromPrd,
   setPrdTaskLastAttempt,
   setPrdTaskStatus,
 } from "./planner";
