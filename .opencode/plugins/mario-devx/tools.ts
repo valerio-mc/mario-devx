@@ -188,6 +188,14 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
       backlog: {
         featureRequests: Array.isArray(existing.backlog?.featureRequests) ? existing.backlog.featureRequests : [],
       },
+      tasks: Array.isArray(existing.tasks)
+        ? existing.tasks.map((task) => ({
+            ...task,
+            notes: Array.isArray(task.notes)
+              ? task.notes.map((note) => note.replaceAll("__tmp_next", "tmp-next").replaceAll("__tmp_vite", "tmp-vite"))
+              : task.notes,
+          }))
+        : [],
       product: {
         targetUsers: Array.isArray(existing.product?.targetUsers) ? existing.product.targetUsers : [],
         userProblems: Array.isArray(existing.product?.userProblems) ? existing.product.userProblems : [],
@@ -450,6 +458,13 @@ const compactIdea = (idea: string): string => {
   return `${oneLine.slice(0, 77).trim()}...`;
 };
 
+const escapeDoubleQuoted = (value: string): string => value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+
+const readmeSectionGate = (section: string): string => {
+  const escaped = escapeDoubleQuoted(section.trim());
+  return `node -e \"const fs=require('fs');const s=fs.readFileSync('README.md','utf8');process.exit(/^(?:#{1,3})\\s*${escaped}\\s*$/mi.test(s)?0:1)\"`;
+};
+
 const scaffoldPlanFromPrd = async (repoRoot: string, prd: PrdJson): Promise<{ doneWhen: string[]; notes: string[] }> => {
   const notes: string[] = [
     "Seeded by PRD interviewer.",
@@ -488,10 +503,26 @@ const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Promise<s
   const hasGoMod = !!(await readTextIfExists(path.join(repoRoot, "go.mod")));
   const hasCargoToml = !!(await readTextIfExists(path.join(repoRoot, "Cargo.toml")));
 
+  if (prd.language === "typescript" || prd.platform === "web") {
+    if (!hasPackageJson) {
+      return ["test -f package.json"];
+    }
+    return ["test -f package.json"];
+  }
+  if (prd.language === "python") {
+    return ["test -f pyproject.toml || test -f requirements.txt"];
+  }
+  if (prd.language === "go") {
+    return ["test -f go.mod"];
+  }
+  if (prd.language === "rust") {
+    return ["test -f Cargo.toml"];
+  }
+
   if (!hasPackageJson && !hasPyproject && !hasRequirements && !hasGoMod && !hasCargoToml) {
     return ["test -f package.json || test -f pyproject.toml || test -f requirements.txt || test -f go.mod || test -f Cargo.toml"];
   }
-  return prd.qualityGates ?? [];
+  return ["true"];
 };
 
 const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson> => {
@@ -541,11 +572,15 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
     );
   }
   if (prd.docs.readmeRequired) {
+    const sectionChecks = (prd.docs.readmeSections ?? [])
+      .map((section) => section.trim())
+      .filter(Boolean)
+      .map((section) => readmeSectionGate(section));
     tasks.push(
       makeTask({
         id: normalizeTaskId(n++),
         title: "Initialize and maintain human-readable README.md",
-        doneWhen: ["test -f README.md"],
+        doneWhen: ["test -f README.md", ...sectionChecks],
         dependsOn: [scaffoldId],
         labels: ["docs"],
         acceptance: [
@@ -1795,8 +1830,8 @@ export const createTools = (ctx: PluginContext) => {
 
         const previousRun = await readRunState(repoRoot);
         if (
-          context.sessionID
-          && previousRun.lastRunControlSessionId === context.sessionID
+          ((context.sessionID && previousRun.lastRunControlSessionId === context.sessionID)
+            || (!context.sessionID && !!previousRun.lastRunControlSessionId))
           && previousRun.lastRunAt
           && previousRun.lastRunResult
           && Number.isFinite(Date.parse(previousRun.lastRunAt))
@@ -1972,6 +2007,18 @@ export const createTools = (ctx: PluginContext) => {
             task.scope.length > 0 ? `Scope: ${task.scope.join(", ")}` : "",
             effectiveDoneWhen.length > 0 ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}` : "Done when: (none)",
             task.notes && task.notes.length > 0 ? `Notes:\n${task.notes.map((n) => `- ${n}`).join("\n")}` : "",
+            prd.frontend
+              ? [
+                  "UI context:",
+                  `- Design system: ${prd.ui.designSystem ?? "unspecified"}`,
+                  `- Visual direction: ${prd.ui.visualDirection || "unspecified"}`,
+                  `- UX requirements: ${(prd.ui.uxRequirements ?? []).join("; ") || "unspecified"}`,
+                  `- Style references: ${(prd.ui.styleReferences ?? []).join(", ") || "none"}`,
+                ].join("\n")
+              : "",
+            prd.docs.readmeRequired
+              ? `README policy: required sections -> ${(prd.docs.readmeSections ?? []).join(", ")}`
+              : "README policy: optional",
           ]
             .filter((x) => x)
             .join("\n");
@@ -2447,12 +2494,15 @@ export const createTools = (ctx: PluginContext) => {
         }
         const backlogId = nextBacklogId(prd);
         const taskAtoms = decomposeFeatureRequestToTasks(feature);
+        const gates = prd.verificationPolicy?.globalGates?.length
+          ? prd.verificationPolicy.globalGates
+          : prd.qualityGates;
         const startN = nextTaskOrdinal(prd.tasks ?? []);
         let n = startN;
         const newTasks = taskAtoms.map((item) => makeTask({
           id: normalizeTaskId(n++),
           title: `Implement: ${item}`,
-          doneWhen: prd.qualityGates,
+          doneWhen: gates,
           labels: ["feature", "backlog"],
           acceptance: [item],
         }));
@@ -2494,19 +2544,23 @@ export const createTools = (ctx: PluginContext) => {
         }
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
-        const openBacklog = prd.backlog.featureRequests.filter((f) => f.status === "open");
-        if (openBacklog.length === 0) {
-          return "No open backlog items to replan.";
+        const replanCandidates = prd.backlog.featureRequests.filter((f) => f.status === "open" || f.status === "planned");
+        if (replanCandidates.length === 0) {
+          return "No backlog items to replan.";
         }
+        const gates = prd.verificationPolicy?.globalGates?.length
+          ? prd.verificationPolicy.globalGates
+          : prd.qualityGates;
         let n = nextTaskOrdinal(prd.tasks ?? []);
         const generated: PrdTask[] = [];
         const updatedBacklog = prd.backlog.featureRequests.map((f) => {
-          if (f.status !== "open") return f;
+          if (f.status === "implemented") return f;
+          if (f.status === "planned" && Array.isArray(f.taskIds) && f.taskIds.length > 0) return f;
           const atoms = decomposeFeatureRequestToTasks(f.request);
           const tasks = atoms.map((atom) => makeTask({
             id: normalizeTaskId(n++),
             title: `Implement: ${atom}`,
-            doneWhen: prd.qualityGates,
+            doneWhen: gates,
             labels: ["feature", "backlog"],
             acceptance: [atom],
           }));
@@ -2525,7 +2579,7 @@ export const createTools = (ctx: PluginContext) => {
         await writePrdJson(repoRoot, prd);
         return [
           `Replan complete.`,
-          `Backlog items planned: ${openBacklog.length}`,
+          `Backlog items considered: ${replanCandidates.length}`,
           `New tasks: ${generated.length}`,
         ].join("\n");
       },
