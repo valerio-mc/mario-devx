@@ -203,7 +203,7 @@ export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | n
       return null;
     }
     const v = (parsed as { version?: unknown }).version;
-    if (v !== 3 && v !== 4) {
+    if (v !== 4) {
       return null;
     }
     const prd = parsed as PrdJson;
