@@ -1,2 +1,5 @@
-/state/
+.DS_Store
+.opencode/.DS_Store
+
+.mario/
 *.log
