@@ -97,6 +97,7 @@ export type PrdJson = {
   };
   ui: {
     designSystem: "none" | "tailwind" | "shadcn" | "custom" | null;
+    styleReferenceMode: "url" | "screenshot" | "mixed";
     styleReferences: string[];
     visualDirection: string;
     uxRequirements: string[];
@@ -160,6 +161,7 @@ export const defaultPrdJson = (): PrdJson => {
     },
     ui: {
       designSystem: null,
+      styleReferenceMode: "mixed",
       styleReferences: [],
       visualDirection: "",
       uxRequirements: [],

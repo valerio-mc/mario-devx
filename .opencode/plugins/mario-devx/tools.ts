@@ -170,6 +170,11 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
       },
       ui: {
         designSystem: existing.ui?.designSystem ?? null,
+        styleReferenceMode: existing.ui?.styleReferenceMode === "url"
+          ? "url"
+          : existing.ui?.styleReferenceMode === "screenshot"
+            ? "screenshot"
+            : "mixed",
         styleReferences: Array.isArray(existing.ui?.styleReferences) ? existing.ui.styleReferences : [],
         visualDirection: typeof existing.ui?.visualDirection === "string" ? existing.ui.visualDirection : "",
         uxRequirements: Array.isArray(existing.ui?.uxRequirements) ? existing.ui.uxRequirements : [],
@@ -209,6 +214,7 @@ type InterviewUpdates = {
   frontend?: boolean;
   uiVerificationRequired?: boolean;
   uiDesignSystem?: "none" | "tailwind" | "shadcn" | "custom";
+  uiStyleReferenceMode?: "url" | "screenshot" | "mixed";
   uiStyleReferences?: string[];
   uiVisualDirection?: string;
   uiUxRequirements?: string[];
@@ -242,6 +248,17 @@ const normalizeTextArray = (value: string[] | undefined): string[] => {
   return Array.isArray(value)
     ? Array.from(new Set(value.map((item) => String(item).trim()).filter(Boolean)))
     : [];
+};
+
+const normalizeStyleReferences = (value: string[] | undefined): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const refs = value
+    .map((item) => String(item).trim())
+    .filter((item) => item.length > 0)
+    .filter((item) => /^https?:\/\//i.test(item) || /\.(png|jpe?g|webp|gif|svg)$/i.test(item) || item.includes("/"));
+  return Array.from(new Set(refs));
 };
 
 const hasMeaningfulList = (value: string[] | undefined, min = 1): boolean => normalizeTextArray(value).length >= min;
@@ -709,6 +726,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     frontend: prd.frontend,
     uiVerificationRequired: prd.uiVerificationRequired,
     uiDesignSystem: prd.ui.designSystem,
+    uiStyleReferenceMode: prd.ui.styleReferenceMode,
     uiStyleReferences: prd.ui.styleReferences,
     uiVisualDirection: prd.ui.visualDirection,
     uiUxRequirements: prd.ui.uxRequirements,
@@ -740,6 +758,8 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- frontend (true/false)",
     "- uiVerificationRequired (true/false when frontend=true)",
     "- uiDesignSystem (none|tailwind|shadcn|custom when frontend=true)",
+    "- uiStyleReferenceMode (url|screenshot|mixed when frontend=true)",
+    "- uiStyleReferences (optional URLs and/or screenshot paths when frontend=true)",
     "- uiVisualDirection (non-empty string when frontend=true)",
     "- uiUxRequirements (non-empty string[] when frontend=true)",
     "- docsReadmeRequired (true/false)",
@@ -755,7 +775,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     `- qualityGates (at least ${MIN_QUALITY_GATES} runnable commands including both test and static checks)`,
     "",
     "Envelope schema:",
-    '{"done": boolean, "updates": {idea?, platform?, frontend?, uiVerificationRequired?, uiDesignSystem?, uiStyleReferences?, uiVisualDirection?, uiUxRequirements?, docsReadmeRequired?, docsReadmeSections?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
+    '{"done": boolean, "updates": {idea?, platform?, frontend?, uiVerificationRequired?, uiDesignSystem?, uiStyleReferenceMode?, uiStyleReferences?, uiVisualDirection?, uiUxRequirements?, docsReadmeRequired?, docsReadmeSections?, language?, framework?, targetUsers?, userProblems?, mustHaveFeatures?, nonGoals?, successMetrics?, constraints?, qualityGates?}, "next_question": string}',
     "",
     "Rules:",
     "- updates MUST include only fields changed by this answer.",
@@ -770,6 +790,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- Do not accept vague features (like 'good UX'); ask for concrete behavior.",
     "- Decompose must-have features into atomic, independently testable behaviors; task count is unbounded if needed.",
     "- For frontend projects, capture UI direction deeply (design system, visual direction, UX requirements, optional reference URLs).",
+    "- style references can include both web URLs and screenshot file paths.",
     "- Do not mark done=true unless ALL required fields pass the criteria above.",
     "- if unsure, ask a question and keep done=false.",
     "- no markdown except the two required tags.",
@@ -828,8 +849,11 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   if (updates.uiDesignSystem) {
     next.ui = { ...next.ui, designSystem: updates.uiDesignSystem };
   }
+  if (updates.uiStyleReferenceMode) {
+    next.ui = { ...next.ui, styleReferenceMode: updates.uiStyleReferenceMode };
+  }
   if (Array.isArray(updates.uiStyleReferences)) {
-    next.ui = { ...next.ui, styleReferences: normalizeTextArray(updates.uiStyleReferences) };
+    next.ui = { ...next.ui, styleReferences: normalizeStyleReferences(updates.uiStyleReferences) };
   }
   if (typeof updates.uiVisualDirection === "string") {
     next.ui = { ...next.ui, visualDirection: updates.uiVisualDirection.trim() };

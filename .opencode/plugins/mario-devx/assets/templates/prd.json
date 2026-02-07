@@ -36,6 +36,7 @@
   },
   "ui": {
     "designSystem": null,
+    "styleReferenceMode": "mixed",
     "styleReferences": [],
     "visualDirection": "",
     "uxRequirements": []
