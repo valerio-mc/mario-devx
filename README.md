@@ -299,12 +299,16 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 
 ## Troubleshooting
 
-- Quality Gates failing instantly: verify `.mario/prd.json` has runnable commands under `qualityGates`.
-- Scaffold keeps blocking on `T-0001`: inspect `tasks[].lastAttempt.judge.nextActions` in `.mario/prd.json`; follow the suggested scaffold command (root or `app/`), then rerun `/mario-devx:run 1`.
-- `T-0002` still blocked: inspect `tasks[].lastAttempt.judge.reason` for `ReasonCode:*`; follow `nextActions` (they now point to the correct workspace manifest).
-- UI verify doesn't run: check install output for `agent-browser`; if auto-install failed, rerun the install commands manually and verify `.mario/AGENTS.md` has `UI_VERIFY=1`.
-- If `/run` shows AGENTS parse warnings: fix malformed lines in `.mario/AGENTS.md` (must be `KEY=VALUE`; comments must start with `#`).
-- Still confused: run `/mario-devx:doctor`.
+| Issue | Solution |
+|-------|----------|
+| **Wizard won't progress** | The PRD wizard is LLM-driven. Just answer naturally - it will ask follow-ups until complete. Check `.mario/prd.json` to see current state. |
+| **Quality gates fail instantly** | Verify `.mario/prd.json` has runnable commands under `qualityGates` (e.g., `npm test`, `npm run lint`). |
+| **First task keeps failing** | Check `tasks[0].lastAttempt.judge.nextActions` in `.mario/prd.json` for specific scaffold commands to run. |
+| **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If auto-install failed, run: `npm install -g agent-browser && agent-browser install` |
+| **Verifier returns invalid JSON** | The LLM should return JSON in `<VERIFIER_JSON>` tags. If malformed, the task will be marked blocked - check `lastAttempt.judge.rawText` to see what was returned. |
+| **AGENTS.md parse warnings** | Lines must be `KEY=VALUE` format. Comments start with `#`. No spaces around `=`. |
+| **Run stops with heartbeat error** | Check disk space and permissions on `.mario/state/run.lock`. Clear the lock file if stuck: `rm .mario/state/run.lock` |
+| **General health check** | Run `/mario-devx:doctor` to diagnose common issues. |
 
 ## Acknowledgements
 
