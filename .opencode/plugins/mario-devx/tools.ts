@@ -269,6 +269,24 @@ const normalizeStyleReferences = (value: string[] | undefined): string[] => {
   return Array.from(new Set(refs));
 };
 
+const mergeStyleReferences = (current: string[] | undefined, incoming: string[] | undefined): string[] => {
+  return normalizeStyleReferences([...(current ?? []), ...(incoming ?? [])]);
+};
+
+const extractStyleReferencesFromText = (input: string): string[] => {
+  const text = input.trim();
+  if (!text) return [];
+  const refs: string[] = [];
+
+  const urlMatches = text.match(/https?:\/\/[^\s,)\]]+/gi) ?? [];
+  refs.push(...urlMatches.map((u) => u.replace(/[.,;:!?]+$/, "")));
+
+  const pathMatches = text.match(/(?:\.{0,2}\/)?(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.(?:png|jpe?g|webp|gif|svg)/gi) ?? [];
+  refs.push(...pathMatches.map((p) => p.replace(/[.,;:!?]+$/, "")));
+
+  return normalizeStyleReferences(refs);
+};
+
 const hasMeaningfulList = (value: string[] | undefined, min = 1): boolean => normalizeTextArray(value).length >= min;
 
 const hasDiverseQualityGates = (gates: string[]): boolean => {
@@ -313,20 +331,52 @@ const parseBooleanReply = (input: string): boolean | null => {
 };
 
 const parseFeatureListReply = (input: string): string[] => {
-  const normalized = input
-    .replace(/\band\b/gi, ",")
-    .replace(/\s*[;\n]+\s*/g, ",")
-    .replace(/\s{2,}/g, " ")
-    .trim();
+  const normalized = input.replace(/\r\n?/g, "\n").trim();
   if (!normalized) {
     return [];
   }
+
+  const clean = (item: string): string => item
+    .replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const inlineNumbered = normalized.match(/\d+[.)]\s+/g);
+  if (inlineNumbered && inlineNumbered.length >= MIN_FEATURES) {
+    const marked = normalized.replace(/(?:^|\s)(\d+[.)])\s+/g, "\n$1 ").trim();
+    const items = marked
+      .split(/\n+/)
+      .map(clean)
+      .filter(Boolean);
+    return Array.from(new Set(items));
+  }
+
+  const lines = normalized.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const bulletLines = lines.filter((line) => /^(?:[-*•]|\d+[.)])\s+/.test(line));
+  if (bulletLines.length >= MIN_FEATURES) {
+    return Array.from(new Set(bulletLines.map(clean).filter(Boolean)));
+  }
+
+  const semicolonParts = normalized.split(/\s*;\s*/).map(clean).filter(Boolean);
+  if (semicolonParts.length >= MIN_FEATURES) {
+    return Array.from(new Set(semicolonParts));
+  }
+
+  if (normalized.includes(",")) {
+    const commaParts = normalized.split(",").map(clean).filter(Boolean);
+    if (commaParts.length >= MIN_FEATURES) {
+      return Array.from(new Set(commaParts));
+    }
+  }
+
+  const andParts = normalized.split(/\s+and\s+/i).map(clean).filter(Boolean);
+  if (andParts.length >= MIN_FEATURES) {
+    return Array.from(new Set(andParts));
+  }
+
   return Array.from(
     new Set(
-      normalized
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean),
+      [clean(normalized)].filter(Boolean),
     ),
   );
 };
@@ -535,11 +585,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson): Promise<PrdJson
   const toAtomicFeatureTasks = (feature: string): string[] => {
     const compact = feature.replace(/\s+/g, " ").trim();
     if (!compact) return [];
-    const parts = compact
-      .split(/\s+(?:and|then|plus)\s+/i)
-      .map((p) => p.trim())
-      .filter(Boolean);
-    return parts.length > 1 ? parts : [compact];
+    return [compact];
   };
 
   const tasks: PrdTask[] = [];
@@ -885,7 +931,7 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
     next.ui = { ...next.ui, styleReferenceMode: updates.uiStyleReferenceMode };
   }
   if (Array.isArray(updates.uiStyleReferences)) {
-    next.ui = { ...next.ui, styleReferences: normalizeStyleReferences(updates.uiStyleReferences) };
+    next.ui = { ...next.ui, styleReferences: mergeStyleReferences(next.ui.styleReferences, updates.uiStyleReferences) };
   }
   if (typeof updates.uiVisualDirection === "string") {
     next.ui = { ...next.ui, visualDirection: updates.uiVisualDirection.trim() };
@@ -1570,6 +1616,18 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         const hasAnswer = rawInput.length > 0;
+        if (hasAnswer && prd.frontend === true) {
+          const extractedStyleRefs = extractStyleReferencesFromText(rawInput);
+          if (extractedStyleRefs.length > 0) {
+            prd = {
+              ...prd,
+              ui: {
+                ...prd.ui,
+                styleReferences: mergeStyleReferences(prd.ui.styleReferences, extractedStyleRefs),
+              },
+            };
+          }
+        }
         const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
         if (!hasAnswer && cachedQuestion) {
           return [
@@ -2241,7 +2299,17 @@ export const createTools = (ctx: PluginContext) => {
           };
           const ui: PrdUiAttempt = uiResult
             ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
-            : { ran: false, ok: null, note: uiVerifyEnabled && isWebApp ? "UI verification skipped (prerequisites missing)." : "UI verification not configured." };
+            : {
+                ran: false,
+                ok: null,
+                note: !gateResult.ok
+                  ? "UI verification not run because deterministic gates failed."
+                  : uiVerifyEnabled && isWebApp && (!cliOk || !skillOk)
+                    ? "UI verification skipped (prerequisites missing)."
+                    : uiVerifyEnabled && isWebApp
+                      ? "UI verification not run."
+                      : "UI verification not configured.",
+              };
 
           const failEarly = async (reasonLines: string[], nextActions?: string[]): Promise<void> => {
             const judge: PrdJudgeAttempt = {
