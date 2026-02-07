@@ -676,15 +676,12 @@ const makeTask = (params: {
 
 const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
   const tasks = prd.tasks ?? [];
-  const doing = tasks.filter((t) => t.status === "in_progress");
-  if (doing.length >= 1) {
-    return doing[0] ?? null;
+  for (const task of tasks) {
+    if (task.status !== "completed" && task.status !== "cancelled") {
+      return task;
+    }
   }
-  const blocked = tasks.filter((t) => t.status === "blocked");
-  if (blocked.length >= 1) {
-    return blocked[0] ?? null;
-  }
-  return tasks.find((t) => t.status === "open") ?? null;
+  return null;
 };
 
 const extractScriptFromCommand = (command: string): string | null => {
@@ -1103,6 +1100,7 @@ const parseAgentsEnv = (content: string): { env: Record<string, string>; warning
   const env: Record<string, string> = {};
   const warnings: string[] = [];
   const lines = content.split(/\r?\n/);
+  const envKeyPattern = /^[A-Z][A-Z0-9_]*$/;
   for (let i = 0; i < lines.length; i += 1) {
     const rawLine = lines[i] ?? "";
     const line = rawLine.trim();
@@ -1111,13 +1109,11 @@ const parseAgentsEnv = (content: string): { env: Record<string, string>; warning
     }
     const idx = line.indexOf("=");
     if (idx === -1) {
-      warnings.push(`Line ${i + 1}: ignored (missing '='): ${line}`);
       continue;
     }
     const key = line.slice(0, idx).trim();
     const value = line.slice(idx + 1);
-    if (!key) {
-      warnings.push(`Line ${i + 1}: ignored (empty key): ${line}`);
+    if (!envKeyPattern.test(key)) {
       continue;
     }
     env[key] = parseEnvValue(value);
