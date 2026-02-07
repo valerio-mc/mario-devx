@@ -853,12 +853,37 @@ const extractScriptFromCommand = (command: string): string | null => {
   return null;
 };
 
-const missingPackageScriptForCommand = async (repoRoot: string, command: string): Promise<string | null> => {
+const resolveNodeWorkspaceRoot = async (repoRoot: string): Promise<"." | "app"> => {
+  const rootPkg = await readTextIfExists(path.join(repoRoot, "package.json"));
+  if (rootPkg) {
+    return ".";
+  }
+  const appPkg = await readTextIfExists(path.join(repoRoot, "app", "package.json"));
+  return appPkg ? "app" : ".";
+};
+
+const shellSingleQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
+
+const hasNodeModules = async (repoRoot: string, workspaceRoot: "." | "app"): Promise<boolean> => {
+  const nodeModulesPath = workspaceRoot === "."
+    ? path.join(repoRoot, "node_modules")
+    : path.join(repoRoot, workspaceRoot, "node_modules");
+  return (await readTextIfExists(path.join(nodeModulesPath, ".yarn-integrity"))) !== null
+    || (await readTextIfExists(path.join(nodeModulesPath, ".package-lock.json"))) !== null
+    || (await readTextIfExists(path.join(nodeModulesPath, ".modules.yaml"))) !== null
+    || (await readTextIfExists(path.join(nodeModulesPath, "react", "package.json"))) !== null;
+};
+
+const missingPackageScriptForCommand = async (repoRoot: string, workspaceRoot: "." | "app", command: string): Promise<string | null> => {
   const scriptName = extractScriptFromCommand(command);
   if (!scriptName) {
     return null;
   }
-  const pkgRaw = await readTextIfExists(path.join(repoRoot, "package.json"));
+  const pkgRaw = await readTextIfExists(
+    workspaceRoot === "."
+      ? path.join(repoRoot, "package.json")
+      : path.join(repoRoot, workspaceRoot, "package.json"),
+  );
   if (!pkgRaw) {
     return scriptName;
   }
@@ -896,7 +921,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     framework: hasNonEmpty(prd.framework),
     targetUsers: hasMeaningfulList(prd.product.targetUsers),
     userProblems: hasMeaningfulList(prd.product.userProblems),
-    mustHaveFeatures: hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES),
+    mustHaveFeatures: hasAtomicFeatures(prd.product.mustHaveFeatures, MIN_FEATURES),
     nonGoals: hasMeaningfulList(prd.product.nonGoals),
     successMetrics: hasMeaningfulList(prd.product.successMetrics),
     constraints: hasMeaningfulList(prd.product.constraints),
@@ -1493,6 +1518,7 @@ const waitForSessionIdle = async (
 const runGateCommands = async (
   commands: { name: string; command: string }[],
   $: PluginContext["$"] | undefined,
+  workdirAbs?: string,
 ): Promise<{
   ok: boolean;
   failed?: { name: string; command: string; exitCode: number };
@@ -1531,7 +1557,10 @@ const runGateCommands = async (
     }
 
     const startedAt = Date.now();
-    const result = await $`sh -c ${cmd}`.nothrow();
+    const wrapped = workdirAbs
+      ? `cd ${shellSingleQuote(workdirAbs)} && ${cmd}`
+      : cmd;
+    const result = await $`sh -c ${wrapped}`.nothrow();
     const durationMs = Date.now() - startedAt;
     const isOk = result.exitCode === 0;
     results.push({
@@ -2035,6 +2064,8 @@ export const createTools = (ctx: PluginContext) => {
           }
 
           let prd = await ensurePrd(repoRoot);
+          const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
+          const workspaceAbs = workspaceRoot === "." ? repoRoot : path.join(repoRoot, workspaceRoot);
           if (prd.wizard.status !== "completed") {
             return "PRD wizard is not complete. Run /mario-devx:new to finish it.";
           }
@@ -2104,7 +2135,7 @@ export const createTools = (ctx: PluginContext) => {
               let next = raw;
               next = upsertAgentsKey(next, "UI_VERIFY", "1");
               next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
-              if (!env.UI_VERIFY_CMD) next = upsertAgentsKey(next, "UI_VERIFY_CMD", "npm run dev");
+              if (!env.UI_VERIFY_CMD) next = upsertAgentsKey(next, "UI_VERIFY_CMD", workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
               if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
               if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
               await writeText(agentsPath, next);
@@ -2126,7 +2157,7 @@ export const createTools = (ctx: PluginContext) => {
           await showToast(ctx, `Run warning: AGENTS.md parse warnings (${agentsParsed.warnings.length})`, "warning");
         }
         const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
-        const uiVerifyCmd = agentsEnv.UI_VERIFY_CMD || "npm run dev";
+        const uiVerifyCmd = agentsEnv.UI_VERIFY_CMD || (workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
         const uiVerifyUrl = agentsEnv.UI_VERIFY_URL || "http://localhost:3000";
         const uiVerifyRequired = agentsEnv.UI_VERIFY_REQUIRED === "1";
         const agentBrowserRepo = agentsEnv.AGENT_BROWSER_REPO || "https://github.com/vercel-labs/agent-browser";
@@ -2303,7 +2334,17 @@ export const createTools = (ctx: PluginContext) => {
               let noProgressStreak = 0;
               let lastGateFailureSig: string | null = null;
               let deterministicScaffoldTried = false;
-              let gateResult = await runGateCommands(gateCommands, ctx.$);
+              const usesNodePackageScripts = gateCommands.some((g) => {
+                const c = g.command.trim();
+                return /^npm\s+run\s+/i.test(c) || /^pnpm\s+/i.test(c) || /^yarn\s+/i.test(c) || /^bun\s+run\s+/i.test(c);
+              });
+              if (task.id === "T-0002" && ctx.$ && usesNodePackageScripts && !(await hasNodeModules(repoRoot, workspaceRoot))) {
+                await showToast(ctx, `Run: installing dependencies in ${workspaceRoot === "." ? "repo root" : workspaceRoot}`, "info");
+                const installCmd = workspaceRoot === "." ? "npm install" : `npm --prefix ${workspaceRoot} install`;
+                await ctx.$`sh -c ${installCmd}`.nothrow();
+              }
+
+              let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
 
               const failSigFromGate = (): string => {
                 const failed = gateResult.failed;
@@ -2329,7 +2370,7 @@ export const createTools = (ctx: PluginContext) => {
                   : "(unknown command)";
                 const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
                 const missingScript = gateResult.failed
-                  ? await missingPackageScriptForCommand(repoRoot, gateResult.failed.command)
+                  ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command)
                   : null;
 
                 if (!deterministicScaffoldTried
@@ -2350,7 +2391,7 @@ export const createTools = (ctx: PluginContext) => {
                   if (scaffoldRun.exitCode !== 0) {
                     await showToast(ctx, `Run: default scaffold failed on ${task.id}, falling back to agent repair`, "warning");
                   }
-                  gateResult = await runGateCommands(gateCommands, ctx.$);
+                  gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
                   if (gateResult.ok) {
                     break;
                   }
@@ -2390,7 +2431,7 @@ export const createTools = (ctx: PluginContext) => {
                 }
 
                 repairAttempts += 1;
-                gateResult = await runGateCommands(gateCommands, ctx.$);
+                gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
               }
 
               const uiResult = gateResult.ok && shouldRunUiVerify
@@ -2460,13 +2501,13 @@ export const createTools = (ctx: PluginContext) => {
               : "(unknown command)";
             const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
             const missingScript = gateResult.failed
-              ? await missingPackageScriptForCommand(repoRoot, gateResult.failed.command)
+              ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command)
               : null;
             const elapsedMs = Date.now() - taskRepairStartedAt;
             const nextActions = [
               ...(missingScript
                 ? [
-                    `Add script '${missingScript}' in package.json (and setup files it depends on).`,
+                    `Add script '${missingScript}' in ${workspaceRoot === "." ? "package.json" : `${workspaceRoot}/package.json`} (and setup files it depends on).`,
                   ]
                 : []),
               ...(scaffoldHint
