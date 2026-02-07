@@ -1755,7 +1755,7 @@ export const createTools = (ctx: PluginContext) => {
     }),
 
     mario_devx_replan: tool({
-      description: "Rebuild open-task plan from backlog",
+      description: "Rebuild open-task plan from backlog using LLM",
       args: {},
       async execute(_args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
@@ -1765,64 +1765,164 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
         const replanCandidates = prd.backlog.featureRequests.filter((f) => f.status === "open" || f.status === "planned");
+        
+        if (replanCandidates.length === 0) {
+          return "No backlog items to replan.";
+        }
+
+        /**
+         * LLM-driven replan decomposition
+         * 
+         * ARCHITECTURE: Instead of simple comma-splitting of backlog items,
+         * we ask the LLM to intelligently analyze each feature request and
+         * suggest a proper task breakdown considering:
+         * - Current project context
+         * - Existing tasks
+         * - Dependencies
+         * - Implementation complexity
+         */
+        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const gates = prd.verificationPolicy?.globalGates?.length
           ? prd.verificationPolicy.globalGates
           : prd.qualityGates;
+        
+        console.log(`[mario-devx] Replanning ${replanCandidates.length} backlog items via LLM...`);
+        
+        const replanPrompt = [
+          "You are mario-devx's replanning assistant.",
+          "Analyze these backlog items and suggest task breakdowns.",
+          "",
+          "Current PRD:",
+          JSON.stringify({
+            idea: prd.idea,
+            platform: prd.platform,
+            framework: prd.framework,
+            qualityGates: prd.qualityGates,
+          }, null, 2),
+          "",
+          "Backlog items to replan:",
+          replanCandidates.map((f, i) => `${i + 1}. ${f.title}\n${f.request}`).join("\n\n"),
+          "",
+          "Existing tasks:",
+          (prd.tasks || []).filter(t => t.status !== "cancelled").map(t => `- ${t.id}: ${t.title}`).join("\n"),
+          "",
+          "Instructions:",
+          "1. Analyze each backlog item for complexity",
+          "2. Break down into 1-5 implementation tasks per item",
+          "3. Consider existing tasks to avoid duplication",
+          "4. Set appropriate dependencies",
+          "5. Suggest doneWhen commands for each task",
+          "",
+          "Return format:",
+          "<REPLAN_JSON>",
+          JSON.stringify({
+            breakdowns: [
+              {
+                backlogId: "F-0001",
+                tasks: [
+                  {
+                    title: "Implement feature X part 1",
+                    labels: ["feature", "backlog"],
+                    doneWhen: ["npm test"],
+                    dependsOn: [],
+                    acceptance: ["Feature X part 1 works"]
+                  }
+                ]
+              }
+            ]
+          }, null, 2),
+          "</REPLAN_JSON>",
+        ].join("\n");
+        
+        const replanResponse = await ctx.client.session.prompt({
+          path: { id: ws.sessionId },
+          body: {
+            ...(context.agent ? { agent: context.agent } : {}),
+            parts: [{ type: "text", text: replanPrompt }],
+          },
+        });
+        
+        const replanText = extractTextFromPromptResponse(replanResponse);
+        const replanMatch = replanText.match(/<REPLAN_JSON>([\s\S]*?)<\/REPLAN_JSON>/i);
+        
         let n = nextTaskOrdinal(prd.tasks ?? []);
         const generated: PrdTask[] = [];
-
-        const normalizedMustHave = normalizeMustHaveFeatureAtoms(prd.product.mustHaveFeatures);
-        const existingFeatureTitles = new Set(
-          (prd.tasks ?? [])
-            .filter((t) => (t.labels ?? []).includes("feature") && t.status !== "cancelled")
-            .map((t) => t.title.replace(/^Implement:\s*/i, "").trim()),
-        );
-        const regeneratedFromMustHave = normalizedMustHave
-          .filter((atom) => !existingFeatureTitles.has(atom))
-          .map((atom) => makeTask({
-            id: normalizeTaskId(n++),
-            title: `Implement: ${atom}`,
-            doneWhen: gates,
-            labels: ["feature", "replan"],
-            acceptance: [atom],
-          }));
-        generated.push(...regeneratedFromMustHave);
-
-        const updatedBacklog = prd.backlog.featureRequests.map((f) => {
-          if (f.status === "implemented") return f;
-          if (f.status === "planned" && Array.isArray(f.taskIds) && f.taskIds.length > 0) return f;
-          const atoms = decomposeFeatureRequestToTasks(f.request);
-          const tasks = atoms.map((atom) => makeTask({
-            id: normalizeTaskId(n++),
-            title: `Implement: ${atom}`,
-            doneWhen: gates,
-            labels: ["feature", "backlog"],
-            acceptance: [atom],
-          }));
-          generated.push(...tasks);
-          return {
-            ...f,
-            status: "planned" as const,
-            taskIds: tasks.map((t) => t.id),
-          };
-        });
+        let updatedBacklog = [...prd.backlog.featureRequests];
+        
+        if (replanMatch) {
+          try {
+            const parsed = JSON.parse(replanMatch[1].trim());
+            
+            for (const breakdown of parsed.breakdowns || []) {
+              const backlogItem = replanCandidates.find(f => f.id === breakdown.backlogId);
+              if (!backlogItem) continue;
+              
+              const tasks = (breakdown.tasks || []).map((t: any) => makeTask({
+                id: normalizeTaskId(n++),
+                title: t.title,
+                doneWhen: t.doneWhen || gates,
+                labels: t.labels || ["feature", "backlog"],
+                acceptance: t.acceptance || [t.title],
+                dependsOn: t.dependsOn,
+              }));
+              
+              generated.push(...tasks);
+              
+              // Update backlog item
+              updatedBacklog = updatedBacklog.map(f => 
+                f.id === breakdown.backlogId
+                  ? { ...f, status: "planned" as const, taskIds: tasks.map(t => t.id) }
+                  : f
+              );
+            }
+            
+            console.log(`[mario-devx] LLM generated ${generated.length} tasks from ${parsed.breakdowns?.length || 0} backlog items`);
+          } catch (err) {
+            console.error("[mario-devx] Failed to parse LLM replan response:", err);
+            // Fall through to fallback
+          }
+        }
+        
+        // Fallback: simple decomposition if LLM fails
+        if (generated.length === 0) {
+          console.log("[mario-devx] Using fallback replan decomposition");
+          for (const f of replanCandidates) {
+            if (f.status === "implemented") continue;
+            if (f.status === "planned" && Array.isArray(f.taskIds) && f.taskIds.length > 0) continue;
+            
+            const atoms = decomposeFeatureRequestToTasks(f.request);
+            const tasks = atoms.map((atom) => makeTask({
+              id: normalizeTaskId(n++),
+              title: `Implement: ${atom}`,
+              doneWhen: gates,
+              labels: ["feature", "backlog"],
+              acceptance: [atom],
+            }));
+            generated.push(...tasks);
+            
+            updatedBacklog = updatedBacklog.map(bf => 
+              bf.id === f.id
+                ? { ...bf, status: "planned" as const, taskIds: tasks.map(t => t.id) }
+                : bf
+            );
+          }
+        }
+        
         prd = {
           ...prd,
           tasks: [
-            ...(prd.tasks ?? []).map((t) => (malformedFeatureTaskIds.has(t.id) ? { ...t, status: "cancelled" as const } : t)),
+            ...(prd.tasks ?? []),
             ...generated,
           ],
           backlog: { ...prd.backlog, featureRequests: updatedBacklog },
         };
         await writePrdJson(repoRoot, prd);
-        if (replanCandidates.length === 0 && malformedFeatureTaskIds.size === 0 && generated.length === 0) {
-          return "No backlog items to replan.";
-        }
+        
         return [
           `Replan complete.`,
-          `Backlog items considered: ${replanCandidates.length}`,
-          `Malformed feature tasks cancelled: ${malformedFeatureTaskIds.size}`,
+          `Backlog items replanned: ${replanCandidates.length}`,
           `New tasks: ${generated.length}`,
+          `Next: /mario-devx:run 1`,
         ].join("\n");
       },
     }),
