@@ -129,6 +129,16 @@ export const inferPlatformFromText = (input: string): "web" | "api" | "cli" | "l
   return null;
 };
 
+export const inferUiDesignSystemFromText = (input: string): "none" | "tailwind" | "shadcn" | "custom" | null => {
+  const s = input.trim().toLowerCase();
+  if (!s) return null;
+  if (/\b(none|no\s+ui\s+framework|plain\s+html|vanilla\s+css)\b/.test(s)) return "none";
+  if (/\b(shadcn|shadcn\/ui)\b/.test(s)) return "shadcn";
+  if (/\b(tailwind|tailwindcss)\b/.test(s)) return "tailwind";
+  if (/\b(custom\s*css|css\s+modules|styled\s+components|emotion|scss|sass)\b/.test(s)) return "custom";
+  return null;
+};
+
 export const parseFeatureListReply = (input: string): string[] => {
   const normalized = input
     .replace(/\r\n?/g, "\n")

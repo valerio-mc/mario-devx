@@ -41,6 +41,7 @@ import {
   hasMeaningfulList,
   hasNonEmpty,
   inferPlatformFromText,
+  inferUiDesignSystemFromText,
   isAtomicFeatureStatement,
   isLikelyBooleanReply,
   isPrdComplete,
@@ -923,6 +924,62 @@ export const createTools = (ctx: PluginContext) => {
             prd = {
               ...prd,
               uiVerificationRequired: boolReply,
+            };
+            const step = deriveWizardStep(prd);
+            const done = isPrdComplete(prd);
+            const nextQuestion = fallbackQuestion(prd);
+            prd = {
+              ...prd,
+              wizard: {
+                ...prd.wizard,
+                step,
+                totalSteps: WIZARD_TOTAL_STEPS,
+                status: done ? "completed" : "in_progress",
+                lastQuestionId: firstMissingField(prd),
+                answers: {
+                  ...prd.wizard.answers,
+                  [`turn-${Date.now()}`]: rawInput,
+                  [LAST_QUESTION_KEY]: nextQuestion,
+                },
+              },
+            };
+            if (done) {
+              prd = await seedTasksFromPrd(repoRoot, prd);
+              prd = {
+                ...prd,
+                wizard: {
+                  ...prd.wizard,
+                  status: "completed",
+                  step: WIZARD_TOTAL_STEPS,
+                  lastQuestionId: "done",
+                },
+              };
+              await writePrdJson(repoRoot, prd);
+              return [
+                "PRD wizard: completed.",
+                `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+                `Tasks: ${prd.tasks.length}`,
+                "Next: /mario-devx:run 1",
+              ].join("\n");
+            }
+            await writePrdJson(repoRoot, prd);
+            return [
+              `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+              nextQuestion,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
+        }
+
+        if (hasAnswer && missingBefore === "uiDesignSystem") {
+          const inferredDesignSystem = inferUiDesignSystemFromText(rawInput);
+          if (inferredDesignSystem) {
+            prd = {
+              ...prd,
+              ui: {
+                ...prd.ui,
+                designSystem: inferredDesignSystem,
+              },
             };
             const step = deriveWizardStep(prd);
             const done = isPrdComplete(prd);
