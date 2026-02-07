@@ -451,17 +451,37 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
   ].join("\n");
 };
 
-const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | null; question: string | null } => {
+const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | null; question: string | null; error?: string } => {
   const jsonMatch = text.match(/<MARIO_JSON>([\s\S]*?)<\/MARIO_JSON>/i);
   const questionMatch = text.match(/<MARIO_QUESTION>([\s\S]*?)<\/MARIO_QUESTION>/i);
+  
   if (!jsonMatch) {
-    return { envelope: null, question: questionMatch?.[1]?.trim() ?? null };
+    return { 
+      envelope: null, 
+      question: questionMatch?.[1]?.trim() ?? null,
+      error: "No <MARIO_JSON> tags found in response" 
+    };
   }
+  
   try {
     const envelope = JSON.parse((jsonMatch[1] ?? "").trim()) as InterviewEnvelope;
+    
+    // Validate envelope structure
+    if (typeof envelope.done !== "boolean") {
+      return { 
+        envelope: null, 
+        question: questionMatch?.[1]?.trim() ?? null,
+        error: "Invalid envelope: 'done' field must be boolean" 
+      };
+    }
+    
     return { envelope, question: questionMatch?.[1]?.trim() ?? null };
-  } catch {
-    return { envelope: null, question: questionMatch?.[1]?.trim() ?? null };
+  } catch (err) {
+    return { 
+      envelope: null, 
+      question: questionMatch?.[1]?.trim() ?? null,
+      error: `JSON parse error: ${err instanceof Error ? err.message : String(err)}` 
+    };
   }
 };
 
@@ -523,6 +543,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
     try {
       const parsed = JSON.parse(jsonMatch[1].trim());
       if (parsed.status && (parsed.status === "PASS" || parsed.status === "FAIL")) {
+        console.log(`[mario-devx] Verifier: ${parsed.status} - ${Array.isArray(parsed.reason) ? parsed.reason.length : 0} reasons`);
         return {
           status: parsed.status,
           exitSignal: parsed.status === "PASS",
@@ -531,7 +552,8 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
           rawText: text,
         };
       }
-    } catch {
+    } catch (err) {
+      console.error("[mario-devx] Verifier JSON parse error:", err);
       // Fall through to text parsing
     }
   }
@@ -962,6 +984,7 @@ export const createTools = (ctx: PluginContext) => {
               command,
             }));
             attempted += 1;
+            console.log(`[mario-devx] Starting task ${task.id}: ${task.title}`);
 
             prd = setPrdTaskStatus(prd, task.id, "in_progress");
             await writePrdJson(repoRoot, prd);
@@ -1393,17 +1416,20 @@ export const createTools = (ctx: PluginContext) => {
              controlSessionId: context.sessionID,
            });
 
-          prd = setPrdTaskStatus(prd, task.id, judge.status === "PASS" ? "completed" : "blocked");
-          prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-          await writePrdJson(repoRoot, prd);
+           const isPass = judge.status === "PASS" && judge.exitSignal;
+           prd = setPrdTaskStatus(prd, task.id, isPass ? "completed" : "blocked");
+           prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
+           await writePrdJson(repoRoot, prd);
 
-          if (judge.status !== "PASS" || !judge.exitSignal) {
-            await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
-            break;
-          }
-
-              completed += 1;
-              await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
+           if (isPass) {
+             completed += 1;
+             console.log(`[mario-devx] Task ${task.id} completed (${completed}/${maxItems})`);
+             await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
+           } else {
+             console.log(`[mario-devx] Task ${task.id} blocked: ${judge.reason?.[0] ?? "No reason provided"}`);
+             await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
+             break;
+           }
             } finally {
               if ((await readRunState(repoRoot)).status === "DOING") {
                 await updateRunState(repoRoot, { status: "BLOCKED", phase: "run" });
@@ -1517,7 +1543,9 @@ export const createTools = (ctx: PluginContext) => {
         const jsonMatch = responseText.match(/<FEATURE_JSON>([\s\S]*?)<\/FEATURE_JSON>/i);
         
         if (!jsonMatch) {
-          return "Error: Could not parse feature breakdown. Please try again with more detail.";
+          console.error("[mario-devx] Feature interview: No <FEATURE_JSON> tags found in LLM response");
+          console.error("[mario-devx] Raw response:", responseText.substring(0, 500));
+          return "Error: Could not parse feature breakdown. The LLM response was malformed. Please try again with more detail.";
         }
         
         let envelope: {
@@ -1531,8 +1559,10 @@ export const createTools = (ctx: PluginContext) => {
         
         try {
           envelope = JSON.parse(jsonMatch[1].trim());
-        } catch {
-          return "Error: Invalid JSON in feature response. Please try again.";
+        } catch (err) {
+          console.error("[mario-devx] Feature interview: JSON parse error:", err);
+          console.error("[mario-devx] Raw JSON:", jsonMatch[1].trim().substring(0, 500));
+          return `Error: Invalid JSON in feature response: ${err instanceof Error ? err.message : String(err)}. Please try again.`;
         }
         
         // If not ready, ask follow-up question
