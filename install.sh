@@ -25,9 +25,7 @@ git clone --depth 1 https://github.com/valerio-mc/mario-devx.git "$tmpdir" 2>/de
 
 # Copy plugin files
 cp -R "$tmpdir/.opencode/plugins/mario-devx" .opencode/plugins/
-cp "$tmpdir/.opencode/plugins/mario-devx.ts" .opencode/plugins/
 cp "$tmpdir/.opencode/package.json" .opencode/
-cp "$tmpdir/.opencode/tsconfig.json" .opencode/
 
 # Cleanup
 rm -rf "$tmpdir"
