@@ -215,8 +215,6 @@ const releaseRunLock = async (repoRoot: string): Promise<void> => {
   }
 };
 
-const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
-  const existing = await readPrdJsonIfExists(repoRoot);
 const repairPlanning = (existing: PrdJson) => ({
   decompositionStrategy: hasNonEmpty(existing.planning?.decompositionStrategy)
     ? existing.planning!.decompositionStrategy
