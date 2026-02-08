@@ -21,14 +21,25 @@ If you're looking for vibes, inspirational essays, or a 200-message thread that 
 
 ## 30-second quickstart
 
+**One-line install (recommended):**
+
+```bash
+mkdir my-project && cd my-project && git init && \
+curl -fsSL https://raw.githubusercontent.com/valerio-mc/mario-devx/main/install.sh | bash && \
+opencode .
+```
+
+**Or install manually:**
+
 ```bash
 mkdir my-project && cd my-project && git init
 mkdir -p .opencode/plugins
-tmpdir="$(mktemp -d)" && \
-  curl -fsSL https://github.com/valerio-mc/mario-devx/archive/refs/heads/main.tar.gz | tar -xz -C "$tmpdir" && \
-  cp -R "$tmpdir"/mario-devx-main/.opencode/plugins/mario-devx ./.opencode/plugins/ && \
-  cp "$tmpdir"/mario-devx-main/.opencode/plugins/mario-devx.ts ./.opencode/plugins/ && \
-  cp "$tmpdir"/mario-devx-main/.opencode/package.json ./.opencode/
+curl -fsSL https://github.com/valerio-mc/mario-devx/archive/refs/heads/main.tar.gz | tar -xz -C /tmp
+mv /tmp/mario-devx-main/.opencode/plugins/mario-devx .opencode/plugins/
+mv /tmp/mario-devx-main/.opencode/plugins/mario-devx.ts .opencode/plugins/
+mv /tmp/mario-devx-main/.opencode/package.json .opencode/
+mv /tmp/mario-devx-main/.opencode/tsconfig.json .opencode/
+rmdir /tmp/mario-devx-main 2>/dev/null || true
 opencode .
 ```
 
