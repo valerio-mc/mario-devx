@@ -2,7 +2,6 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
 import { readRunState, readWorkSessionState } from "./state";
-import { getRepoRoot } from "./paths";
 
 const getIdleSessionId = (event: unknown): string | null => {
   if (!event || typeof event !== "object") {
@@ -16,9 +15,8 @@ const getIdleSessionId = (event: unknown): string | null => {
   return typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : null;
 };
 
-const marioDevxPlugin: Plugin = async (ctx) => {
-  const tools = createTools(ctx);
-  const repoRoot = getRepoRoot(ctx);
+const marioDevxPlugin: Plugin = async ({ client, directory }) => {
+  const tools = createTools({ client, directory });
 
   return {
     tool: tools,
@@ -29,12 +27,12 @@ const marioDevxPlugin: Plugin = async (ctx) => {
         return;
       }
 
-      const ws = await readWorkSessionState(repoRoot);
+      const ws = await readWorkSessionState(directory);
       if (!ws?.sessionId || ws.sessionId !== sessionID) {
         return;
       }
 
-      const run = await readRunState(repoRoot);
+      const run = await readRunState(directory);
       if (!run.controlSessionId) {
         return;
       }
@@ -45,7 +43,7 @@ const marioDevxPlugin: Plugin = async (ctx) => {
 
       const summary = `mario-devx: work session is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
 
-      await ctx.client.session.prompt({
+      await client.session.prompt({
         path: { id: run.controlSessionId },
         body: {
           noReply: true,
