@@ -15,7 +15,7 @@ const getIdleSessionId = (event: unknown): string | null => {
   return typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : null;
 };
 
-const marioDevxPlugin: Plugin = async ({ client, directory }) => {
+export const marioDevxPlugin: Plugin = async ({ client, directory }) => {
   const tools = createTools({ client, directory });
 
   return {
@@ -51,12 +51,11 @@ const marioDevxPlugin: Plugin = async ({ client, directory }) => {
         },
       });
     },
-    config: async (config) => {
-      config.command = config.command ?? {};
+    config: async (_input, output) => {
+      output.command = output.command ?? {};
       for (const command of createCommands()) {
-        config.command[command.name] = command.definition;
+        output.command[command.name] = command.definition;
       }
-      return config;
     },
   };
 };
