@@ -216,6 +216,72 @@ const releaseRunLock = async (repoRoot: string): Promise<void> => {
 
 const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
   const existing = await readPrdJsonIfExists(repoRoot);
+const repairPlanning = (existing: PrdJson) => ({
+  decompositionStrategy: hasNonEmpty(existing.planning?.decompositionStrategy)
+    ? existing.planning!.decompositionStrategy
+    : "Split features into smallest independently verifiable tasks.",
+  granularityRules: Array.isArray(existing.planning?.granularityRules)
+    ? existing.planning!.granularityRules
+    : ["Each task should fit in one focused iteration.", "Each task must include explicit acceptance criteria."],
+  stopWhen: Array.isArray(existing.planning?.stopWhen)
+    ? existing.planning!.stopWhen
+    : ["All must-have features are mapped to tasks.", "All tasks have deterministic verification."],
+});
+
+const repairVerificationPolicy = (existing: PrdJson) => ({
+  globalGates: Array.isArray(existing.verificationPolicy?.globalGates)
+    ? existing.verificationPolicy!.globalGates
+    : (Array.isArray(existing.qualityGates) ? existing.qualityGates : []),
+  taskGates: (existing.verificationPolicy?.taskGates && typeof existing.verificationPolicy.taskGates === "object")
+    ? existing.verificationPolicy!.taskGates
+    : {},
+  uiPolicy: existing.verificationPolicy?.uiPolicy === "required"
+    ? "required"
+    : existing.verificationPolicy?.uiPolicy === "off"
+      ? "off"
+      : "best_effort",
+});
+
+const repairUi = (existing: PrdJson) => ({
+  designSystem: existing.ui?.designSystem ?? null,
+  styleReferenceMode: existing.ui?.styleReferenceMode === "url"
+    ? "url"
+    : existing.ui?.styleReferenceMode === "screenshot"
+      ? "screenshot"
+      : "mixed",
+  styleReferences: Array.isArray(existing.ui?.styleReferences) ? existing.ui!.styleReferences : [],
+  visualDirection: typeof existing.ui?.visualDirection === "string" ? existing.ui!.visualDirection : "",
+  uxRequirements: Array.isArray(existing.ui?.uxRequirements) ? existing.ui!.uxRequirements : [],
+});
+
+const repairDocs = (existing: PrdJson) => ({
+  readmeRequired: typeof existing.docs?.readmeRequired === "boolean" ? existing.docs!.readmeRequired : true,
+  readmeSections: Array.isArray(existing.docs?.readmeSections)
+    ? existing.docs!.readmeSections
+    : ["Overview", "Tech Stack", "Setup", "Environment Variables", "Scripts", "Usage"],
+});
+
+const repairProduct = (existing: PrdJson) => ({
+  targetUsers: Array.isArray(existing.product?.targetUsers) ? existing.product!.targetUsers : [],
+  userProblems: Array.isArray(existing.product?.userProblems) ? existing.product!.userProblems : [],
+  mustHaveFeatures: Array.isArray(existing.product?.mustHaveFeatures) ? existing.product!.mustHaveFeatures : [],
+  nonGoals: Array.isArray(existing.product?.nonGoals) ? existing.product!.nonGoals : [],
+  successMetrics: Array.isArray(existing.product?.successMetrics) ? existing.product!.successMetrics : [],
+  constraints: Array.isArray(existing.product?.constraints) ? existing.product!.constraints : [],
+});
+
+const repairTasks = (existing: PrdJson) => 
+  Array.isArray(existing.tasks)
+    ? existing.tasks.map((task) => ({
+        ...task,
+        notes: Array.isArray(task.notes)
+          ? task.notes.map((note) => note.replaceAll("__tmp_next", "tmp-next").replaceAll("__tmp_vite", "tmp-vite"))
+          : task.notes,
+      }))
+    : [];
+
+const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
+  const existing = await readPrdJsonIfExists(repoRoot);
   if (existing) {
     const createdAt = existing.meta?.createdAt?.trim() ? existing.meta.createdAt : nowIso();
     const repaired: PrdJson = {
@@ -223,70 +289,19 @@ const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
       meta: { ...existing.meta, createdAt },
       wizard: {
         ...existing.wizard,
-        totalSteps: Math.max(existing.wizard?.totalSteps ?? 0, 17),
+        totalSteps: Math.max(existing.wizard?.totalSteps ?? 0, WIZARD_REQUIREMENTS.TOTAL_STEPS),
       },
       version: 4,
       uiVerificationRequired: typeof existing.uiVerificationRequired === "boolean" ? existing.uiVerificationRequired : null,
-      planning: {
-        decompositionStrategy: hasNonEmpty(existing.planning?.decompositionStrategy)
-          ? existing.planning.decompositionStrategy
-          : "Split features into smallest independently verifiable tasks.",
-        granularityRules: Array.isArray(existing.planning?.granularityRules)
-          ? existing.planning.granularityRules
-          : ["Each task should fit in one focused iteration.", "Each task must include explicit acceptance criteria."],
-        stopWhen: Array.isArray(existing.planning?.stopWhen)
-          ? existing.planning.stopWhen
-          : ["All must-have features are mapped to tasks.", "All tasks have deterministic verification."],
-      },
-      verificationPolicy: {
-        globalGates: Array.isArray(existing.verificationPolicy?.globalGates)
-          ? existing.verificationPolicy.globalGates
-          : (Array.isArray(existing.qualityGates) ? existing.qualityGates : []),
-        taskGates: (existing.verificationPolicy?.taskGates && typeof existing.verificationPolicy.taskGates === "object")
-          ? existing.verificationPolicy.taskGates
-          : {},
-        uiPolicy: existing.verificationPolicy?.uiPolicy === "required"
-          ? "required"
-          : existing.verificationPolicy?.uiPolicy === "off"
-            ? "off"
-            : "best_effort",
-      },
-      ui: {
-        designSystem: existing.ui?.designSystem ?? null,
-        styleReferenceMode: existing.ui?.styleReferenceMode === "url"
-          ? "url"
-          : existing.ui?.styleReferenceMode === "screenshot"
-            ? "screenshot"
-            : "mixed",
-        styleReferences: Array.isArray(existing.ui?.styleReferences) ? existing.ui.styleReferences : [],
-        visualDirection: typeof existing.ui?.visualDirection === "string" ? existing.ui.visualDirection : "",
-        uxRequirements: Array.isArray(existing.ui?.uxRequirements) ? existing.ui.uxRequirements : [],
-      },
-      docs: {
-        readmeRequired: typeof existing.docs?.readmeRequired === "boolean" ? existing.docs.readmeRequired : true,
-        readmeSections: Array.isArray(existing.docs?.readmeSections)
-          ? existing.docs.readmeSections
-          : ["Overview", "Tech Stack", "Setup", "Environment Variables", "Scripts", "Usage"],
-      },
+      planning: repairPlanning(existing),
+      verificationPolicy: repairVerificationPolicy(existing),
+      ui: repairUi(existing),
+      docs: repairDocs(existing),
       backlog: {
         featureRequests: Array.isArray(existing.backlog?.featureRequests) ? existing.backlog.featureRequests : [],
       },
-      tasks: Array.isArray(existing.tasks)
-        ? existing.tasks.map((task) => ({
-            ...task,
-            notes: Array.isArray(task.notes)
-              ? task.notes.map((note) => note.replaceAll("__tmp_next", "tmp-next").replaceAll("__tmp_vite", "tmp-vite"))
-              : task.notes,
-          }))
-        : [],
-      product: {
-        targetUsers: Array.isArray(existing.product?.targetUsers) ? existing.product.targetUsers : [],
-        userProblems: Array.isArray(existing.product?.userProblems) ? existing.product.userProblems : [],
-        mustHaveFeatures: Array.isArray(existing.product?.mustHaveFeatures) ? existing.product.mustHaveFeatures : [],
-        nonGoals: Array.isArray(existing.product?.nonGoals) ? existing.product.nonGoals : [],
-        successMetrics: Array.isArray(existing.product?.successMetrics) ? existing.product.successMetrics : [],
-        constraints: Array.isArray(existing.product?.constraints) ? existing.product.constraints : [],
-      },
+      tasks: repairTasks(existing),
+      product: repairProduct(existing),
     };
     if (JSON.stringify(repaired) !== JSON.stringify(existing)) {
       await writePrdJson(repoRoot, repaired);
