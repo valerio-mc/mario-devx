@@ -201,7 +201,7 @@ const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
     await writeFile(lockPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8" });
     return true;
   } catch (err) {
-    console.error("[mario-devx] Heartbeat update failed:", err instanceof Error ? err.message : String(err));
+    logError("heartbeat", `Update failed: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
 };
@@ -385,7 +385,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
     "</TASK_JSON>",
   ].join("\n");
   
-  console.log("[mario-devx] Generating tasks from PRD via LLM...");
+  logInfo("task-generation", "Generating tasks from PRD via LLM...");
   const taskResponse = await pluginCtx.client.session.prompt({
     path: { id: ws.sessionId },
     body: { parts: [{ type: "text", text: taskGenPrompt }] },
@@ -407,13 +407,13 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
         dependsOn: t.dependsOn,
         notes: t.notes,
       })) || [];
-      console.log(`[mario-devx] LLM generated ${tasks.length} tasks`);
+      logInfo("task-generation", `LLM generated ${tasks.length} tasks`);
     } catch (err) {
-      console.error("[mario-devx] Failed to parse LLM task generation, using fallback:", err);
+      logError("task-generation", `Failed to parse LLM task generation, using fallback: ${err instanceof Error ? err.message : String(err)}`);
       tasks = generateFallbackTasks(prd);
     }
   } else {
-    console.error("[mario-devx] No <TASK_JSON> found in LLM response, using fallback");
+    logError("task-generation", "No <TASK_JSON> found in LLM response, using fallback");
     tasks = generateFallbackTasks(prd);
   }
   
@@ -685,7 +685,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
     try {
       const parsed = JSON.parse(jsonMatch[1].trim());
       if (parsed.status && (parsed.status === "PASS" || parsed.status === "FAIL")) {
-        console.log(`[mario-devx] Verifier: ${parsed.status} - ${Array.isArray(parsed.reason) ? parsed.reason.length : 0} reasons`);
+        logInfo("verifier", `${parsed.status} - ${Array.isArray(parsed.reason) ? parsed.reason.length : 0} reasons`);
         return {
           status: parsed.status,
           exitSignal: parsed.status === "PASS",
@@ -695,7 +695,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
         };
       }
     } catch (err) {
-      console.error("[mario-devx] Verifier JSON parse error:", err);
+      logError("verifier", `JSON parse error: ${err instanceof Error ? err.message : String(err)}`);
       // Fall through to text parsing
     }
   }
@@ -849,7 +849,7 @@ export const createTools = (ctx: PluginContext) => {
         const { envelope, question, error: parseError } = parseInterviewResponse(text);
 
         if (parseError) {
-          console.error("[mario-devx] Interview parsing error:", parseError);
+          logError("interview", `Parsing error: ${parseError}`);
           return [
             "PRD interview",
             "I had trouble understanding that response. Could you please rephrase?",
@@ -1716,8 +1716,8 @@ export const createTools = (ctx: PluginContext) => {
         const jsonMatch = responseText.match(/<FEATURE_JSON>([\s\S]*?)<\/FEATURE_JSON>/i);
         
         if (!jsonMatch) {
-          console.error("[mario-devx] Feature interview: No <FEATURE_JSON> tags found in LLM response");
-          console.error("[mario-devx] Raw response:", responseText.substring(0, 500));
+          logError("feature-interview", "No <FEATURE_JSON> tags found in LLM response");
+          logError("feature-interview", `Raw response: ${responseText.substring(0, 500)}`);
           return "Error: Could not parse feature breakdown. The LLM response was malformed. Please try again with more detail.";
         }
         
@@ -1733,8 +1733,8 @@ export const createTools = (ctx: PluginContext) => {
         try {
           envelope = JSON.parse(jsonMatch[1].trim());
         } catch (err) {
-          console.error("[mario-devx] Feature interview: JSON parse error:", err);
-          console.error("[mario-devx] Raw JSON:", jsonMatch[1].trim().substring(0, 500));
+          logError("feature-interview", `JSON parse error: ${err instanceof Error ? err.message : String(err)}`);
+          logError("feature-interview", `Raw JSON: ${jsonMatch[1].trim().substring(0, 500)}`);
           return `Error: Invalid JSON in feature response: ${err instanceof Error ? err.message : String(err)}. Please try again.`;
         }
         
@@ -1835,7 +1835,7 @@ export const createTools = (ctx: PluginContext) => {
           ? prd.verificationPolicy.globalGates
           : prd.qualityGates;
         
-        console.log(`[mario-devx] Replanning ${replanCandidates.length} backlog items via LLM...`);
+        logInfo("replan", `Replanning ${replanCandidates.length} backlog items via LLM...`);
         
         const replanPrompt = [
           "You are mario-devx's replanning assistant.",
@@ -1925,16 +1925,16 @@ export const createTools = (ctx: PluginContext) => {
               );
             }
             
-            console.log(`[mario-devx] LLM generated ${generated.length} tasks from ${parsed.breakdowns?.length || 0} backlog items`);
+            logInfo("replan", `LLM generated ${generated.length} tasks from ${parsed.breakdowns?.length || 0} backlog items`);
           } catch (err) {
-            console.error("[mario-devx] Failed to parse LLM replan response:", err);
+            logError("replan", `Failed to parse LLM replan response: ${err instanceof Error ? err.message : String(err)}`);
             // Fall through to fallback
           }
         }
         
         // Fallback: simple decomposition if LLM fails
         if (generated.length === 0) {
-          console.log("[mario-devx] Using fallback replan decomposition");
+          logInfo("replan", "Using fallback decomposition");
           for (const f of replanCandidates) {
             if (f.status === "implemented") continue;
             if (f.status === "planned" && Array.isArray(f.taskIds) && f.taskIds.length > 0) continue;
