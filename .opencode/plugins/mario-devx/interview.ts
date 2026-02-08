@@ -118,10 +118,3 @@ export const looksTooBroadQuestion = (question: string): boolean => {
   const hasListCue = /(include|cover|describe.*(flow|end-to-end)|what.*and.*what|first.*then)/i.test(q);
   return wordCount > 30 || clauseSignals >= 4 || hasListCue;
 };
-
-export const sameQuestion = (a: string | null | undefined, b: string | null | undefined): boolean => {
-  if (!a || !b) {
-    return false;
-  }
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-};
