@@ -11,7 +11,7 @@ If you're looking for vibes, inspirational essays, or a 200-message thread that 
 
 ## Why you'll like it
 
-- Deterministic loops with on-disk state (`.mario/*`), not fragile chat memory.
+- **Smart planning, deterministic execution**: LLM-driven PRD interview adapts to your project (no rigid forms), but task execution is strictly deterministic—quality gates must pass, verifiable output stored on disk (`.mario/*`), not fragile chat memory.
 - Strict verifier output (`PASS|FAIL` + next actions) so failures are actionable.
 - Incremental scope management (`/mario-devx:add`, `/mario-devx:replan`) without restarting from scratch.
 
