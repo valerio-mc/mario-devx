@@ -3,6 +3,13 @@
  * 
  * Standardized error handling across mario-devx.
  * All errors use structured format with codes for programmatic handling.
+ * 
+ * NOTE: This module uses console.log/error/warn which is acceptable for
+ * plugin internal logging. Per OpenCode best practices, client.app.log()
+ * should only be used in the main plugin function where the client is
+ * available. Internal utility functions can use console for simplicity.
+ * 
+ * See: https://opencode.ai/docs/plugins/#logging
  */
 
 import type { MarioError } from "./types-extended";
