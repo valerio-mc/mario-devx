@@ -815,9 +815,26 @@ export const createTools = (ctx: PluginContext) => {
           },
         });
         const text = extractTextFromPromptResponse(interviewResponse);
-        const { envelope, question } = parseInterviewResponse(text);
+        const { envelope, question, error: parseError } = parseInterviewResponse(text);
 
-        if (envelope?.updates) {
+        if (parseError) {
+          console.error("[mario-devx] Interview parsing error:", parseError);
+          return [
+            "PRD interview",
+            "I had trouble understanding that response. Could you please rephrase?",
+            "Reply with your answer in natural language.",
+          ].join("\n");
+        }
+
+        if (!envelope) {
+          return [
+            "PRD interview",
+            question || "I didn't catch that. Could you try again?",
+            "Reply with your answer in natural language.",
+          ].join("\n");
+        }
+
+        if (envelope.updates) {
           prd = applyInterviewUpdates(prd, envelope.updates);
         }
 
