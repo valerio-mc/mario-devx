@@ -81,6 +81,7 @@ import {
   VERIFICATION,
   WIZARD_REQUIREMENTS,
 } from "./config";
+import { logError, logInfo, logWarning } from "./errors";
 
 type ToolContext = {
   sessionID?: string;
@@ -191,7 +192,7 @@ const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
     
     // Verify this lock belongs to the current process
     if (parsed.pid !== process.pid) {
-      console.error(`[mario-devx] Heartbeat failed: lock belongs to pid ${parsed.pid}, current pid is ${process.pid}`);
+      logError("heartbeat", `Lock belongs to pid ${parsed.pid}, current pid is ${process.pid}`);
       return false;
     }
     
@@ -1143,7 +1144,7 @@ export const createTools = (ctx: PluginContext) => {
               command,
             }));
             attempted += 1;
-            console.log(`[mario-devx] Starting task ${task.id}: ${task.title}`);
+            logInfo("task", `Starting ${task.id}: ${task.title}`);
 
             prd = setPrdTaskStatus(prd, task.id, "in_progress");
             await writePrdJson(repoRoot, prd);
@@ -1582,10 +1583,10 @@ export const createTools = (ctx: PluginContext) => {
 
            if (isPass) {
              completed += 1;
-             console.log(`[mario-devx] Task ${task.id} completed (${completed}/${maxItems})`);
+             logInfo("task", `${task.id} completed (${completed}/${maxItems})`);
              await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
            } else {
-             console.log(`[mario-devx] Task ${task.id} blocked: ${judge.reason?.[0] ?? "No reason provided"}`);
+             logWarning("task", `${task.id} blocked: ${judge.reason?.[0] ?? "No reason provided"}`);
              await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
              break;
            }
