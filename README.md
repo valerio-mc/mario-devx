@@ -94,24 +94,31 @@ opencode .
 ```
 
 Answer the PRD interview questions in your current session using natural language.
-For key fields, prompts now include fixed options (for example platform/language/UI stack) to reduce ambiguity.
-The interviewer is intentionally strict and now captures deeper planning fields:
+
+**How the PRD interview works:**
+
+The PRD wizard is **fully LLM-driven**. Instead of following a rigid script, the LLM analyzes your PRD state and asks intelligent follow-up questions to fill in missing details. Just answer naturally - the LLM will:
+
+- Analyze your current PRD state (idea, platform, requirements)
+- Identify the most important missing field
+- Ask ONE concise, high-leverage question
+- Extract updates from your natural language answer
+- Continue until all required fields are complete
+
+**The LLM captures:**
 - target users/problems + constraints + measurable outcomes
 - runnable quality gates (project-defined backpressure)
 - frontend UI conceptualization (design system, visual direction, UX requirements, optional style references)
 - README policy for human-readable docs
 
-Style references can be provided as URLs and/or screenshot paths in your answers.
-Mario DevX now merges style references mentioned in any interview answer (even before the dedicated UI question), so early references are retained.
+**Style references:** You can mention URLs and/or screenshot paths anywhere in your answers. Mario DevX automatically extracts and merges them into your PRD.
 
 Example:
 - `Style references: https://linear.app, https://stripe.com, ./references/hero-layout.png`
 
-Task decomposition is unbounded: simple ideas may generate ~5 tasks, complex ideas can generate 30+ atomic tasks.
-For `mustHaveFeatures`, the interviewer requires atomic action statements (one behavior per line).
-Under the hood, mario-devx now applies a deterministic interview update engine so parseable answers advance immediately instead of repeating the same question loop.
-Answer each prompt directly; picking one of the shown options for enum/yes-no questions is the most reliable path.
-Mario DevX only records what you explicitly provide in your PRD; it does not add default features on its own.
+**Task generation:** Once the PRD is complete, the LLM generates 5-15 tailored implementation tasks based on your specific requirements (not a rigid template). Simple ideas get fewer tasks; complex ideas get appropriate decomposition.
+
+**No fixed options:** Unlike traditional wizards, there are no multiple-choice questions. Just describe what you want in natural language, and the LLM will understand.
 
 5) **Run the loop**
 
@@ -182,7 +189,14 @@ You can add features at any time:
 /mario-devx:replan
 ```
 
-If your `/mario-devx:add` request is too vague, mario-devx will ask a short 3-step clarification interview before generating tasks.
+If your `/mario-devx:add` request is too vague, mario-devx will use an **LLM-driven clarification process** to decompose it into implementable tasks:
+
+1. The LLM analyzes your feature request
+2. Asks follow-up questions if needed (scope, acceptance criteria, constraints)
+3. Decomposes into 2-5 atomic implementation tasks
+4. Creates tasks with proper acceptance criteria
+
+This is not a rigid multi-step form - the LLM adapts to your specific feature and asks only what's needed.
 
 `/mario-devx:replan` also repairs malformed open feature tasks by canceling non-atomic fragments and regenerating clean atomic tasks from PRD/backlog.
 

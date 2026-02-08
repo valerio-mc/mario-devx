@@ -861,6 +861,7 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         await writePrdJson(repoRoot, prd);
+        const step = done ? WIZARD_TOTAL_STEPS : prd.wizard.step;
         return [
           `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
           finalQuestion,
