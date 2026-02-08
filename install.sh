@@ -29,6 +29,10 @@ cp "$tmpdir/.opencode/plugins/mario-devx.ts" .opencode/plugins/
 cp "$tmpdir/.opencode/package.json" .opencode/
 cp "$tmpdir/.opencode/tsconfig.json" .opencode/
 
+# Install dependencies
+echo "Installing npm dependencies..."
+cd .opencode && npm install && cd ..
+
 # Cleanup
 rm -rf "$tmpdir"
 
