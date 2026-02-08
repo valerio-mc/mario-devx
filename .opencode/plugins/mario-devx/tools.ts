@@ -27,9 +27,6 @@ import {
 } from "./ui-verify";
 import {
   LAST_QUESTION_KEY,
-  MIN_FEATURES,
-  MIN_QUALITY_GATES,
-  WIZARD_TOTAL_STEPS,
   compactIdea,
   deriveWizardStep,
   extractStyleReferencesFromText,
@@ -75,6 +72,15 @@ import {
   type PrdTaskStatus,
   type PrdUiAttempt,
 } from "./prd";
+import {
+  LIMITS,
+  LLM_TAGS,
+  RUN_STATE,
+  TASK_STATUS,
+  TIMEOUTS,
+  VERIFICATION,
+  WIZARD_REQUIREMENTS,
+} from "./config";
 
 type ToolContext = {
   sessionID?: string;
@@ -84,9 +90,6 @@ type ToolContext = {
 type PluginContext = Parameters<Plugin>[0];
 
 const nowIso = (): string => new Date().toISOString();
-const MAX_TASK_REPAIR_MS = 25 * 60 * 1000;
-const MAX_NO_PROGRESS_STREAK = 3;
-const RUN_DUPLICATE_WINDOW_MS = 8000;
 
 const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
 
@@ -845,8 +848,8 @@ export const createTools = (ctx: PluginContext) => {
           ...prd,
           wizard: {
             ...prd.wizard,
-            step: done ? WIZARD_TOTAL_STEPS : 0,
-            totalSteps: WIZARD_TOTAL_STEPS,
+            step: done ? WIZARD_REQUIREMENTS.TOTAL_STEPS : 0,
+            totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
             status: done ? "completed" : "in_progress",
             lastQuestionId: done ? "done" : "interview",
             answers: {
@@ -864,7 +867,7 @@ export const createTools = (ctx: PluginContext) => {
             wizard: {
               ...prd.wizard,
               status: "completed",
-              step: WIZARD_TOTAL_STEPS,
+              step: WIZARD_REQUIREMENTS.TOTAL_STEPS,
               lastQuestionId: "done",
             },
           };
@@ -878,9 +881,9 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         await writePrdJson(repoRoot, prd);
-        const step = done ? WIZARD_TOTAL_STEPS : prd.wizard.step;
+        const step = done ? WIZARD_REQUIREMENTS.TOTAL_STEPS : prd.wizard.step;
         return [
-          `PRD interview (${step}/${WIZARD_TOTAL_STEPS})`,
+          `PRD interview (${step}/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
           finalQuestion,
           "Reply with your answer in natural language.",
         ].join("\n");
@@ -907,7 +910,7 @@ export const createTools = (ctx: PluginContext) => {
           && previousRun.lastRunAt
           && previousRun.lastRunResult
           && Number.isFinite(Date.parse(previousRun.lastRunAt))
-          && (Date.now() - Date.parse(previousRun.lastRunAt)) <= RUN_DUPLICATE_WINDOW_MS
+          && (Date.now() - Date.parse(previousRun.lastRunAt)) <= TIMEOUTS.RUN_DUPLICATE_WINDOW_MS
         ) {
           return previousRun.lastRunResult;
         }
@@ -1286,7 +1289,7 @@ export const createTools = (ctx: PluginContext) => {
                 }
                 lastGateFailureSig = currentSig;
 
-                if (repairAttempts > 0 && (elapsedMs >= MAX_TASK_REPAIR_MS || noProgressStreak >= MAX_NO_PROGRESS_STREAK)) {
+                if (repairAttempts > 0 && (elapsedMs >= TIMEOUTS.MAX_TASK_REPAIR_MS || noProgressStreak >= LIMITS.MAX_NO_PROGRESS_STREAK)) {
                   break;
                 }
 
