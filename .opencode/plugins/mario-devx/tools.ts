@@ -174,21 +174,33 @@ const acquireRunLock = async (
  * acts as a heartbeat - if we can't update it (disk full, permissions, etc.),
  * execution stops immediately. This prevents:
  * - Runaway processes
- - Multiple concurrent runs
+ * - Multiple concurrent runs
  * - Silent failures
  * 
  * Called at checkpoints throughout task execution.
+ * 
+ * SAFETY: This function now checks that the lock file belongs to the current
+ * process before updating, preventing race conditions where multiple processes
+ * could overwrite each other's heartbeats.
  */
 const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
   const lockPath = runLockPath(repoRoot);
   try {
     const raw = await readFile(lockPath, "utf8");
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const parsed = JSON.parse(raw) as { pid?: number; heartbeatAt?: string };
+    
+    // Verify this lock belongs to the current process
+    if (parsed.pid !== process.pid) {
+      console.error(`[mario-devx] Heartbeat failed: lock belongs to pid ${parsed.pid}, current pid is ${process.pid}`);
+      return false;
+    }
+    
+    // Atomic write with current PID verification
     const next = { ...parsed, heartbeatAt: nowIso() };
     await writeFile(lockPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8" });
     return true;
-  } catch {
-    // Best-effort only.
+  } catch (err) {
+    console.error("[mario-devx] Heartbeat update failed:", err instanceof Error ? err.message : String(err));
     return false;
   }
 };
