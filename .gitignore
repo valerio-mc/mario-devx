@@ -3,3 +3,7 @@
 
 .mario/
 *.log
+
+# OpenCode dependencies (installed automatically at startup)
+.opencode/node_modules/
+.opencode/bun.lock
