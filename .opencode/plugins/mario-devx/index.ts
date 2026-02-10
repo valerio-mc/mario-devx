@@ -15,10 +15,37 @@ const getIdleSessionId = (event: unknown): string | null => {
   return typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : null;
 };
 
+const safePluginLog = async (
+  client: { app?: { log?: (args: { body: { service: string; level: "info"; message: string; extra?: Record<string, unknown> } }) => Promise<unknown> } },
+  message: string,
+  extra?: Record<string, unknown>,
+): Promise<void> => {
+  try {
+    if (client.app?.log) {
+      await client.app.log({
+        body: {
+          service: "mario-devx",
+          level: "info",
+          message,
+          extra,
+        },
+      });
+    }
+  } catch {
+    // Best-effort logging only.
+  }
+};
+
 export const marioDevxPlugin: Plugin = async (ctx) => {
   const { client, directory, worktree } = ctx;
   const repoRoot = worktree ?? directory;
   const tools = createTools(ctx);
+  const commands = createCommands();
+
+  await safePluginLog(client, "Plugin initialized", {
+    directory,
+    worktree: repoRoot,
+  });
 
   return {
     tool: tools,
@@ -55,9 +82,12 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
     },
     config: async (config) => {
       config.command = config.command ?? {};
-      for (const command of createCommands()) {
+      for (const command of commands) {
         config.command[command.name] = command.definition;
       }
+      await safePluginLog(client, "Commands registered", {
+        commandCount: commands.length,
+      });
       return config;
     },
   };
