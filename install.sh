@@ -26,7 +26,34 @@ git clone --depth 1 https://github.com/valerio-mc/mario-devx.git "$tmpdir" 2>/de
 # Copy plugin files
 cp -R "$tmpdir/.opencode/plugins/mario-devx" .opencode/plugins/
 cp "$tmpdir/.opencode/plugins/mario-devx.ts" .opencode/plugins/
-cp "$tmpdir/.opencode/package.json" .opencode/
+
+# Merge .opencode/package.json dependencies without clobbering existing config
+src_pkg="$tmpdir/.opencode/package.json"
+dst_pkg=".opencode/package.json"
+if [ -f "$dst_pkg" ]; then
+    SRC_PKG="$src_pkg" DST_PKG="$dst_pkg" node <<'NODE'
+const fs = require("fs");
+
+const srcPath = process.env.SRC_PKG;
+const dstPath = process.env.DST_PKG;
+
+const src = JSON.parse(fs.readFileSync(srcPath, "utf8"));
+const dst = JSON.parse(fs.readFileSync(dstPath, "utf8"));
+
+dst.dependencies = {
+  ...(dst.dependencies || {}),
+  ...(src.dependencies || {}),
+};
+
+if (!dst.type && src.type) {
+  dst.type = src.type;
+}
+
+fs.writeFileSync(dstPath, `${JSON.stringify(dst, null, 2)}\n`, "utf8");
+NODE
+else
+    cp "$src_pkg" "$dst_pkg"
+fi
 
 # Cleanup
 rm -rf "$tmpdir"
