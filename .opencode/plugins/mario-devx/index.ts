@@ -51,11 +51,12 @@ export const marioDevxPlugin: Plugin = async ({ client, directory }) => {
         },
       });
     },
-    config: async (_input, output) => {
-      output.command = output.command ?? {};
+    config: async (config) => {
+      config.command = config.command ?? {};
       for (const command of createCommands()) {
-        output.command[command.name] = command.definition;
+        config.command[command.name] = command.definition;
       }
+      return config;
     },
   };
 };
