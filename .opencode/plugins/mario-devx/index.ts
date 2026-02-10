@@ -15,8 +15,10 @@ const getIdleSessionId = (event: unknown): string | null => {
   return typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : null;
 };
 
-export const marioDevxPlugin: Plugin = async ({ client, directory }) => {
-  const tools = createTools({ client, directory });
+export const marioDevxPlugin: Plugin = async (ctx) => {
+  const { client, directory, worktree } = ctx;
+  const repoRoot = worktree ?? directory;
+  const tools = createTools(ctx);
 
   return {
     tool: tools,
@@ -27,12 +29,12 @@ export const marioDevxPlugin: Plugin = async ({ client, directory }) => {
         return;
       }
 
-      const ws = await readWorkSessionState(directory);
+      const ws = await readWorkSessionState(repoRoot);
       if (!ws?.sessionId || ws.sessionId !== sessionID) {
         return;
       }
 
-      const run = await readRunState(directory);
+      const run = await readRunState(repoRoot);
       if (!run.controlSessionId) {
         return;
       }
