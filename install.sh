@@ -24,8 +24,10 @@ git clone --depth 1 https://github.com/valerio-mc/mario-devx.git "$tmpdir" 2>/de
 }
 
 # Copy plugin files
-cp -R "$tmpdir/.opencode/plugins/mario-devx" .opencode/plugins/
-cp "$tmpdir/.opencode/plugins/mario-devx.ts" .opencode/plugins/
+rm -rf .opencode/plugins/mario-devx
+rm -f .opencode/plugins/mario-devx.ts
+cp -R "$tmpdir/.opencode/plugins/mario-devx" .opencode/plugins/mario-devx
+cp "$tmpdir/.opencode/plugins/mario-devx.ts" .opencode/plugins/mario-devx.ts
 
 # Merge .opencode/package.json dependencies without clobbering existing config
 src_pkg="$tmpdir/.opencode/package.json"
