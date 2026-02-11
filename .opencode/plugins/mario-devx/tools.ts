@@ -359,7 +359,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
    * - Appropriate task granularity
    * - Considers platform, framework, and complexity
    */
-  const ws = await ensureWorkSession(pluginCtx, repoRoot, { agent: undefined });
+  const ws = await ensureWorkSession(pluginCtx, repoRoot, undefined);
   const taskGenPrompt = [
     "You are mario-devx's task planner.",
     "Generate an optimal task breakdown from this PRD.",
@@ -875,12 +875,11 @@ export const createTools = (ctx: PluginContext) => {
           ].join("\n");
         }
 
-        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
+        const ws = await ensureWorkSession(ctx, repoRoot, undefined);
         const interviewInput = hasAnswer ? rawInput : "Start the interview and ask the first question.";
         const interviewResponse = await ctx.client.session.prompt({
           path: { id: ws.sessionId },
           body: {
-            ...(context.agent ? { agent: context.agent } : {}),
             parts: [{ type: "text", text: interviewPrompt(prd, interviewInput) }],
           },
         });
@@ -893,7 +892,6 @@ export const createTools = (ctx: PluginContext) => {
           const repairResponse = await ctx.client.session.prompt({
             path: { id: ws.sessionId },
             body: {
-              ...(context.agent ? { agent: context.agent } : {}),
               parts: [{ type: "text", text: interviewFormatRepairPrompt(text) }],
             },
           });
