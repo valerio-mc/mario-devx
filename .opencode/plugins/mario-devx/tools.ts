@@ -52,6 +52,7 @@ import {
   ensureWorkSession,
   ensureNotInWorkSession,
   extractTextFromPromptResponse,
+  resolvePromptText,
   resetWorkSession,
   setWorkSessionTitle,
   updateRunState,
@@ -911,7 +912,7 @@ export const createTools = (ctx: PluginContext) => {
             parts: [{ type: "text", text: interviewPrompt(prd, interviewInput) }],
           },
         });
-        const text = extractTextFromPromptResponse(interviewResponse);
+        const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse, TIMEOUTS.SESSION_IDLE_MS);
         let parsedInterview = parseInterviewTurn(text);
 
         if (parsedInterview.error) {
@@ -923,7 +924,7 @@ export const createTools = (ctx: PluginContext) => {
               parts: [{ type: "text", text: interviewTurnRepairPrompt(text) }],
             },
           });
-          const repairedText = extractTextFromPromptResponse(repairResponse);
+          const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_MS);
           const repairedInterview = parseInterviewTurn(repairedText);
 
           if (!repairedInterview.error) {
@@ -950,7 +951,7 @@ export const createTools = (ctx: PluginContext) => {
               parts: [{ type: "text", text: compileInterviewPrompt(prd) }],
             },
           });
-          const compileText = extractTextFromPromptResponse(compileResponse);
+          const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse, TIMEOUTS.SESSION_IDLE_MS);
           let compiled = parseCompileInterviewResponse(compileText);
           if (compiled.error) {
             logError("interview", `Compile parse error: ${compiled.error}`);
@@ -960,7 +961,7 @@ export const createTools = (ctx: PluginContext) => {
                 parts: [{ type: "text", text: compileRepairPrompt(compileText) }],
               },
             });
-            const repairedText = extractTextFromPromptResponse(repairResponse);
+            const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_MS);
             compiled = parseCompileInterviewResponse(repairedText);
             if (compiled.error) {
               logError("interview", `Compile retry parse error: ${compiled.error}`);

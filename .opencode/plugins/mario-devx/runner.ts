@@ -176,6 +176,60 @@ export const extractTextFromPromptResponse = (resp: unknown): string => {
   return text;
 };
 
+const extractPromptMessageId = (resp: unknown): string | null => {
+  const out = resp as {
+    info?: { id?: unknown };
+    data?: { info?: { id?: unknown } };
+  };
+  const id = out.info?.id ?? out.data?.info?.id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+};
+
+const readSessionMessageText = async (ctx: any, sessionId: string, messageId: string): Promise<string> => {
+  try {
+    const bySessionID = await ctx.client.session.message({
+      path: { sessionID: sessionId, messageID: messageId },
+    });
+    const text = extractTextFromPromptResponse(bySessionID);
+    if (text.length > 0) return text;
+  } catch {
+    // Fallback below.
+  }
+
+  try {
+    const byId = await ctx.client.session.message({
+      path: { id: sessionId, messageID: messageId },
+    });
+    return extractTextFromPromptResponse(byId);
+  } catch {
+    return "";
+  }
+};
+
+export const resolvePromptText = async (
+  ctx: any,
+  sessionId: string,
+  promptResponse: unknown,
+  waitTimeoutMs: number,
+): Promise<string> => {
+  const direct = extractTextFromPromptResponse(promptResponse);
+  if (direct.length > 0) {
+    return direct;
+  }
+
+  const messageId = extractPromptMessageId(promptResponse);
+  if (!messageId) {
+    return "";
+  }
+
+  const idle = await waitForSessionIdle(ctx, sessionId, waitTimeoutMs);
+  if (!idle) {
+    return "";
+  }
+
+  return readSessionMessageText(ctx, sessionId, messageId);
+};
+
 export const stateFilePath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "state.json");
 
 export const hasStaleWorkSessionRefs = async (repoRoot: string): Promise<boolean> => {
