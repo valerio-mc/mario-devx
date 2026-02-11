@@ -567,13 +567,30 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
  * - next_question: What to ask next (null if done)
  */
 const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | null; question: string | null; error?: string } => {
+  const extractQuestion = (): string | null => {
+    const tagged = text.match(/<MARIO_QUESTION>([\s\S]*?)<\/MARIO_QUESTION>/i)?.[1]?.trim();
+    if (tagged && tagged.length > 0) return tagged;
+
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .filter((line) => !/^<\/?MARIO_(JSON|QUESTION)>$/i.test(line));
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].endsWith("?")) return lines[i];
+    }
+
+    return lines.length > 0 ? lines[lines.length - 1] : null;
+  };
+
   const jsonMatch = text.match(/<MARIO_JSON>([\s\S]*?)<\/MARIO_JSON>/i);
-  const questionMatch = text.match(/<MARIO_QUESTION>([\s\S]*?)<\/MARIO_QUESTION>/i);
+  const question = extractQuestion();
   
   if (!jsonMatch) {
     return { 
       envelope: null, 
-      question: questionMatch?.[1]?.trim() ?? null,
+      question,
       error: "No <MARIO_JSON> tags found in response" 
     };
   }
@@ -585,19 +602,42 @@ const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | n
     if (typeof envelope.done !== "boolean") {
       return { 
         envelope: null, 
-        question: questionMatch?.[1]?.trim() ?? null,
+        question,
         error: "Invalid envelope: 'done' field must be boolean" 
       };
     }
+
+    const envelopeQuestion = typeof envelope.next_question === "string" ? envelope.next_question.trim() : null;
     
-    return { envelope, question: questionMatch?.[1]?.trim() ?? null };
+    return { envelope, question: question || envelopeQuestion || null };
   } catch (err) {
     return { 
       envelope: null, 
-      question: questionMatch?.[1]?.trim() ?? null,
+      question,
       error: `JSON parse error: ${err instanceof Error ? err.message : String(err)}` 
     };
   }
+};
+
+const interviewFormatRepairPrompt = (invalidResponse: string): string => {
+  return [
+    "Your previous PRD interview response had invalid format.",
+    "Re-output the same intent in the exact required format and nothing else.",
+    "Required format:",
+    "<MARIO_JSON>",
+    '{"done":false,"updates":{},"next_question":"Your question here"}',
+    "</MARIO_JSON>",
+    "<MARIO_QUESTION>",
+    "Your question here",
+    "</MARIO_QUESTION>",
+    "Rules:",
+    "- done must be boolean",
+    "- updates must be an object",
+    "- next_question must be a concise natural-language question",
+    "- no markdown fences, no extra commentary",
+    "Previous invalid response:",
+    invalidResponse,
+  ].join("\n");
 };
 
 /**
@@ -845,21 +885,42 @@ export const createTools = (ctx: PluginContext) => {
           },
         });
         const text = extractTextFromPromptResponse(interviewResponse);
-        const { envelope, question, error: parseError } = parseInterviewResponse(text);
+        let parsedInterview = parseInterviewResponse(text);
 
-        if (parseError) {
-          logError("interview", `Parsing error: ${parseError}`);
-          return [
-            "PRD interview",
-            "I had trouble understanding that response. Could you please rephrase?",
-            "Reply with your answer in natural language.",
-          ].join("\n");
+        if (parsedInterview.error) {
+          logError("interview", `Parsing error: ${parsedInterview.error}`);
+
+          const repairResponse = await ctx.client.session.prompt({
+            path: { id: ws.sessionId },
+            body: {
+              ...(context.agent ? { agent: context.agent } : {}),
+              parts: [{ type: "text", text: interviewFormatRepairPrompt(text) }],
+            },
+          });
+          const repairedText = extractTextFromPromptResponse(repairResponse);
+          const repairedInterview = parseInterviewResponse(repairedText);
+
+          if (!repairedInterview.error) {
+            logInfo("interview", "Recovered from malformed interview response after one retry");
+            parsedInterview = repairedInterview;
+          } else {
+            logError("interview", `Retry parsing error: ${repairedInterview.error}`);
+            const fallbackQuestion = repairedInterview.question || parsedInterview.question || "In one sentence, what are we building?";
+            return [
+              "PRD interview",
+              fallbackQuestion,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
         }
 
+        const { envelope, question } = parsedInterview;
+
         if (!envelope) {
+          const fallbackQuestion = question || "In one sentence, what are we building?";
           return [
             "PRD interview",
-            question || "I didn't catch that. Could you try again?",
+            fallbackQuestion,
             "Reply with your answer in natural language.",
           ].join("\n");
         }
