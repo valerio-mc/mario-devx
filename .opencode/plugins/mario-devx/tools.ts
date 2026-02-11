@@ -28,9 +28,7 @@ import {
 import {
   LAST_QUESTION_KEY,
   compactIdea,
-  deriveWizardStep,
   extractStyleReferencesFromText,
-  hasMeaningfulList,
   hasNonEmpty,
   isPrdComplete,
   mergeStyleReferences,
@@ -74,7 +72,6 @@ import {
 } from "./prd";
 import {
   LIMITS,
-  LLM_TAGS,
   RUN_STATE,
   TASK_STATUS,
   TIMEOUTS,
@@ -337,11 +334,19 @@ type InterviewUpdates = {
   constraints?: string[];
 };
 
-type InterviewEnvelope = {
+type InterviewTurn = {
   done: boolean;
+  question: string | null;
+  error?: string;
+};
+
+type CompileInterviewEnvelope = {
   updates?: InterviewUpdates;
   next_question?: string;
 };
+
+const INTERVIEW_QUESTION_PREFIX = "q-";
+const INTERVIEW_ANSWER_PREFIX = "a-";
 
 const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: PluginContext): Promise<PrdJson> => {
   if (Array.isArray(prd.tasks) && prd.tasks.length > 0) {
@@ -472,169 +477,176 @@ const generateFallbackTasks = (prd: PrdJson): PrdTask[] => {
 
 const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
 
-/**
- * Generates the PRD interview prompt for the LLM.
- * 
- * ARCHITECTURE: This is the core of the LLM-driven wizard. Instead of hardcoded
- * field tracking and question selection, we:
- * 1. Dump the entire PRD state to the LLM
- * 2. Ask the LLM to analyze what's missing
- * 3. Let the LLM decide what question to ask next
- * 4. Parse JSON response for structured updates
- * 
- * This eliminates the need for:
- * - firstMissingField() - 20 lines of conditionals
- * - fallbackQuestion() - 40 lines of switch/case
- * - deriveWizardStep() - complex step tracking
- * 
- * The LLM has full context and makes intelligent decisions about what to ask.
- */
+const interviewTranscript = (prd: PrdJson): string[] => {
+  const entries = Object.entries(prd.wizard.answers ?? {})
+    .filter(([key]) => key !== LAST_QUESTION_KEY)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  return entries
+    .map(([key, value]) => {
+      const text = String(value ?? "").trim();
+      if (!text) return null;
+      if (key.startsWith(INTERVIEW_QUESTION_PREFIX)) return `Q: ${text}`;
+      if (key.startsWith(INTERVIEW_ANSWER_PREFIX) || key.startsWith("turn-")) return `A: ${text}`;
+      return `${key}: ${text}`;
+    })
+    .filter((line): line is string => !!line);
+};
+
 const interviewPrompt = (prd: PrdJson, input: string): string => {
+  const transcript = interviewTranscript(prd);
   return [
     "You are mario-devx's PRD interviewer.",
-    "Conduct a deep PRD interview by analyzing the current state and asking ONE high-leverage question.",
-    "You must return BOTH:",
-    "1) a JSON envelope between <MARIO_JSON> tags",
-    "2) the next question between <MARIO_QUESTION> tags",
+    "Ask ONE focused question at a time. Do NOT output JSON.",
     "",
     "Current PRD state:",
     JSON.stringify(prd, null, 2),
     "",
-    "User answer:",
+    "Interview transcript so far:",
+    transcript.length > 0 ? transcript.join("\n") : "(empty)",
+    "",
+    "Latest user input:",
     input,
     "",
-    "Required fields before done=true:",
-    "- idea: one-line project description",
-    "- platform: web|api|cli|library",
-    "- frontend: true|false",
-    "- uiVerificationRequired: true|false (only if frontend=true)",
-    "- ui.designSystem: none|tailwind|shadcn|custom (only if frontend=true)",
-    "- ui.visualDirection: string (only if frontend=true)",
-    "- ui.uxRequirements: string[] (only if frontend=true)",
-    "- docs.readmeRequired: true|false",
-    "- docs.readmeSections: string[] (only if readmeRequired=true)",
-    "- language: typescript|python|go|rust|other",
-    "- framework: string",
-    "- product.targetUsers: string[]",
-    "- product.userProblems: string[]",
-    "- product.mustHaveFeatures: string[] (at least 3)",
-    "- product.nonGoals: string[]",
-    "- product.successMetrics: string[]",
-    "- product.constraints: string[]",
-    "- qualityGates: string[] (at least 2 commands)",
+    "Required fields before completion:",
+    "- idea",
+    "- platform",
+    "- frontend",
+    "- uiVerificationRequired if frontend=true",
+    "- ui.designSystem/ui.visualDirection/ui.uxRequirements if frontend=true",
+    "- docs.readmeRequired/docs.readmeSections",
+    "- language/framework",
+    "- targetUsers/userProblems",
+    "- mustHaveFeatures (>=3)",
+    "- nonGoals/successMetrics/constraints",
+    "- qualityGates (>=2 commands)",
     "",
-    "Instructions:",
-    "1. Analyze the Current PRD state above",
-    "2. Identify which required fields are still missing or incomplete",
-    "3. Ask ONE concise question to fill the most important missing field",
-    "4. Extract any updates from the user's answer and include them in the updates object",
-    "5. Set done=true only when ALL required fields are present and valid",
-    "",
-    "Rules for questions:",
-    "- Ask direct natural-language questions (no A/B/C/D options)",
-    "- Keep questions short (max 22 words) and concrete",
-    "- For booleans, ask yes/no in plain language",
-    "- Don't re-ask fields that are already complete",
-    "- Ask about ONE field at a time",
-    "",
-    "Envelope schema:",
-    '{"done": boolean, "updates": {...}, "next_question": string}',
-    "",
-    "Return format:",
-    "<MARIO_JSON>",
-    '{"done":false,"updates":{},"next_question":"Your question here"}',
-    "</MARIO_JSON>",
-    "<MARIO_QUESTION>",
-    "Your question here",
-    "</MARIO_QUESTION>",
+    "Output rules (strict):",
+    "- Return EXACTLY one line.",
+    "- If more information is needed, return ONLY a question ending with '?'.",
+    "- If all required fields are complete, return ONLY: DONE",
+    "- No explanations, no markdown, no prefixes.",
   ].join("\n");
 };
 
-/**
- * Parses LLM interview response to extract structured JSON envelope.
- * 
- * Expected format:
- * <MARIO_JSON>
- * {"done": boolean, "updates": {...}, "next_question": string}
- * </MARIO_JSON>
- * <MARIO_QUESTION>
- * Your question here
- * </MARIO_QUESTION>
- * 
- * The envelope contains:
- * - done: Whether the PRD is complete
- * - updates: Field updates extracted from user's answer
- * - next_question: What to ask next (null if done)
- */
-const parseInterviewResponse = (text: string): { envelope: InterviewEnvelope | null; question: string | null; error?: string } => {
-  const extractQuestion = (): string | null => {
-    const tagged = text.match(/<MARIO_QUESTION>([\s\S]*?)<\/MARIO_QUESTION>/i)?.[1]?.trim();
-    if (tagged && tagged.length > 0) return tagged;
+const parseInterviewTurn = (text: string): InterviewTurn => {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
-    const lines = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .filter((line) => !/^<\/?MARIO_(JSON|QUESTION)>$/i.test(line));
-
-    for (let i = lines.length - 1; i >= 0; i--) {
-      if (lines[i].endsWith("?")) return lines[i];
-    }
-
-    return lines.length > 0 ? lines[lines.length - 1] : null;
-  };
-
-  const jsonMatch = text.match(/<MARIO_JSON>([\s\S]*?)<\/MARIO_JSON>/i);
-  const question = extractQuestion();
-  
-  if (!jsonMatch) {
-    return { 
-      envelope: null, 
-      question,
-      error: "No <MARIO_JSON> tags found in response" 
-    };
+  if (lines.length === 0) {
+    return { done: false, question: null, error: "Empty interviewer response" };
   }
-  
-  try {
-    const envelope = JSON.parse((jsonMatch[1] ?? "").trim()) as InterviewEnvelope;
-    
-    // Validate envelope structure
-    if (typeof envelope.done !== "boolean") {
-      return { 
-        envelope: null, 
-        question,
-        error: "Invalid envelope: 'done' field must be boolean" 
-      };
-    }
 
-    const envelopeQuestion = typeof envelope.next_question === "string" ? envelope.next_question.trim() : null;
-    
-    return { envelope, question: question || envelopeQuestion || null };
+  if (lines.some((line) => /^DONE$/i.test(line))) {
+    return { done: true, question: null };
+  }
+
+  const normalized = lines
+    .map((line) => line.replace(/^question\s*:\s*/i, "").trim())
+    .filter((line) => !/^thinking[:\s]/i.test(line));
+
+  const questionLine = [...normalized].reverse().find((line) => line.endsWith("?"))
+    ?? [...normalized].reverse().find((line) => line.length > 0)
+    ?? null;
+
+  if (!questionLine) {
+    return { done: false, question: null, error: "No question found in interviewer response" };
+  }
+
+  return { done: false, question: questionLine.endsWith("?") ? questionLine : `${questionLine}?` };
+};
+
+const interviewTurnRepairPrompt = (invalidResponse: string): string => {
+  return [
+    "Your previous response violated the required output format.",
+    "Re-output in exactly one line.",
+    "Allowed outputs:",
+    "- A single question ending with '?'",
+    "- DONE (if interview is complete)",
+    "Do not include any other text.",
+    "Previous invalid response:",
+    invalidResponse,
+  ].join("\n");
+};
+
+const extractJsonObject = (text: string): string | null => {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+};
+
+const compileInterviewPrompt = (prd: PrdJson): string => {
+  const transcript = interviewTranscript(prd);
+  return [
+    "You are mario-devx's PRD compiler.",
+    "Convert the interview transcript into PRD updates.",
+    "",
+    "Current PRD state:",
+    JSON.stringify(prd, null, 2),
+    "",
+    "Interview transcript:",
+    transcript.length > 0 ? transcript.join("\n") : "(empty)",
+    "",
+    "Return ONLY one JSON object with this shape:",
+    '{"updates": { ... }, "next_question": "string"}',
+    "Rules:",
+    "- updates contains extracted/normalized field values",
+    "- next_question is required if required fields remain missing",
+    "- no markdown, no prose, JSON only",
+  ].join("\n");
+};
+
+const parseCompileInterviewResponse = (text: string): { envelope: CompileInterviewEnvelope | null; error?: string } => {
+  const jsonText = extractJsonObject(text);
+  if (!jsonText) {
+    return { envelope: null, error: "No JSON object found in compile response" };
+  }
+  try {
+    const parsed = JSON.parse(jsonText) as CompileInterviewEnvelope;
+    if (!parsed || typeof parsed !== "object") {
+      return { envelope: null, error: "Compile response is not an object" };
+    }
+    return { envelope: parsed };
   } catch (err) {
-    return { 
-      envelope: null, 
-      question,
-      error: `JSON parse error: ${err instanceof Error ? err.message : String(err)}` 
-    };
+    return { envelope: null, error: `Compile JSON parse error: ${err instanceof Error ? err.message : String(err)}` };
   }
 };
 
-const interviewFormatRepairPrompt = (invalidResponse: string): string => {
+const compileRepairPrompt = (invalidResponse: string): string => {
   return [
-    "Your previous PRD interview response had invalid format.",
-    "Re-output the same intent in the exact required format and nothing else.",
-    "Required format:",
-    "<MARIO_JSON>",
-    '{"done":false,"updates":{},"next_question":"Your question here"}',
-    "</MARIO_JSON>",
-    "<MARIO_QUESTION>",
-    "Your question here",
-    "</MARIO_QUESTION>",
-    "Rules:",
-    "- done must be boolean",
-    "- updates must be an object",
-    "- next_question must be a concise natural-language question",
-    "- no markdown fences, no extra commentary",
+    "Your previous compile response was invalid.",
+    "Return ONLY valid JSON with shape:",
+    '{"updates": { ... }, "next_question": "string"}',
+    "No markdown and no extra text.",
     "Previous invalid response:",
     invalidResponse,
   ].join("\n");
@@ -845,15 +857,16 @@ export const createTools = (ctx: PluginContext) => {
           ].join("\n");
         }
 
-        if (rawInput && prd.wizard.step === 0 && !hasNonEmpty(prd.idea)) {
+        const isBootstrapIdea = rawInput.length > 0 && prd.wizard.step === 0 && !hasNonEmpty(prd.idea);
+        if (isBootstrapIdea) {
           prd = {
             ...prd,
             idea: rawInput,
           };
         }
 
-        const hasAnswer = rawInput.length > 0;
-        if (hasAnswer) {
+        const hasAnswer = rawInput.length > 0 && !isBootstrapIdea;
+        if (rawInput.length > 0) {
           const extractedStyleRefs = extractStyleReferencesFromText(rawInput);
           if (extractedStyleRefs.length > 0) {
             prd = {
@@ -866,6 +879,19 @@ export const createTools = (ctx: PluginContext) => {
           }
         }
 
+        if (hasAnswer) {
+          prd = {
+            ...prd,
+            wizard: {
+              ...prd.wizard,
+              answers: {
+                ...prd.wizard.answers,
+                [`${INTERVIEW_ANSWER_PREFIX}${Date.now()}`]: rawInput,
+              },
+            },
+          };
+        }
+
         const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
         if (!hasAnswer && cachedQuestion) {
           return [
@@ -876,7 +902,9 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         const ws = await ensureWorkSession(ctx, repoRoot, undefined);
-        const interviewInput = hasAnswer ? rawInput : "Start the interview and ask the first question.";
+        const interviewInput = hasAnswer
+          ? rawInput
+          : (isBootstrapIdea ? `Project idea provided: ${prd.idea}` : "Start the interview and ask the first question.");
         const interviewResponse = await ctx.client.session.prompt({
           path: { id: ws.sessionId },
           body: {
@@ -884,7 +912,7 @@ export const createTools = (ctx: PluginContext) => {
           },
         });
         const text = extractTextFromPromptResponse(interviewResponse);
-        let parsedInterview = parseInterviewResponse(text);
+        let parsedInterview = parseInterviewTurn(text);
 
         if (parsedInterview.error) {
           logError("interview", `Parsing error: ${parsedInterview.error}`);
@@ -892,11 +920,11 @@ export const createTools = (ctx: PluginContext) => {
           const repairResponse = await ctx.client.session.prompt({
             path: { id: ws.sessionId },
             body: {
-              parts: [{ type: "text", text: interviewFormatRepairPrompt(text) }],
+              parts: [{ type: "text", text: interviewTurnRepairPrompt(text) }],
             },
           });
           const repairedText = extractTextFromPromptResponse(repairResponse);
-          const repairedInterview = parseInterviewResponse(repairedText);
+          const repairedInterview = parseInterviewTurn(repairedText);
 
           if (!repairedInterview.error) {
             logInfo("interview", "Recovered from malformed interview response after one retry");
@@ -912,67 +940,87 @@ export const createTools = (ctx: PluginContext) => {
           }
         }
 
-        const { envelope, question } = parsedInterview;
+        let done = parsedInterview.done;
+        let finalQuestion = parsedInterview.question || "What else should we capture?";
 
-        if (!envelope) {
-          const fallbackQuestion = question || "In one sentence, what are we building?";
+        if (parsedInterview.done) {
+          const compileResponse = await ctx.client.session.prompt({
+            path: { id: ws.sessionId },
+            body: {
+              parts: [{ type: "text", text: compileInterviewPrompt(prd) }],
+            },
+          });
+          const compileText = extractTextFromPromptResponse(compileResponse);
+          let compiled = parseCompileInterviewResponse(compileText);
+          if (compiled.error) {
+            logError("interview", `Compile parse error: ${compiled.error}`);
+            const repairResponse = await ctx.client.session.prompt({
+              path: { id: ws.sessionId },
+              body: {
+                parts: [{ type: "text", text: compileRepairPrompt(compileText) }],
+              },
+            });
+            const repairedText = extractTextFromPromptResponse(repairResponse);
+            compiled = parseCompileInterviewResponse(repairedText);
+            if (compiled.error) {
+              logError("interview", `Compile retry parse error: ${compiled.error}`);
+            }
+          }
+
+          if (compiled.envelope?.updates) {
+            prd = applyInterviewUpdates(prd, compiled.envelope.updates);
+          }
+          done = isPrdComplete(prd);
+          finalQuestion = (compiled.envelope?.next_question || "What should we clarify next to finish the PRD?").trim();
+        }
+
+        if (!done) {
+          prd = {
+            ...prd,
+            wizard: {
+              ...prd.wizard,
+              step: 0,
+              totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
+              status: "in_progress",
+              lastQuestionId: "interview",
+              answers: {
+                ...prd.wizard.answers,
+                [`${INTERVIEW_QUESTION_PREFIX}${Date.now()}`]: finalQuestion,
+                [LAST_QUESTION_KEY]: finalQuestion,
+              },
+            },
+          };
+          await writePrdJson(repoRoot, prd);
           return [
-            "PRD interview",
-            fallbackQuestion,
+            `PRD interview (0/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
+            finalQuestion,
             "Reply with your answer in natural language.",
           ].join("\n");
         }
-
-        if (envelope.updates) {
-          prd = applyInterviewUpdates(prd, envelope.updates);
-        }
-
-        const done = isPrdComplete(prd);
-        const finalQuestion = (question && question.trim()) || envelope?.next_question?.trim() || "What else should we capture?";
 
         prd = {
           ...prd,
           wizard: {
             ...prd.wizard,
-            step: done ? WIZARD_REQUIREMENTS.TOTAL_STEPS : 0,
+            step: WIZARD_REQUIREMENTS.TOTAL_STEPS,
             totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
-            status: done ? "completed" : "in_progress",
-            lastQuestionId: done ? "done" : "interview",
+            status: "completed",
+            lastQuestionId: "done",
             answers: {
               ...prd.wizard.answers,
-              ...(hasAnswer ? { [`turn-${Date.now()}`]: rawInput } : {}),
-              [LAST_QUESTION_KEY]: finalQuestion,
+              [LAST_QUESTION_KEY]: "done",
             },
           },
         };
 
-        if (done) {
-          prd = await seedTasksFromPrd(repoRoot, prd, ctx);
-          prd = {
-            ...prd,
-            wizard: {
-              ...prd.wizard,
-              status: "completed",
-              step: WIZARD_REQUIREMENTS.TOTAL_STEPS,
-              lastQuestionId: "done",
-            },
-          };
-          await writePrdJson(repoRoot, prd);
-          await logPrdComplete(ctx, prd.tasks.length);
-          return [
-            "PRD wizard: completed.",
-            `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
-            `Tasks: ${prd.tasks.length}`,
-            "Next: /mario-devx:run 1",
-          ].join("\n");
-        }
-
+        prd = await seedTasksFromPrd(repoRoot, prd, ctx);
         await writePrdJson(repoRoot, prd);
-        const step = done ? WIZARD_REQUIREMENTS.TOTAL_STEPS : prd.wizard.step;
+        await logPrdComplete(ctx, prd.tasks.length);
         return [
-          `PRD interview (${step}/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
-          finalQuestion,
-          "Reply with your answer in natural language.",
+          "PRD wizard: completed.",
+          `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+          `Tasks: ${prd.tasks.length}`,
+          "Next: /mario-devx:run 1",
         ].join("\n");
       },
     }),

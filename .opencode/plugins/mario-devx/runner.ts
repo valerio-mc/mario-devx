@@ -168,7 +168,7 @@ export const extractTextFromPromptResponse = (resp: unknown): string => {
   };
   const parts = out.parts ?? out.data?.message?.parts ?? [];
   const text = parts
-    .filter((p) => p.type === "text" && typeof p.text === "string")
+    .filter((p) => typeof p.text === "string")
     .map((p) => p.text as string)
     .join("\n")
     .trim();
