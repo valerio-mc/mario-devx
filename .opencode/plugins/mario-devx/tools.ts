@@ -572,6 +572,22 @@ const interviewTurnRepairPrompt = (invalidResponse: string): string => {
   ].join("\n");
 };
 
+const repeatedQuestionRepairPrompt = (previousQuestion: string, latestAnswer: string): string => {
+  return [
+    "You repeated the same interview question.",
+    "Ask a DIFFERENT next question based on the latest answer.",
+    "Return exactly one line ending with '?', or DONE.",
+    "Previous question:",
+    previousQuestion,
+    "Latest user answer:",
+    latestAnswer,
+  ].join("\n");
+};
+
+const normalizeQuestionKey = (input: string): string => {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+};
+
 const extractJsonObject = (text: string): string | null => {
   const start = text.indexOf("{");
   if (start < 0) return null;
@@ -976,6 +992,26 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         if (!done) {
+          if (
+            hasAnswer
+            && typeof cachedQuestion === "string"
+            && normalizeQuestionKey(finalQuestion) === normalizeQuestionKey(cachedQuestion)
+          ) {
+            const repeatRepairResponse = await ctx.client.session.prompt({
+              path: { id: ws.sessionId },
+              body: {
+                parts: [{ type: "text", text: repeatedQuestionRepairPrompt(cachedQuestion, rawInput) }],
+              },
+            });
+            const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse, TIMEOUTS.SESSION_IDLE_MS);
+            const repeatRepairTurn = parseInterviewTurn(repeatRepairText);
+            if (!repeatRepairTurn.error && repeatRepairTurn.question) {
+              finalQuestion = repeatRepairTurn.question;
+            } else {
+              logWarning("interview", "Could not generate non-repeated follow-up question; keeping interviewer output");
+            }
+          }
+
           prd = {
             ...prd,
             wizard: {
