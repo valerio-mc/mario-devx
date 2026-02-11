@@ -161,12 +161,13 @@ export const extractTextFromPromptResponse = (resp: unknown): string => {
   const out = resp as {
     parts?: Array<{ type?: string; text?: string }>;
     data?: {
+      parts?: Array<{ type?: string; text?: string }>;
       message?: {
         parts?: Array<{ type?: string; text?: string }>;
       };
     };
   };
-  const parts = out.parts ?? out.data?.message?.parts ?? [];
+  const parts = out.parts ?? out.data?.parts ?? out.data?.message?.parts ?? [];
   const text = parts
     .filter((p) => typeof p.text === "string")
     .map((p) => p.text as string)
