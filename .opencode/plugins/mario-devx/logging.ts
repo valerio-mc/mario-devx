@@ -38,7 +38,7 @@ export interface LogEntry {
 }
 
 const LOG_FILE = "mario-devx.log";
-const MAX_LOG_BYTES = 3 * 1024 * 1024;
+const MAX_LOG_BYTES = 50 * 1024 * 1024;
 
 const centralLogPath = (repoRoot: string): string => path.join(marioStateDir(repoRoot), LOG_FILE);
 
