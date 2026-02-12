@@ -9,6 +9,10 @@
  * This is specifically for user-visible operational events.
  */
 
+import { appendFile, stat, writeFile } from "fs/promises";
+import path from "path";
+import { ensureDir } from "./fs";
+import { marioStateDir } from "./paths";
 import type { PluginContext } from "./types-extended";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -20,6 +24,31 @@ export interface LogEntry {
   extra?: Record<string, unknown>;
 }
 
+const LOG_FILE = "mario-devx.log";
+const MAX_LOG_BYTES = 3 * 1024 * 1024;
+
+const centralLogPath = (repoRoot: string): string => path.join(marioStateDir(repoRoot), LOG_FILE);
+
+const appendCentralLog = async (repoRoot: string, entry: LogEntry): Promise<void> => {
+  try {
+    const logDir = marioStateDir(repoRoot);
+    await ensureDir(logDir);
+    const filePath = centralLogPath(repoRoot);
+    try {
+      const info = await stat(filePath);
+      if (info.size >= MAX_LOG_BYTES) {
+        await writeFile(filePath, "", "utf8");
+      }
+    } catch {
+      // File may not exist yet.
+    }
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+    await appendFile(filePath, `${line}\n`, "utf8");
+  } catch {
+    // Best-effort sink; never block plugin flow.
+  }
+};
+
 /**
  * Send structured log to OpenCode
  * Use for user-facing operational events
@@ -28,18 +57,30 @@ export const structuredLog = async (
   ctx: PluginContext,
   level: LogLevel,
   message: string,
-  extra?: Record<string, unknown>
+  extra?: Record<string, unknown>,
+  repoRoot?: string,
 ): Promise<void> => {
+  const entry: LogEntry = {
+    service: "mario-devx",
+    level,
+    message,
+    extra: extra ?? {},
+  };
+
+  if (repoRoot) {
+    await appendCentralLog(repoRoot, entry);
+  }
+
   try {
     // @ts-expect-error - client.app.log may not be in all OpenCode versions
     if (ctx.client?.app?.log) {
       // @ts-expect-error
       await ctx.client.app.log({
         body: {
-          service: "mario-devx",
-          level,
-          message,
-          extra: extra ?? {},
+          service: entry.service,
+          level: entry.level,
+          message: entry.message,
+          extra: entry.extra,
         },
       });
     }
@@ -54,16 +95,18 @@ export const structuredLog = async (
  */
 export const logTaskComplete = async (
   ctx: PluginContext,
+  repoRoot: string,
   taskId: string,
   completed: number,
   total: number
 ): Promise<void> => {
   await structuredLog(ctx, "info", `Task ${taskId} completed`, {
+    event: "task.completed",
     taskId,
     completed,
     total,
     status: "success",
-  });
+  }, repoRoot);
 };
 
 /**
@@ -71,14 +114,16 @@ export const logTaskComplete = async (
  */
 export const logTaskBlocked = async (
   ctx: PluginContext,
+  repoRoot: string,
   taskId: string,
   reason: string
 ): Promise<void> => {
   await structuredLog(ctx, "warn", `Task ${taskId} blocked`, {
+    event: "task.blocked",
     taskId,
     reason,
     status: "blocked",
-  });
+  }, repoRoot);
 };
 
 /**
@@ -86,12 +131,13 @@ export const logTaskBlocked = async (
  */
 export const logPrdComplete = async (
   ctx: PluginContext,
+  repoRoot: string,
   taskCount: number
 ): Promise<void> => {
   await structuredLog(ctx, "info", "PRD wizard completed", {
     event: "prd-complete",
     taskCount,
-  });
+  }, repoRoot);
 };
 
 /**
@@ -99,6 +145,7 @@ export const logPrdComplete = async (
  */
 export const logReplanComplete = async (
   ctx: PluginContext,
+  repoRoot: string,
   itemsReplan: number,
   tasksGenerated: number
 ): Promise<void> => {
@@ -106,5 +153,5 @@ export const logReplanComplete = async (
     event: "replan-complete",
     itemsReplan,
     tasksGenerated,
-  });
+  }, repoRoot);
 };

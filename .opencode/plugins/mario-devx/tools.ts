@@ -1052,7 +1052,7 @@ export const createTools = (ctx: PluginContext) => {
 
         prd = await seedTasksFromPrd(repoRoot, prd, ctx);
         await writePrdJson(repoRoot, prd);
-        await logPrdComplete(ctx, prd.tasks.length);
+        await logPrdComplete(ctx, repoRoot, prd.tasks.length);
         return [
           "PRD wizard: completed.",
           `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
@@ -1890,11 +1890,11 @@ export const createTools = (ctx: PluginContext) => {
            if (isPass) {
              completed += 1;
              logInfo("task", `${task.id} completed (${completed}/${maxItems})`);
-             await logTaskComplete(ctx, task.id, completed, maxItems);
+             await logTaskComplete(ctx, repoRoot, task.id, completed, maxItems);
              await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
            } else {
              logWarning("task", `${task.id} blocked: ${judge.reason?.[0] ?? "No reason provided"}`);
-             await logTaskBlocked(ctx, task.id, judge.reason?.[0] ?? "No reason provided");
+             await logTaskBlocked(ctx, repoRoot, task.id, judge.reason?.[0] ?? "No reason provided");
              await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
              break;
            }
@@ -2277,7 +2277,7 @@ export const createTools = (ctx: PluginContext) => {
           backlog: { ...prd.backlog, featureRequests: updatedBacklog },
         };
         await writePrdJson(repoRoot, prd);
-        await logReplanComplete(ctx, replanCandidates.length, generated.length);
+        await logReplanComplete(ctx, repoRoot, replanCandidates.length, generated.length);
         
         return [
           `Replan complete.`,
