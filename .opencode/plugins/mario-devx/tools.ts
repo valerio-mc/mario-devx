@@ -1150,11 +1150,18 @@ export const createTools = (ctx: PluginContext) => {
           && Number.isFinite(Date.parse(previousRun.lastRunAt))
           && (Date.now() - Date.parse(previousRun.lastRunAt)) <= TIMEOUTS.RUN_DUPLICATE_WINDOW_MS
         ) {
+          await logRunEvent(ctx, repoRoot, "info", "run.duplicate-window", "Returning cached run result in duplicate window", {
+            cachedAt: previousRun.lastRunAt,
+            duplicateWindowMs: TIMEOUTS.RUN_DUPLICATE_WINDOW_MS,
+          }, { runId, reasonCode: "DUPLICATE_WINDOW" });
           return previousRun.lastRunResult;
         }
 
         const lock = await acquireRunLock(repoRoot, context.sessionID);
         if (!lock.ok) {
+          await logRunEvent(ctx, repoRoot, "warn", "run.lock.acquire-failed", "Run lock acquire failed", {
+            lockMessage: lock.message,
+          }, { runId, reasonCode: "RUN_LOCK_HELD" });
           return lock.message;
         }
 
@@ -1175,6 +1182,10 @@ export const createTools = (ctx: PluginContext) => {
           }
           const currentRun = await readRunState(repoRoot);
           if (currentRun.status === "DOING") {
+            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.active-run", "Run blocked because another run is active", {
+              currentPhase: currentRun.phase,
+              currentPI: currentRun.currentPI ?? null,
+            }, { runId, reasonCode: "RUN_ALREADY_DOING" });
             return `A mario-devx run is already in progress (${currentRun.phase}). Wait for it to finish, then rerun /mario-devx:status.`;
           }
 
@@ -1182,12 +1193,23 @@ export const createTools = (ctx: PluginContext) => {
           const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
           const workspaceAbs = workspaceRoot === "." ? repoRoot : path.join(repoRoot, workspaceRoot);
           if (prd.wizard.status !== "completed") {
+            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.prd-incomplete", "Run blocked because PRD wizard is incomplete", {
+              wizardStatus: prd.wizard.status,
+              wizardStep: prd.wizard.step,
+              wizardTotalSteps: prd.wizard.totalSteps,
+            }, { runId, reasonCode: "PRD_INCOMPLETE" });
             return "PRD wizard is not complete. Run /mario-devx:new to finish it.";
           }
           if (!Array.isArray(prd.tasks) || prd.tasks.length === 0) {
+            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.no-tasks", "Run blocked because no tasks were found", {
+              tasksCount: Array.isArray(prd.tasks) ? prd.tasks.length : 0,
+            }, { runId, reasonCode: "NO_TASKS" });
             return "No tasks found in .mario/prd.json. Run /mario-devx:new to seed tasks.";
           }
           if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
+            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.no-quality-gates", "Run blocked because quality gates are empty", {
+              qualityGatesCount: Array.isArray(prd.qualityGates) ? prd.qualityGates.length : 0,
+            }, { runId, reasonCode: "NO_QUALITY_GATES" });
             return "No quality gates configured in .mario/prd.json (qualityGates is empty). Add at least one command, then rerun /mario-devx:run 1.";
           }
 
