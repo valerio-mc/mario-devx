@@ -80,7 +80,7 @@ import {
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo, logWarning } from "./errors";
-import { logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete } from "./logging";
+import { logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, structuredLog } from "./logging";
 
 type ToolContext = {
   sessionID?: string;
@@ -826,6 +826,19 @@ const showToast = async (
   });
 };
 
+const logRunEvent = async (
+  ctx: PluginContext,
+  repoRoot: string,
+  level: "info" | "warn" | "error",
+  message: string,
+  extra?: Record<string, unknown>,
+): Promise<void> => {
+  await structuredLog(ctx, level, message, {
+    event: "run",
+    ...(extra ?? {}),
+  }, repoRoot);
+};
+
 const notifyControlSession = async (
   ctx: PluginContext,
   controlSessionId: string | undefined,
@@ -1101,6 +1114,11 @@ export const createTools = (ctx: PluginContext) => {
               ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
               updatedAt: nowIso(),
             });
+            await logRunEvent(ctx, repoRoot, "error", "Run blocked: preflight heartbeat failed", {
+              event: "run.blocked.heartbeat",
+              phase: "preflight",
+              lockPath: runLockPath(repoRoot),
+            });
             return `Failed to update run.lock heartbeat during run preflight (${runLockPath(repoRoot)}). Check disk space/permissions, then rerun /mario-devx:run 1.`;
           }
           const currentRun = await readRunState(repoRoot);
@@ -1163,6 +1181,10 @@ export const createTools = (ctx: PluginContext) => {
             ...(focus?.id ? { currentPI: focus.id } : {}),
             ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
             updatedAt: nowIso(),
+          });
+          await logRunEvent(ctx, repoRoot, "error", "Run blocked: invalid in_progress task state", {
+            event: "run.blocked.invalid-task-state",
+            inProgressTaskIds: inProgress.map((t) => t.id),
           });
           return judge.reason.concat(["", "See tasks[].lastAttempt.judge.nextActions in .mario/prd.json."]).join("\n");
         }
@@ -1228,6 +1250,13 @@ export const createTools = (ctx: PluginContext) => {
           let attempted = 0;
           let completed = 0;
           const runNotes: string[] = [];
+          await logRunEvent(ctx, repoRoot, "info", "Run started", {
+            event: "run.started",
+            maxItems,
+            uiVerifyEnabled,
+            uiVerifyRequired,
+            shouldRunUiVerify,
+          });
 
           while (attempted < maxItems) {
             const task = getNextPrdTask(prd);
@@ -1271,6 +1300,11 @@ export const createTools = (ctx: PluginContext) => {
                 status: "BLOCKED",
                 phase: "run",
                 currentPI: task.id,
+              });
+              await logRunEvent(ctx, repoRoot, "warn", `Run blocked: prerequisite task pending for ${task.id}`, {
+                event: "run.blocked.prerequisite",
+                taskId: task.id,
+                prerequisiteTaskId: prerequisiteTask.id,
               });
               await showToast(ctx, `Run blocked: ${task.id} requires ${prerequisiteTask.id}`, "warning");
               break;
@@ -1352,6 +1386,14 @@ export const createTools = (ctx: PluginContext) => {
                   phase: "run",
                   currentPI: task.id,
                 });
+                await logRunEvent(ctx, repoRoot, "error", `Run blocked: UI prerequisites missing for ${task.id}`, {
+                  event: "run.blocked.ui-prereq",
+                  taskId: task.id,
+                  uiVerifyRequired,
+                  cliOk,
+                  skillOk,
+                  autoInstallAttempted,
+                });
                 await showToast(ctx, `Run stopped: UI prerequisites missing on ${task.id}`, "warning");
                 break;
               }
@@ -1377,6 +1419,11 @@ export const createTools = (ctx: PluginContext) => {
                   status: "BLOCKED",
                   phase: "run",
                   currentPI: task.id,
+                });
+                await logRunEvent(ctx, repoRoot, "error", `Run blocked: UI verification failed during reconcile for ${task.id}`, {
+                  event: "run.blocked.ui-reconcile",
+                  taskId: task.id,
+                  uiNote: uiResult?.note ?? null,
                 });
                 await showToast(ctx, `Run stopped: UI verification failed on ${task.id}`, "warning");
                 break;
@@ -1433,11 +1480,20 @@ export const createTools = (ctx: PluginContext) => {
               if (isPass) {
                 completed += 1;
                 runNotes.push(`Reconciled ${task.id}: deterministic gates already passing; verifier PASS.`);
+                await logRunEvent(ctx, repoRoot, "info", `Run reconciled ${task.id}`, {
+                  event: "run.reconcile.pass",
+                  taskId: task.id,
+                });
                 await showToast(ctx, `Run: reconciled ${task.id} (already passing)`, "success");
                 continue;
               }
 
               logWarning("task", `${task.id} blocked during reconcile: ${judge.reason?.[0] ?? "No reason provided"}`);
+              await logRunEvent(ctx, repoRoot, "warn", `Run blocked: verifier failed during reconcile for ${task.id}`, {
+                event: "run.blocked.verifier-reconcile",
+                taskId: task.id,
+                reason: judge.reason?.[0] ?? "No reason provided",
+              });
               await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
               break;
             }
@@ -1476,7 +1532,7 @@ export const createTools = (ctx: PluginContext) => {
 
           await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
-           const blockForHeartbeatFailure = async (phase: string): Promise<void> => {
+            const blockForHeartbeatFailure = async (phase: string): Promise<void> => {
               const gates: PrdGatesAttempt = { ok: false, commands: [] };
               const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
               const judge: PrdJudgeAttempt = {
@@ -1495,12 +1551,18 @@ export const createTools = (ctx: PluginContext) => {
              prd = setPrdTaskStatus(prd, task.id, "blocked");
              prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
              await writePrdJson(repoRoot, prd);
-             await updateRunState(repoRoot, {
-               status: "BLOCKED",
-               phase: "run",
-               currentPI: task.id,
-             });
-           };
+              await updateRunState(repoRoot, {
+                status: "BLOCKED",
+                phase: "run",
+                currentPI: task.id,
+              });
+              await logRunEvent(ctx, repoRoot, "error", `Run blocked: lock heartbeat failed during ${phase}`, {
+                event: "run.blocked.heartbeat",
+                taskId: task.id,
+                phase,
+                lockPath: runLockPath(repoRoot),
+              });
+            };
 
             if (!(await heartbeatRunLock(repoRoot))) {
               await blockForHeartbeatFailure("pre-work-session-reset");
@@ -1564,6 +1626,10 @@ export const createTools = (ctx: PluginContext) => {
                   status: "BLOCKED",
                   phase: "run",
                   currentPI: task.id,
+                });
+                await logRunEvent(ctx, repoRoot, "error", `Run blocked: build timed out for ${task.id}`, {
+                  event: "run.blocked.build-timeout",
+                  taskId: task.id,
                 });
                 await showToast(ctx, `Run stopped: build timed out on ${task.id}`, "warning");
                 break;
@@ -1744,6 +1810,11 @@ export const createTools = (ctx: PluginContext) => {
               status: "BLOCKED",
               phase: "run",
               currentPI: task.id,
+            });
+            await logRunEvent(ctx, repoRoot, "error", `Run blocked on ${task.id}`, {
+              event: "run.blocked.fail-early",
+              taskId: task.id,
+              reason: reasonLines[0] ?? "Unknown failure",
             });
           };
 
@@ -1947,6 +2018,14 @@ export const createTools = (ctx: PluginContext) => {
             ...(context.sessionID ? { lastRunControlSessionId: context.sessionID } : {}),
             lastRunAt: nowIso(),
             lastRunResult: result,
+          });
+          await logRunEvent(ctx, repoRoot, completed === attempted ? "info" : "warn", "Run finished", {
+            event: "run.finished",
+            attempted,
+            completed,
+            status: completed === attempted ? "DONE" : "BLOCKED",
+            latestTaskId: latestTask?.id ?? null,
+            reason: judgeTopReason,
           });
 
           return result;

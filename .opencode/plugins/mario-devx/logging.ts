@@ -13,7 +13,20 @@ import { appendFile, stat, writeFile } from "fs/promises";
 import path from "path";
 import { ensureDir } from "./fs";
 import { marioStateDir } from "./paths";
-import type { PluginContext } from "./types-extended";
+type LogContext = {
+  client?: {
+    app?: {
+      log?: (opts: {
+        body: {
+          service: string;
+          level: LogLevel;
+          message: string;
+          extra: Record<string, unknown>;
+        };
+      }) => Promise<void>;
+    };
+  };
+};
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -54,7 +67,7 @@ const appendCentralLog = async (repoRoot: string, entry: LogEntry): Promise<void
  * Use for user-facing operational events
  */
 export const structuredLog = async (
-  ctx: PluginContext,
+  ctx: LogContext,
   level: LogLevel,
   message: string,
   extra?: Record<string, unknown>,
@@ -94,7 +107,7 @@ export const structuredLog = async (
  * Log task completion for user visibility
  */
 export const logTaskComplete = async (
-  ctx: PluginContext,
+  ctx: LogContext,
   repoRoot: string,
   taskId: string,
   completed: number,
@@ -113,7 +126,7 @@ export const logTaskComplete = async (
  * Log task blocked for user visibility
  */
 export const logTaskBlocked = async (
-  ctx: PluginContext,
+  ctx: LogContext,
   repoRoot: string,
   taskId: string,
   reason: string
@@ -130,7 +143,7 @@ export const logTaskBlocked = async (
  * Log PRD wizard completion
  */
 export const logPrdComplete = async (
-  ctx: PluginContext,
+  ctx: LogContext,
   repoRoot: string,
   taskCount: number
 ): Promise<void> => {
@@ -144,7 +157,7 @@ export const logPrdComplete = async (
  * Log replanning results
  */
 export const logReplanComplete = async (
-  ctx: PluginContext,
+  ctx: LogContext,
   repoRoot: string,
   itemsReplan: number,
   tasksGenerated: number
