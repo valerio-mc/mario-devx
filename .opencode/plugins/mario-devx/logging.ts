@@ -33,12 +33,79 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 export interface LogEntry {
   service: string;
   level: LogLevel;
+  event: string;
   message: string;
+  runId?: string;
+  taskId?: string;
+  iteration?: number;
+  reasonCode?: string;
   extra?: Record<string, unknown>;
 }
 
+type LogMeta = {
+  event?: string;
+  runId?: string;
+  taskId?: string;
+  iteration?: number;
+  reasonCode?: string;
+};
+
+export type LogEventPayload = {
+  level: LogLevel;
+  event: string;
+  message: string;
+  runId?: string;
+  taskId?: string;
+  iteration?: number;
+  reasonCode?: string;
+  extra?: Record<string, unknown>;
+};
+
 const LOG_FILE = "mario-devx.log";
 const MAX_LOG_BYTES = 50 * 1024 * 1024;
+
+const REDACT_PATTERNS: RegExp[] = [
+  /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
+  /\bsk-[A-Za-z0-9]{10,}\b/g,
+  /\bghp_[A-Za-z0-9]{20,}\b/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /(AWS_SECRET_ACCESS_KEY\s*[=:]\s*)([^\s"']+)/gi,
+  /(OPENAI_API_KEY\s*[=:]\s*)([^\s"']+)/gi,
+  /(ANTHROPIC_API_KEY\s*[=:]\s*)([^\s"']+)/gi,
+  /(Authorization\s*:\s*Bearer\s+)([^\s"']+)/gi,
+];
+
+export const redactForLog = (value: string): string => {
+  let next = value;
+  for (const pattern of REDACT_PATTERNS) {
+    next = next.replace(pattern, (_full, prefix?: string) => {
+      if (typeof prefix === "string") {
+        return `${prefix}[REDACTED]`;
+      }
+      return "[REDACTED]";
+    });
+  }
+  return next;
+};
+
+const sanitizeExtra = (extra?: Record<string, unknown>): Record<string, unknown> => {
+  if (!extra) return {};
+  try {
+    const normalized = JSON.parse(JSON.stringify(extra, (_key, value) => {
+      if (typeof value === "string") {
+        return redactForLog(value);
+      }
+      return value;
+    }));
+    if (normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
+      return normalized as Record<string, unknown>;
+    }
+    return { value: normalized };
+  } catch {
+    return { _loggingWarning: "extra was not serializable" };
+  }
+};
 
 const centralLogPath = (repoRoot: string): string => path.join(marioStateDir(repoRoot), LOG_FILE);
 
@@ -72,12 +139,20 @@ export const structuredLog = async (
   message: string,
   extra?: Record<string, unknown>,
   repoRoot?: string,
+  meta?: LogMeta,
 ): Promise<void> => {
+  const normalizedExtra = sanitizeExtra(extra);
+  const eventFromExtra = typeof normalizedExtra.event === "string" ? String(normalizedExtra.event) : undefined;
   const entry: LogEntry = {
     service: "mario-devx",
     level,
-    message,
-    extra: extra ?? {},
+    event: meta?.event ?? eventFromExtra ?? "general",
+    message: redactForLog(message),
+    ...(meta?.runId ? { runId: meta.runId } : {}),
+    ...(meta?.taskId ? { taskId: meta.taskId } : {}),
+    ...(typeof meta?.iteration === "number" ? { iteration: meta.iteration } : {}),
+    ...(meta?.reasonCode ? { reasonCode: meta.reasonCode } : {}),
+    extra: normalizedExtra,
   };
 
   if (repoRoot) {
@@ -119,7 +194,10 @@ export const logTaskComplete = async (
     completed,
     total,
     status: "success",
-  }, repoRoot);
+  }, repoRoot, {
+    event: "task.completed",
+    taskId,
+  });
 };
 
 /**
@@ -136,7 +214,10 @@ export const logTaskBlocked = async (
     taskId,
     reason,
     status: "blocked",
-  }, repoRoot);
+  }, repoRoot, {
+    event: "task.blocked",
+    taskId,
+  });
 };
 
 /**
@@ -150,7 +231,9 @@ export const logPrdComplete = async (
   await structuredLog(ctx, "info", "PRD wizard completed", {
     event: "prd-complete",
     taskCount,
-  }, repoRoot);
+  }, repoRoot, {
+    event: "prd.complete",
+  });
 };
 
 /**
@@ -166,5 +249,34 @@ export const logReplanComplete = async (
     event: "replan-complete",
     itemsReplan,
     tasksGenerated,
-  }, repoRoot);
+  }, repoRoot, {
+    event: "replan.complete",
+  });
+};
+
+export const createRunId = (): string => {
+  const iso = new Date().toISOString().replace(/[-:.]/g, "");
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${iso}-${rand}`;
+};
+
+export const logEvent = async (
+  ctx: LogContext,
+  repoRoot: string,
+  payload: LogEventPayload,
+): Promise<void> => {
+  await structuredLog(
+    ctx,
+    payload.level,
+    payload.message,
+    payload.extra,
+    repoRoot,
+    {
+      event: payload.event,
+      ...(payload.runId ? { runId: payload.runId } : {}),
+      ...(payload.taskId ? { taskId: payload.taskId } : {}),
+      ...(typeof payload.iteration === "number" ? { iteration: payload.iteration } : {}),
+      ...(payload.reasonCode ? { reasonCode: payload.reasonCode } : {}),
+    },
+  );
 };
