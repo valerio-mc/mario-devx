@@ -1,5 +1,6 @@
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
+import { redactForLog } from "./logging";
 
 export type GateCommand = { name: string; command: string };
 
@@ -9,6 +10,8 @@ export type GateRunItem = {
   ok: boolean;
   exitCode: number;
   durationMs: number;
+  stdout?: string;
+  stderr?: string;
 };
 
 export const extractScriptFromCommand = (command: string): string | null => {
@@ -187,12 +190,16 @@ export const runGateCommands = async (
       : cmd;
     const result = await $`sh -c ${wrapped}`.nothrow();
     const ok = result.exitCode === 0;
+    const stdout = typeof result.stdout === "string" ? redactForLog(result.stdout) : "";
+    const stderr = typeof result.stderr === "string" ? redactForLog(result.stderr) : "";
     results.push({
       name: gate.name,
       command: cmd,
       ok,
       exitCode: result.exitCode,
       durationMs: Date.now() - started,
+      ...(!ok && stdout.length > 0 ? { stdout } : {}),
+      ...(!ok && stderr.length > 0 ? { stderr } : {}),
     });
     if (!ok) {
       return { ok: false, failed: { command: cmd, exitCode: result.exitCode }, results };

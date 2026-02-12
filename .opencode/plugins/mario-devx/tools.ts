@@ -9,6 +9,7 @@ import { ensureMario, bumpIteration, readWorkSessionState, readRunState, writeRu
 import { getRepoRoot } from "./paths";
 import {
   ensureT0002QualityBootstrap,
+  type GateRunItem,
   extractScriptFromCommand,
   hasNodeModules,
   missingPackageScriptForCommand,
@@ -1257,6 +1258,33 @@ export const createTools = (ctx: PluginContext) => {
           let attempted = 0;
           let completed = 0;
           const runNotes: string[] = [];
+          const logGateRunResults = async (
+            phase: string,
+            taskId: string,
+            gateResults: GateRunItem[],
+          ): Promise<void> => {
+            for (const gate of gateResults) {
+              await logRunEvent(
+                ctx,
+                repoRoot,
+                gate.ok ? "info" : "warn",
+                gate.ok ? "run.gate.pass" : "run.gate.fail",
+                `${phase} gate ${gate.ok ? "PASS" : "FAIL"}: ${gate.command}`,
+                {
+                  phase,
+                  taskId,
+                  command: gate.command,
+                  exitCode: gate.exitCode,
+                  durationMs: gate.durationMs,
+                  ...(gate.ok ? {} : {
+                    stdout: gate.stdout ?? "",
+                    stderr: gate.stderr ?? "",
+                  }),
+                },
+                { runId, taskId },
+              );
+            }
+          };
           await logRunEvent(ctx, repoRoot, "info", "run.started", "Run started", {
             maxItems,
             uiVerifyEnabled,
@@ -1331,6 +1359,7 @@ export const createTools = (ctx: PluginContext) => {
             logInfo("task", `Starting ${task.id}: ${task.title}`);
 
             const reconcileGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+            await logGateRunResults("reconcile", task.id, reconcileGateResult.results);
             if (reconcileGateResult.ok) {
               const uiResult = shouldRunUiVerify
                 ? await runUiVerification({
@@ -1662,6 +1691,7 @@ export const createTools = (ctx: PluginContext) => {
               }
 
               let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+              await logGateRunResults("gate-check", task.id, gateResult.results);
 
               const failSigFromGate = (): string => {
                 const failed = gateResult.failed;
@@ -1709,6 +1739,7 @@ export const createTools = (ctx: PluginContext) => {
                     await showToast(ctx, `Run: default scaffold failed on ${task.id}, falling back to agent repair`, "warning");
                   }
                   gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+                  await logGateRunResults("gate-check-scaffold", task.id, gateResult.results);
                   if (gateResult.ok) {
                     break;
                   }
@@ -1749,6 +1780,7 @@ export const createTools = (ctx: PluginContext) => {
 
                 repairAttempts += 1;
                 gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+                await logGateRunResults("gate-check-repair", task.id, gateResult.results);
               }
 
               const uiResult = gateResult.ok && shouldRunUiVerify
@@ -1820,6 +1852,7 @@ export const createTools = (ctx: PluginContext) => {
             const settleIdle = await waitForSessionIdleStable(ctx, ws.sessionId, 15000, 2);
             if (settleIdle) {
               const reconciledGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+              await logGateRunResults("gate-settle", task.id, reconciledGateResult.results);
               if (reconciledGateResult.ok) {
                 gateResult = reconciledGateResult;
               }
