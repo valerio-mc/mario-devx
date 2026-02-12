@@ -81,7 +81,7 @@ import {
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo, logWarning } from "./errors";
-import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete } from "./logging";
+import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
 
 type ToolContext = {
   sessionID?: string;
@@ -848,6 +848,22 @@ const logRunEvent = async (
   });
 };
 
+const logToolEvent = async (
+  ctx: PluginContext,
+  repoRoot: string,
+  level: "info" | "warn" | "error",
+  event: string,
+  message: string,
+  extra?: Record<string, unknown>,
+): Promise<void> => {
+  await logEvent(ctx, repoRoot, {
+    level,
+    event,
+    message,
+    extra,
+  });
+};
+
 const notifyControlSession = async (
   ctx: PluginContext,
   controlSessionId: string | undefined,
@@ -881,15 +897,21 @@ export const createTools = (ctx: PluginContext) => {
       async execute(args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
         if (!notInWork.ok) {
+          await logToolEvent(ctx, repoRoot, "warn", "new.blocked.work-session", "PRD interview blocked in work session");
           return notInWork.message;
         }
 
         await ensureMario(repoRoot, false);
-        const runId = createRunId();
         let prd = await ensurePrd(repoRoot);
         const rawInput = (args.idea ?? "").trim();
+        await logToolEvent(ctx, repoRoot, "info", "new.start", "PRD interview step started", {
+          wizardStatus: prd.wizard.status,
+          hasInput: rawInput.length > 0,
+          inputLength: rawInput.length,
+        });
 
         if (prd.wizard.status === "completed") {
+          await logToolEvent(ctx, repoRoot, "info", "new.noop.completed", "PRD already completed");
           return [
             "PRD wizard: completed.",
             `Edit: ${path.join(repoRoot, ".mario", "prd.json")}`,
@@ -934,6 +956,7 @@ export const createTools = (ctx: PluginContext) => {
 
         const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
         if (!hasAnswer && cachedQuestion) {
+          await logToolEvent(ctx, repoRoot, "info", "new.question.cached", "Returning cached interview question");
           return [
             "PRD interview",
             cachedQuestion,
@@ -956,6 +979,9 @@ export const createTools = (ctx: PluginContext) => {
 
         if (parsedInterview.error) {
           logError("interview", `Parsing error: ${parsedInterview.error}`);
+          await logToolEvent(ctx, repoRoot, "error", "new.interview.parse-error", "Failed to parse interview turn", {
+            error: parsedInterview.error,
+          });
 
           const repairResponse = await ctx.client.session.prompt({
             path: { id: ws.sessionId },
@@ -968,9 +994,13 @@ export const createTools = (ctx: PluginContext) => {
 
           if (!repairedInterview.error) {
             logInfo("interview", "Recovered from malformed interview response after one retry");
+            await logToolEvent(ctx, repoRoot, "info", "new.interview.recovered", "Recovered malformed interview response");
             parsedInterview = repairedInterview;
           } else {
             logError("interview", `Retry parsing error: ${repairedInterview.error}`);
+            await logToolEvent(ctx, repoRoot, "error", "new.interview.parse-error-retry", "Interview parse retry failed", {
+              error: repairedInterview.error,
+            });
             const fallbackQuestion = repairedInterview.question || parsedInterview.question || "In one sentence, what are we building?";
             return [
               "PRD interview",
@@ -994,6 +1024,9 @@ export const createTools = (ctx: PluginContext) => {
           let compiled = parseCompileInterviewResponse(compileText);
           if (compiled.error) {
             logError("interview", `Compile parse error: ${compiled.error}`);
+            await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error", "Failed to parse compiled interview envelope", {
+              error: compiled.error,
+            });
             const repairResponse = await ctx.client.session.prompt({
               path: { id: ws.sessionId },
               body: {
@@ -1004,6 +1037,9 @@ export const createTools = (ctx: PluginContext) => {
             compiled = parseCompileInterviewResponse(repairedText);
             if (compiled.error) {
               logError("interview", `Compile retry parse error: ${compiled.error}`);
+              await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error-retry", "Compile parse retry failed", {
+                error: compiled.error,
+              });
             }
           }
 
@@ -1051,6 +1087,9 @@ export const createTools = (ctx: PluginContext) => {
             },
           };
           await writePrdJson(repoRoot, prd);
+          await logToolEvent(ctx, repoRoot, "info", "new.question", "PRD follow-up question generated", {
+            question: finalQuestion,
+          });
           return [
             `PRD interview (0/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
             finalQuestion,
@@ -1076,6 +1115,9 @@ export const createTools = (ctx: PluginContext) => {
         prd = await seedTasksFromPrd(repoRoot, prd, ctx);
         await writePrdJson(repoRoot, prd);
         await logPrdComplete(ctx, repoRoot, prd.tasks.length);
+        await logToolEvent(ctx, repoRoot, "info", "new.complete", "PRD interview completed and tasks seeded", {
+          tasks: prd.tasks.length,
+        });
         return [
           "PRD wizard: completed.",
           `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
@@ -1097,6 +1139,7 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         await ensureMario(repoRoot, false);
+        const runId = createRunId();
 
         const previousRun = await readRunState(repoRoot);
         if (
@@ -2073,12 +2116,18 @@ export const createTools = (ctx: PluginContext) => {
       async execute(args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
         if (!notInWork.ok) {
+          await logToolEvent(ctx, repoRoot, "warn", "add.blocked.work-session", "Feature add blocked in work session");
           return notInWork.message;
         }
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
         const feature = (args.feature ?? "").trim();
+        await logToolEvent(ctx, repoRoot, "info", "add.start", "Feature decomposition started", {
+          featureLength: feature.length,
+          runIteration: (await readRunState(repoRoot)).iteration,
+        });
         if (!feature) {
+          await logToolEvent(ctx, repoRoot, "warn", "add.invalid.empty", "Feature add called with empty input");
           return "Feature request is empty. Provide a short description.";
         }
 
@@ -2138,6 +2187,9 @@ export const createTools = (ctx: PluginContext) => {
         if (!jsonMatch) {
           logError("feature-interview", "No <FEATURE_JSON> tags found in LLM response");
           logError("feature-interview", `Raw response: ${responseText.substring(0, 500)}`);
+          await logToolEvent(ctx, repoRoot, "error", "add.parse.missing-tags", "Feature interview response missing <FEATURE_JSON>", {
+            rawResponse: redactForLog(responseText),
+          });
           return "Error: Could not parse feature breakdown. The LLM response was malformed. Please try again with more detail.";
         }
         
@@ -2155,11 +2207,18 @@ export const createTools = (ctx: PluginContext) => {
         } catch (err) {
           logError("feature-interview", `JSON parse error: ${err instanceof Error ? err.message : String(err)}`);
           logError("feature-interview", `Raw JSON: ${jsonMatch[1].trim().substring(0, 500)}`);
+          await logToolEvent(ctx, repoRoot, "error", "add.parse.invalid-json", "Feature interview JSON parse failed", {
+            error: err instanceof Error ? err.message : String(err),
+            rawJson: redactForLog(jsonMatch[1].trim()),
+          });
           return `Error: Invalid JSON in feature response: ${err instanceof Error ? err.message : String(err)}. Please try again.`;
         }
         
         // If not ready, ask follow-up question
         if (!envelope.ready || envelope.next_question) {
+          await logToolEvent(ctx, repoRoot, "info", "add.followup", "Feature interview requested follow-up", {
+            nextQuestion: envelope.next_question || "Please provide more detail about this feature.",
+          });
           return [
             "Feature interview",
             envelope.next_question || "Please provide more detail about this feature.",
@@ -2213,6 +2272,12 @@ export const createTools = (ctx: PluginContext) => {
           },
         };
         await writePrdJson(repoRoot, prd);
+        await logToolEvent(ctx, repoRoot, "info", "add.complete", "Feature decomposed into tasks", {
+          backlogId,
+          newTasks: newTasks.length,
+          taskIds: newTasks.map((t) => t.id),
+          runIteration: runState.iteration,
+        });
         
         return [
           `Feature added: ${backlogId}`,
@@ -2229,13 +2294,18 @@ export const createTools = (ctx: PluginContext) => {
       async execute(_args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
         if (!notInWork.ok) {
+          await logToolEvent(ctx, repoRoot, "warn", "replan.blocked.work-session", "Replan blocked in work session");
           return notInWork.message;
         }
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
         const replanCandidates = prd.backlog.featureRequests.filter((f) => f.status === "open" || f.status === "planned");
+        await logToolEvent(ctx, repoRoot, "info", "replan.start", "Replan started", {
+          candidates: replanCandidates.length,
+        });
         
         if (replanCandidates.length === 0) {
+          await logToolEvent(ctx, repoRoot, "info", "replan.noop", "No backlog items to replan");
           return "No backlog items to replan.";
         }
 
@@ -2348,6 +2418,10 @@ export const createTools = (ctx: PluginContext) => {
             logInfo("replan", `LLM generated ${generated.length} tasks from ${parsed.breakdowns?.length || 0} backlog items`);
           } catch (err) {
             logError("replan", `Failed to parse LLM replan response: ${err instanceof Error ? err.message : String(err)}`);
+            await logToolEvent(ctx, repoRoot, "error", "replan.parse.invalid-json", "Failed to parse REPLAN_JSON", {
+              error: err instanceof Error ? err.message : String(err),
+              rawResponse: redactForLog(replanText),
+            });
             // Fall through to fallback
           }
         }
@@ -2387,6 +2461,10 @@ export const createTools = (ctx: PluginContext) => {
         };
         await writePrdJson(repoRoot, prd);
         await logReplanComplete(ctx, repoRoot, replanCandidates.length, generated.length);
+        await logToolEvent(ctx, repoRoot, "info", "replan.complete", "Replan completed", {
+          backlogItems: replanCandidates.length,
+          generatedTasks: generated.length,
+        });
         
         return [
           `Replan complete.`,
@@ -2402,6 +2480,7 @@ export const createTools = (ctx: PluginContext) => {
       args: {},
       async execute(_args, context: ToolContext) {
         await ensureMario(repoRoot, false);
+        await logToolEvent(ctx, repoRoot, "info", "status.start", "Status requested");
         const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const run = await readRunState(repoRoot);
         const prd = await ensurePrd(repoRoot);
@@ -2427,6 +2506,11 @@ export const createTools = (ctx: PluginContext) => {
           context.sessionID,
           `mario-devx status: work session ${ws.sessionId}.`,
         );
+        await logToolEvent(ctx, repoRoot, "info", "status.complete", "Status computed", {
+          runStatus: run.status,
+          currentPI: run.currentPI ?? null,
+          focusTaskId: focusTask?.id ?? null,
+        });
 
         return [
           `Iteration: ${run.iteration}`,
@@ -2451,7 +2535,12 @@ export const createTools = (ctx: PluginContext) => {
       args: {},
       async execute() {
         await ensureMario(repoRoot, false);
-        return runDoctor(ctx, repoRoot);
+        await logToolEvent(ctx, repoRoot, "info", "doctor.start", "Doctor check started");
+        const result = await runDoctor(ctx, repoRoot);
+        await logToolEvent(ctx, repoRoot, "info", "doctor.complete", "Doctor check completed", {
+          resultPreview: redactForLog(result),
+        });
+        return result;
       },
     }),
 
