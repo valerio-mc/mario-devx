@@ -80,7 +80,7 @@ import {
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo, logWarning } from "./errors";
-import { logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, structuredLog } from "./logging";
+import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete } from "./logging";
 
 type ToolContext = {
   sessionID?: string;
@@ -830,13 +830,21 @@ const logRunEvent = async (
   ctx: PluginContext,
   repoRoot: string,
   level: "info" | "warn" | "error",
+  event: string,
   message: string,
   extra?: Record<string, unknown>,
+  runCtx?: { runId?: string; taskId?: string; iteration?: number; reasonCode?: string },
 ): Promise<void> => {
-  await structuredLog(ctx, level, message, {
-    event: "run",
-    ...(extra ?? {}),
-  }, repoRoot);
+  await logEvent(ctx, repoRoot, {
+    level,
+    event,
+    message,
+    ...(runCtx?.runId ? { runId: runCtx.runId } : {}),
+    ...(runCtx?.taskId ? { taskId: runCtx.taskId } : {}),
+    ...(typeof runCtx?.iteration === "number" ? { iteration: runCtx.iteration } : {}),
+    ...(runCtx?.reasonCode ? { reasonCode: runCtx.reasonCode } : {}),
+    extra,
+  });
 };
 
 const notifyControlSession = async (
@@ -876,6 +884,7 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         await ensureMario(repoRoot, false);
+        const runId = createRunId();
         let prd = await ensurePrd(repoRoot);
         const rawInput = (args.idea ?? "").trim();
 
@@ -1114,11 +1123,10 @@ export const createTools = (ctx: PluginContext) => {
               ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
               updatedAt: nowIso(),
             });
-            await logRunEvent(ctx, repoRoot, "error", "Run blocked: preflight heartbeat failed", {
-              event: "run.blocked.heartbeat",
+            await logRunEvent(ctx, repoRoot, "error", "run.blocked.heartbeat", "Run blocked: preflight heartbeat failed", {
               phase: "preflight",
               lockPath: runLockPath(repoRoot),
-            });
+            }, { runId, reasonCode: "HEARTBEAT_FAILED" });
             return `Failed to update run.lock heartbeat during run preflight (${runLockPath(repoRoot)}). Check disk space/permissions, then rerun /mario-devx:run 1.`;
           }
           const currentRun = await readRunState(repoRoot);
@@ -1182,10 +1190,9 @@ export const createTools = (ctx: PluginContext) => {
             ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
             updatedAt: nowIso(),
           });
-          await logRunEvent(ctx, repoRoot, "error", "Run blocked: invalid in_progress task state", {
-            event: "run.blocked.invalid-task-state",
+          await logRunEvent(ctx, repoRoot, "error", "run.blocked.invalid-task-state", "Run blocked: invalid in_progress task state", {
             inProgressTaskIds: inProgress.map((t) => t.id),
-          });
+          }, { runId, reasonCode: "INVALID_TASK_STATE" });
           return judge.reason.concat(["", "See tasks[].lastAttempt.judge.nextActions in .mario/prd.json."]).join("\n");
         }
 
@@ -1250,13 +1257,12 @@ export const createTools = (ctx: PluginContext) => {
           let attempted = 0;
           let completed = 0;
           const runNotes: string[] = [];
-          await logRunEvent(ctx, repoRoot, "info", "Run started", {
-            event: "run.started",
+          await logRunEvent(ctx, repoRoot, "info", "run.started", "Run started", {
             maxItems,
             uiVerifyEnabled,
             uiVerifyRequired,
             shouldRunUiVerify,
-          });
+          }, { runId });
 
           while (attempted < maxItems) {
             const task = getNextPrdTask(prd);
@@ -1301,11 +1307,10 @@ export const createTools = (ctx: PluginContext) => {
                 phase: "run",
                 currentPI: task.id,
               });
-              await logRunEvent(ctx, repoRoot, "warn", `Run blocked: prerequisite task pending for ${task.id}`, {
-                event: "run.blocked.prerequisite",
+              await logRunEvent(ctx, repoRoot, "warn", "run.blocked.prerequisite", `Run blocked: prerequisite task pending for ${task.id}`, {
                 taskId: task.id,
                 prerequisiteTaskId: prerequisiteTask.id,
-              });
+              }, { runId, taskId: task.id, reasonCode: "PREREQ_PENDING" });
               await showToast(ctx, `Run blocked: ${task.id} requires ${prerequisiteTask.id}`, "warning");
               break;
             }
@@ -1386,14 +1391,13 @@ export const createTools = (ctx: PluginContext) => {
                   phase: "run",
                   currentPI: task.id,
                 });
-                await logRunEvent(ctx, repoRoot, "error", `Run blocked: UI prerequisites missing for ${task.id}`, {
-                  event: "run.blocked.ui-prereq",
+                await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-prereq", `Run blocked: UI prerequisites missing for ${task.id}`, {
                   taskId: task.id,
                   uiVerifyRequired,
                   cliOk,
                   skillOk,
                   autoInstallAttempted,
-                });
+                }, { runId, taskId: task.id, reasonCode: "UI_PREREQ_MISSING" });
                 await showToast(ctx, `Run stopped: UI prerequisites missing on ${task.id}`, "warning");
                 break;
               }
@@ -1420,11 +1424,10 @@ export const createTools = (ctx: PluginContext) => {
                   phase: "run",
                   currentPI: task.id,
                 });
-                await logRunEvent(ctx, repoRoot, "error", `Run blocked: UI verification failed during reconcile for ${task.id}`, {
-                  event: "run.blocked.ui-reconcile",
+                await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-reconcile", `Run blocked: UI verification failed during reconcile for ${task.id}`, {
                   taskId: task.id,
                   uiNote: uiResult?.note ?? null,
-                });
+                }, { runId, taskId: task.id, reasonCode: "UI_VERIFY_FAILED" });
                 await showToast(ctx, `Run stopped: UI verification failed on ${task.id}`, "warning");
                 break;
               }
@@ -1480,20 +1483,18 @@ export const createTools = (ctx: PluginContext) => {
               if (isPass) {
                 completed += 1;
                 runNotes.push(`Reconciled ${task.id}: deterministic gates already passing; verifier PASS.`);
-                await logRunEvent(ctx, repoRoot, "info", `Run reconciled ${task.id}`, {
-                  event: "run.reconcile.pass",
+                await logRunEvent(ctx, repoRoot, "info", "run.reconcile.pass", `Run reconciled ${task.id}`, {
                   taskId: task.id,
-                });
+                }, { runId, taskId: task.id });
                 await showToast(ctx, `Run: reconciled ${task.id} (already passing)`, "success");
                 continue;
               }
 
               logWarning("task", `${task.id} blocked during reconcile: ${judge.reason?.[0] ?? "No reason provided"}`);
-              await logRunEvent(ctx, repoRoot, "warn", `Run blocked: verifier failed during reconcile for ${task.id}`, {
-                event: "run.blocked.verifier-reconcile",
+              await logRunEvent(ctx, repoRoot, "warn", "run.blocked.verifier-reconcile", `Run blocked: verifier failed during reconcile for ${task.id}`, {
                 taskId: task.id,
                 reason: judge.reason?.[0] ?? "No reason provided",
-              });
+              }, { runId, taskId: task.id, reasonCode: "VERIFIER_FAILED" });
               await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
               break;
             }
@@ -1556,12 +1557,11 @@ export const createTools = (ctx: PluginContext) => {
                 phase: "run",
                 currentPI: task.id,
               });
-              await logRunEvent(ctx, repoRoot, "error", `Run blocked: lock heartbeat failed during ${phase}`, {
-                event: "run.blocked.heartbeat",
+              await logRunEvent(ctx, repoRoot, "error", "run.blocked.heartbeat", `Run blocked: lock heartbeat failed during ${phase}`, {
                 taskId: task.id,
                 phase,
                 lockPath: runLockPath(repoRoot),
-              });
+              }, { runId, taskId: task.id, reasonCode: "HEARTBEAT_FAILED" });
             };
 
             if (!(await heartbeatRunLock(repoRoot))) {
@@ -1627,10 +1627,9 @@ export const createTools = (ctx: PluginContext) => {
                   phase: "run",
                   currentPI: task.id,
                 });
-                await logRunEvent(ctx, repoRoot, "error", `Run blocked: build timed out for ${task.id}`, {
-                  event: "run.blocked.build-timeout",
+                await logRunEvent(ctx, repoRoot, "error", "run.blocked.build-timeout", `Run blocked: build timed out for ${task.id}`, {
                   taskId: task.id,
-                });
+                }, { runId, taskId: task.id, reasonCode: "BUILD_TIMEOUT" });
                 await showToast(ctx, `Run stopped: build timed out on ${task.id}`, "warning");
                 break;
               }
@@ -1811,11 +1810,10 @@ export const createTools = (ctx: PluginContext) => {
               phase: "run",
               currentPI: task.id,
             });
-            await logRunEvent(ctx, repoRoot, "error", `Run blocked on ${task.id}`, {
-              event: "run.blocked.fail-early",
+            await logRunEvent(ctx, repoRoot, "error", "run.blocked.fail-early", `Run blocked on ${task.id}`, {
               taskId: task.id,
               reason: reasonLines[0] ?? "Unknown failure",
-            });
+            }, { runId, taskId: task.id, reasonCode: "TASK_FAIL_EARLY" });
           };
 
           if (!gateResult.ok) {
@@ -2019,14 +2017,13 @@ export const createTools = (ctx: PluginContext) => {
             lastRunAt: nowIso(),
             lastRunResult: result,
           });
-          await logRunEvent(ctx, repoRoot, completed === attempted ? "info" : "warn", "Run finished", {
-            event: "run.finished",
+          await logRunEvent(ctx, repoRoot, completed === attempted ? "info" : "warn", "run.finished", "Run finished", {
             attempted,
             completed,
             status: completed === attempted ? "DONE" : "BLOCKED",
             latestTaskId: latestTask?.id ?? null,
             reason: judgeTopReason,
-          });
+          }, { runId, ...(latestTask?.id ? { taskId: latestTask.id } : {}) });
 
           return result;
         } finally {
