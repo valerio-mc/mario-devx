@@ -1899,7 +1899,9 @@ export const createTools = (ctx: PluginContext) => {
              break;
            }
             } finally {
-              if ((await readRunState(repoRoot)).status === "DOING") {
+              const runStateNow = await readRunState(repoRoot);
+              const taskStatusNow = (prd.tasks ?? []).find((t) => t.id === task.id)?.status;
+              if (runStateNow.status === "DOING" && taskStatusNow !== "completed") {
                 await updateRunState(repoRoot, { status: "BLOCKED", phase: "run" });
               }
             }
