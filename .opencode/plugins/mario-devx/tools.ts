@@ -56,7 +56,6 @@ import {
   resetWorkSession,
   setWorkSessionTitle,
   updateRunState,
-  waitForSessionIdle,
   waitForSessionIdleStable,
 } from "./runner";
 import { runDoctor } from "./doctor";
@@ -1541,7 +1540,7 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-              const idle = await waitForSessionIdle(ctx, ws.sessionId, 20 * 60 * 1000);
+              const idle = await waitForSessionIdleStable(ctx, ws.sessionId, 20 * 60 * 1000);
               if (!idle) {
                 const gates: PrdGatesAttempt = { ok: false, commands: [] };
                 const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
@@ -1678,7 +1677,7 @@ export const createTools = (ctx: PluginContext) => {
                   break;
                 }
 
-                const repairIdle = await waitForSessionIdle(ctx, ws.sessionId, 15 * 60 * 1000);
+                const repairIdle = await waitForSessionIdleStable(ctx, ws.sessionId, 15 * 60 * 1000);
                 if (!repairIdle) {
                   break;
                 }
@@ -1747,6 +1746,16 @@ export const createTools = (ctx: PluginContext) => {
               currentPI: task.id,
             });
           };
+
+          if (!gateResult.ok) {
+            const settleIdle = await waitForSessionIdleStable(ctx, ws.sessionId, 15000, 2);
+            if (settleIdle) {
+              const reconciledGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+              if (reconciledGateResult.ok) {
+                gateResult = reconciledGateResult;
+              }
+            }
+          }
 
           if (!gateResult.ok) {
             const failed = gateResult.failed
