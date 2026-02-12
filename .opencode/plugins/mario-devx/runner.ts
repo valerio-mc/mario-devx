@@ -22,6 +22,30 @@ export const waitForSessionIdle = async (
   return false;
 };
 
+export const waitForSessionIdleStable = async (
+  ctx: any,
+  sessionId: string,
+  timeoutMs: number,
+  consecutiveIdleChecks = 2,
+): Promise<boolean> => {
+  const start = Date.now();
+  let idleStreak = 0;
+  while (Date.now() - start < timeoutMs) {
+    const statuses = await ctx.client.session.status();
+    const status = (statuses as Record<string, { type?: string }>)[sessionId];
+    if (!status || status.type === "idle") {
+      idleStreak += 1;
+      if (idleStreak >= Math.max(1, consecutiveIdleChecks)) {
+        return true;
+      }
+    } else {
+      idleStreak = 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return false;
+};
+
 const getBaselineText = (repoRoot: string): string => {
   return [
     "# mario-devx work session",
