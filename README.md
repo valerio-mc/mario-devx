@@ -76,6 +76,11 @@ mkdir my-project && cd my-project && git init
 
 Use the same install command shown in **30-second quickstart**.
 
+Re-running the installer is safe for upgrades:
+- It overwrites `.opencode/plugins/mario-devx/` and `.opencode/plugins/mario-devx.ts` with the latest version.
+- It merges dependencies into `.opencode/package.json` (does not clobber existing entries).
+- It does **not** reset your `.mario/` state, so PRD/tasks progress is preserved.
+
 3) **Start OpenCode**
 
 ```bash
