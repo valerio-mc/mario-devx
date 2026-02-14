@@ -19,7 +19,7 @@ export const TIMEOUTS = {
   // Stale lock timeout (12 hours)
   STALE_LOCK_TIMEOUT_MS: 12 * 60 * 60 * 1000,
   
-  // UI verification wait time (15 seconds)
+  // UI verification wait time (60 seconds)
   UI_VERIFY_WAIT_MS: 60000,
 } as const;
 
