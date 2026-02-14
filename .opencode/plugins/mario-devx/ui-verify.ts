@@ -246,28 +246,80 @@ export const runUiVerification = async (opts: {
   devCmd: string;
   url: string;
   log?: UiLog;
+  waitMs?: number;
 }): Promise<{ ok: boolean; note?: string }> => {
-  const { ctx, devCmd, url, log } = opts;
+  const { ctx, devCmd, url, log, waitMs } = opts;
   if (!ctx.$) {
     return { ok: false, note: "No shell available for UI verification." };
   }
 
-  const cmd = [
-    `agent-browser open --cmd=${JSON.stringify(devCmd)} --url=${JSON.stringify(url)} --wait=15000`,
-    "agent-browser snapshot",
-    "agent-browser console --limit=50",
-    "agent-browser errors",
-    "agent-browser close",
-  ].join(" && ");
-
-  const result = await runShellLogged(ctx, cmd, log, {
-    eventPrefix: "ui.verify.command",
-    reasonCode: "UI_VERIFY_COMMAND_FAILED",
+  const effectiveWait = Number.isFinite(waitMs) ? Math.max(5000, Number(waitMs)) : 60000;
+  await log?.({
+    level: "info",
+    event: "ui.verify.start",
+    message: "UI verification started",
+    extra: { devCmd, url, waitMs: effectiveWait },
   });
-  if (result.exitCode !== 0) {
-    return { ok: false, note: "agent-browser verification failed." };
+
+  const summarize = (value: string): string => {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    return trimmed.length > 1200 ? `${trimmed.slice(-1200)}` : trimmed;
+  };
+
+  const steps = [
+    {
+      name: "open",
+      command: `agent-browser open --cmd=${JSON.stringify(devCmd)} --url=${JSON.stringify(url)} --wait=${effectiveWait}`,
+    },
+    { name: "snapshot", command: "agent-browser snapshot" },
+    { name: "console", command: "agent-browser console --limit=50" },
+    { name: "errors", command: "agent-browser errors" },
+  ];
+
+  try {
+    for (const step of steps) {
+      const result = await runShellLogged(ctx, step.command, log, {
+        eventPrefix: `ui.verify.${step.name}`,
+        reasonCode: "UI_VERIFY_STEP_FAILED",
+      });
+      if (result.exitCode !== 0) {
+        const stderr = summarize(result.stderr);
+        const stdout = summarize(result.stdout);
+        const details = [
+          `agent-browser ${step.name} failed (exit ${result.exitCode}).`,
+          stderr ? `stderr: ${stderr}` : "",
+          stdout ? `stdout: ${stdout}` : "",
+        ]
+          .filter((x) => x)
+          .join(" ");
+        await log?.({
+          level: "error",
+          event: `ui.verify.${step.name}.failed-note`,
+          message: "UI verification step failed with actionable output",
+          reasonCode: "UI_VERIFY_STEP_FAILED",
+          extra: {
+            step: step.name,
+            exitCode: result.exitCode,
+            stderr: result.stderr,
+            stdout: result.stdout,
+          },
+        });
+        return { ok: false, note: details };
+      }
+    }
+    await log?.({
+      level: "info",
+      event: "ui.verify.success",
+      message: "UI verification passed",
+    });
+    return { ok: true };
+  } finally {
+    await runShellLogged(ctx, "agent-browser close", log, {
+      eventPrefix: "ui.verify.close",
+      reasonCode: "UI_VERIFY_CLOSE_FAILED",
+    });
   }
-  return { ok: true };
 };
 
 export const ensureAgentsFile = async (repoRoot: string, templateContent: string): Promise<void> => {
