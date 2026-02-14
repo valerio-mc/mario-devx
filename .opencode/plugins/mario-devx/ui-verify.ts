@@ -1,5 +1,51 @@
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
+import { redactForLog } from "./logging";
+
+export type LoggedShellResult = {
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+};
+
+type UiLog = (entry: {
+  level: "info" | "warn" | "error";
+  event: string;
+  message: string;
+  extra?: Record<string, unknown>;
+  reasonCode?: string;
+}) => Promise<void>;
+
+const runShellLogged = async (
+  ctx: any,
+  command: string,
+  log?: UiLog,
+  options?: { eventPrefix?: string; reasonCode?: string },
+): Promise<LoggedShellResult> => {
+  const started = Date.now();
+  const result = await ctx.$`sh -c ${command}`.nothrow();
+  const stdout = redactForLog(typeof result.stdout === "string" ? result.stdout : "");
+  const stderr = redactForLog(typeof result.stderr === "string" ? result.stderr : "");
+  const payload: LoggedShellResult = {
+    command,
+    exitCode: result.exitCode,
+    stdout,
+    stderr,
+    durationMs: Date.now() - started,
+  };
+  if (log && result.exitCode !== 0) {
+    await log({
+      level: "error",
+      event: `${options?.eventPrefix ?? "shell.command"}.failed`,
+      message: `Command failed: ${command}`,
+      reasonCode: options?.reasonCode,
+      extra: payload,
+    });
+  }
+  return payload;
+};
 
 const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config");
 
@@ -123,20 +169,30 @@ export const hasAgentBrowserCli = async (ctx: any): Promise<boolean> => {
 export const ensureAgentBrowserPrereqs = async (
   ctx: any,
   repoRoot: string,
+  log?: UiLog,
 ): Promise<{ cliOk: boolean; skillOk: boolean; attempted: string[] }> => {
   const attempted: string[] = [];
   if (ctx.$) {
     const cli = await hasAgentBrowserCli(ctx);
     if (!cli) {
       attempted.push("npm install -g agent-browser");
-      await ctx.$`sh -c "npm install -g agent-browser"`.nothrow();
+      await runShellLogged(ctx, "npm install -g agent-browser", log, {
+        eventPrefix: "ui.prereq.cli-install",
+        reasonCode: "UI_PREREQ_CLI_INSTALL_FAILED",
+      });
       attempted.push("agent-browser install");
-      await ctx.$`sh -c "agent-browser install"`.nothrow();
+      await runShellLogged(ctx, "agent-browser install", log, {
+        eventPrefix: "ui.prereq.browser-install",
+        reasonCode: "UI_PREREQ_BROWSER_INSTALL_FAILED",
+      });
     }
     const skill = await hasAgentBrowserSkill(repoRoot);
     if (!skill) {
       attempted.push("npx skills add vercel-labs/agent-browser");
-      await ctx.$`sh -c "npx skills add vercel-labs/agent-browser"`.nothrow();
+      await runShellLogged(ctx, "npx skills add vercel-labs/agent-browser", log, {
+        eventPrefix: "ui.prereq.skill-install",
+        reasonCode: "UI_PREREQ_SKILL_INSTALL_FAILED",
+      });
     }
   }
   return {
@@ -150,8 +206,9 @@ export const runUiVerification = async (opts: {
   ctx: any;
   devCmd: string;
   url: string;
+  log?: UiLog;
 }): Promise<{ ok: boolean; note?: string }> => {
-  const { ctx, devCmd, url } = opts;
+  const { ctx, devCmd, url, log } = opts;
   if (!ctx.$) {
     return { ok: false, note: "No shell available for UI verification." };
   }
@@ -164,7 +221,10 @@ export const runUiVerification = async (opts: {
     "agent-browser close",
   ].join(" && ");
 
-  const result = await ctx.$`sh -c ${cmd}`.nothrow();
+  const result = await runShellLogged(ctx, cmd, log, {
+    eventPrefix: "ui.verify.command",
+    reasonCode: "UI_VERIFY_COMMAND_FAILED",
+  });
   if (result.exitCode !== 0) {
     return { ok: false, note: "agent-browser verification failed." };
   }

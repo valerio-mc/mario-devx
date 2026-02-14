@@ -864,6 +864,73 @@ const logToolEvent = async (
   });
 };
 
+const runShellWithFailureLog = async (
+  ctx: PluginContext,
+  repoRoot: string,
+  command: string,
+  logMeta: {
+    event: string;
+    message: string;
+    reasonCode?: string;
+    runId?: string;
+    taskId?: string;
+    extra?: Record<string, unknown>;
+  },
+): Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }> => {
+  if (!ctx.$) {
+    const stderr = "No shell available for command execution.";
+    await logRunEvent(
+      ctx,
+      repoRoot,
+      "error",
+      logMeta.event,
+      logMeta.message,
+      {
+        command,
+        exitCode: 127,
+        durationMs: 0,
+        stdout: "",
+        stderr,
+        ...(logMeta.extra ?? {}),
+      },
+      {
+        ...(logMeta.runId ? { runId: logMeta.runId } : {}),
+        ...(logMeta.taskId ? { taskId: logMeta.taskId } : {}),
+        ...(logMeta.reasonCode ? { reasonCode: logMeta.reasonCode } : {}),
+      },
+    );
+    return { exitCode: 127, stdout: "", stderr, durationMs: 0 };
+  }
+  const started = Date.now();
+  const result = await ctx.$`sh -c ${command}`.nothrow();
+  const stdout = redactForLog(typeof result.stdout === "string" ? result.stdout : "");
+  const stderr = redactForLog(typeof result.stderr === "string" ? result.stderr : "");
+  const durationMs = Date.now() - started;
+  if (result.exitCode !== 0) {
+    await logRunEvent(
+      ctx,
+      repoRoot,
+      "error",
+      logMeta.event,
+      logMeta.message,
+      {
+        command,
+        exitCode: result.exitCode,
+        durationMs,
+        stdout,
+        stderr,
+        ...(logMeta.extra ?? {}),
+      },
+      {
+        ...(logMeta.runId ? { runId: logMeta.runId } : {}),
+        ...(logMeta.taskId ? { taskId: logMeta.taskId } : {}),
+        ...(logMeta.reasonCode ? { reasonCode: logMeta.reasonCode } : {}),
+      },
+    );
+  }
+  return { exitCode: result.exitCode, stdout, stderr, durationMs };
+};
+
 const notifyControlSession = async (
   ctx: PluginContext,
   controlSessionId: string | undefined,
@@ -1313,7 +1380,17 @@ export const createTools = (ctx: PluginContext) => {
         let skillOk = await hasAgentBrowserSkill(repoRoot);
         let autoInstallAttempted: string[] = [];
         if (uiVerifyEnabled && isWebApp && (!cliOk || !skillOk)) {
-          const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot);
+          const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot, async (entry) => {
+            await logRunEvent(
+              ctx,
+              repoRoot,
+              entry.level,
+              entry.event,
+              entry.message,
+              entry.extra,
+              { runId, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
+            );
+          });
           cliOk = ensured.cliOk;
           skillOk = ensured.skillOk;
           autoInstallAttempted = ensured.attempted;
@@ -1431,6 +1508,17 @@ export const createTools = (ctx: PluginContext) => {
                     ctx,
                     devCmd: uiVerifyCmd,
                     url: uiVerifyUrl,
+                    log: async (entry) => {
+                      await logRunEvent(
+                        ctx,
+                        repoRoot,
+                        entry.level,
+                        entry.event,
+                        entry.message,
+                        entry.extra,
+                        { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
+                      );
+                    },
                   })
                 : null;
 
@@ -1751,7 +1839,14 @@ export const createTools = (ctx: PluginContext) => {
                 if (ctx.$ && (!(await hasNodeModules(repoRoot, workspaceRoot)) || bootstrap.changed)) {
                   await showToast(ctx, `Run: installing dependencies in ${workspaceRoot === "." ? "repo root" : workspaceRoot}`, "info");
                   const installCmd = workspaceRoot === "." ? "npm install" : `npm --prefix ${workspaceRoot} install`;
-                  await ctx.$`sh -c ${installCmd}`.nothrow();
+                  await runShellWithFailureLog(ctx, repoRoot, installCmd, {
+                    event: "run.bootstrap.install.failed",
+                    message: `Dependency install failed while bootstrapping ${task.id}`,
+                    reasonCode: "BOOTSTRAP_INSTALL_FAILED",
+                    runId,
+                    taskId: task.id,
+                    extra: { workspaceRoot },
+                  });
                 }
               }
 
@@ -1793,7 +1888,13 @@ export const createTools = (ctx: PluginContext) => {
                   deterministicScaffoldTried = true;
                   await showToast(ctx, `Run: trying default scaffold for ${task.id}`, "info");
                   await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - scaffold ${task.id}`);
-                  const scaffoldRun = await ctx.$`sh -c ${scaffoldHint}`.nothrow();
+                  const scaffoldRun = await runShellWithFailureLog(ctx, repoRoot, scaffoldHint, {
+                    event: "run.scaffold.default.failed",
+                    message: `Default scaffold command failed for ${task.id}`,
+                    reasonCode: "SCAFFOLD_COMMAND_FAILED",
+                    runId,
+                    taskId: task.id,
+                  });
                   repairAttempts += 1;
                   if (!(await heartbeatRunLock(repoRoot))) {
                     await blockForHeartbeatFailure("during-deterministic-scaffold");
@@ -1853,6 +1954,17 @@ export const createTools = (ctx: PluginContext) => {
                     ctx,
                     devCmd: uiVerifyCmd,
                     url: uiVerifyUrl,
+                    log: async (entry) => {
+                      await logRunEvent(
+                        ctx,
+                        repoRoot,
+                        entry.level,
+                        entry.event,
+                        entry.message,
+                        entry.extra,
+                        { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
+                      );
+                    },
                   })
                 : null;
 
