@@ -1434,6 +1434,7 @@ export const createTools = (ctx: PluginContext) => {
             uiVerifyEnabled,
             uiVerifyRequired,
             shouldRunUiVerify,
+            uiVerifyWaitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
           }, { runId });
 
           while (attempted < maxItems) {
@@ -1510,6 +1511,7 @@ export const createTools = (ctx: PluginContext) => {
                     ctx,
                     devCmd: uiVerifyCmd,
                     url: uiVerifyUrl,
+                    waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
                     log: async (entry) => {
                       await logRunEvent(
                         ctx,
@@ -1957,6 +1959,7 @@ export const createTools = (ctx: PluginContext) => {
                     ctx,
                     devCmd: uiVerifyCmd,
                     url: uiVerifyUrl,
+                    waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
                     log: async (entry) => {
                       await logRunEvent(
                         ctx,

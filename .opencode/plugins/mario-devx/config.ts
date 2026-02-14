@@ -20,7 +20,7 @@ export const TIMEOUTS = {
   STALE_LOCK_TIMEOUT_MS: 12 * 60 * 60 * 1000,
   
   // UI verification wait time (15 seconds)
-  UI_VERIFY_WAIT_MS: 15000,
+  UI_VERIFY_WAIT_MS: 60000,
 } as const;
 
 // Retry and attempt limits
