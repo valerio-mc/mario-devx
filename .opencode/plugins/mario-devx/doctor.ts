@@ -1,8 +1,9 @@
 import path from "path";
 import { readTextIfExists } from "./fs";
+import { redactForLog } from "./logging";
 import { readPrdJsonIfExists } from "./prd";
 import { readWorkSessionState } from "./state";
-import { hasAgentBrowserCli, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
+import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
 
 export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => {
   const issues: string[] = [];
@@ -64,6 +65,15 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
         fixes.push("Install: npx skills add vercel-labs/agent-browser");
         fixes.push("Install: npm install -g agent-browser && agent-browser install");
         fixes.push("Optional: set UI_VERIFY=0 in .mario/AGENTS.md to disable best-effort UI checks.");
+      } else {
+        const runtime = await hasAgentBrowserRuntime(ctx);
+        if (!runtime.ok) {
+          issues.push("UI_VERIFY=1 and agent-browser CLI exists, but browser runtime is missing or broken.");
+          fixes.push("Run: agent-browser install");
+          if (runtime.note) {
+            issues.push(`Runtime detail: ${redactForLog(runtime.note).slice(0, 240)}`);
+          }
+        }
       }
     }
   }
