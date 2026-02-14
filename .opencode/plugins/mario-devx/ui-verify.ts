@@ -1,6 +1,7 @@
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
 import { redactForLog } from "./logging";
+import { readUiVerifyState, writeUiVerifyState } from "./state";
 
 export type LoggedShellResult = {
   command: string;
@@ -170,8 +171,20 @@ export const ensureAgentBrowserPrereqs = async (
   ctx: any,
   repoRoot: string,
   log?: UiLog,
-): Promise<{ cliOk: boolean; skillOk: boolean; attempted: string[] }> => {
+): Promise<{ cliOk: boolean; skillOk: boolean; browserOk: boolean; attempted: string[] }> => {
   const attempted: string[] = [];
+  let browserInstallExitCode = 0;
+  const getAgentBrowserVersion = async (): Promise<string | null> => {
+    if (!ctx.$) return null;
+    const version = await runShellLogged(ctx, "agent-browser --version", log, {
+      eventPrefix: "ui.prereq.version",
+      reasonCode: "UI_PREREQ_VERSION_CHECK_FAILED",
+    });
+    if (version.exitCode !== 0) return null;
+    const value = (version.stdout || version.stderr || "").trim();
+    return value.length > 0 ? value : null;
+  };
+
   if (ctx.$) {
     const cli = await hasAgentBrowserCli(ctx);
     if (!cli) {
@@ -180,12 +193,37 @@ export const ensureAgentBrowserPrereqs = async (
         eventPrefix: "ui.prereq.cli-install",
         reasonCode: "UI_PREREQ_CLI_INSTALL_FAILED",
       });
+    }
+
+    const version = await getAgentBrowserVersion();
+    const cached = await readUiVerifyState(repoRoot);
+    const shouldInstallBrowser = !cached.browserInstallOkAt || !version || cached.agentBrowserVersion !== version;
+    if (shouldInstallBrowser) {
       attempted.push("agent-browser install");
-      await runShellLogged(ctx, "agent-browser install", log, {
+      const installResult = await runShellLogged(ctx, "agent-browser install", log, {
         eventPrefix: "ui.prereq.browser-install",
         reasonCode: "UI_PREREQ_BROWSER_INSTALL_FAILED",
       });
+      browserInstallExitCode = installResult.exitCode;
+      await writeUiVerifyState(repoRoot, {
+        ...(version ? { agentBrowserVersion: version } : {}),
+        lastInstallAttemptAt: new Date().toISOString(),
+        lastInstallExitCode: installResult.exitCode,
+        ...(installResult.exitCode === 0 ? { browserInstallOkAt: new Date().toISOString() } : {}),
+      });
+    } else {
+      browserInstallExitCode = 0;
+      await log?.({
+        level: "info",
+        event: "ui.prereq.browser-install.cached",
+        message: "Skipped browser install (cached successful install for same agent-browser version)",
+        extra: {
+          agentBrowserVersion: version,
+          browserInstallOkAt: cached.browserInstallOkAt,
+        },
+      });
     }
+
     const skill = await hasAgentBrowserSkill(repoRoot);
     if (!skill) {
       attempted.push("npx skills add vercel-labs/agent-browser");
@@ -198,6 +236,7 @@ export const ensureAgentBrowserPrereqs = async (
   return {
     cliOk: await hasAgentBrowserCli(ctx),
     skillOk: await hasAgentBrowserSkill(repoRoot),
+    browserOk: !!ctx.$ && browserInstallExitCode === 0,
     attempted,
   };
 };

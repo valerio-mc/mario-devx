@@ -1378,8 +1378,9 @@ export const createTools = (ctx: PluginContext) => {
         const isWebApp = await isLikelyWebApp(repoRoot);
         let cliOk = await hasAgentBrowserCli(ctx);
         let skillOk = await hasAgentBrowserSkill(repoRoot);
+        let browserOk = true;
         let autoInstallAttempted: string[] = [];
-        if (uiVerifyEnabled && isWebApp && (!cliOk || !skillOk)) {
+        if (uiVerifyEnabled && isWebApp) {
           const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot, async (entry) => {
             await logRunEvent(
               ctx,
@@ -1393,9 +1394,10 @@ export const createTools = (ctx: PluginContext) => {
           });
           cliOk = ensured.cliOk;
           skillOk = ensured.skillOk;
+          browserOk = ensured.browserOk;
           autoInstallAttempted = ensured.attempted;
         }
-        const shouldRunUiVerify = uiVerifyEnabled && isWebApp && cliOk && skillOk;
+        const shouldRunUiVerify = uiVerifyEnabled && isWebApp && cliOk && skillOk && browserOk;
 
           let attempted = 0;
           let completed = 0;
@@ -1545,7 +1547,7 @@ export const createTools = (ctx: PluginContext) => {
               const state = await bumpIteration(repoRoot);
               const attemptAt = nowIso();
 
-              if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk)) {
+              if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk || !browserOk)) {
                 const judge: PrdJudgeAttempt = {
                   status: "FAIL",
                   exitSignal: false,
@@ -1578,6 +1580,7 @@ export const createTools = (ctx: PluginContext) => {
                   uiVerifyRequired,
                   cliOk,
                   skillOk,
+                  browserOk,
                   autoInstallAttempted,
                 }, { runId, taskId: task.id, reasonCode: "UI_PREREQ_MISSING" });
                 await showToast(ctx, `Run stopped: UI prerequisites missing on ${task.id}`, "warning");
@@ -1990,7 +1993,7 @@ export const createTools = (ctx: PluginContext) => {
                 ok: null,
                 note: !gateResult.ok
                   ? "UI verification not run because deterministic gates failed."
-                  : uiVerifyEnabled && isWebApp && (!cliOk || !skillOk)
+                  : uiVerifyEnabled && isWebApp && (!cliOk || !skillOk || !browserOk)
                     ? "UI verification skipped (prerequisites missing)."
                     : uiVerifyEnabled && isWebApp
                       ? "UI verification not run."
@@ -2082,7 +2085,7 @@ export const createTools = (ctx: PluginContext) => {
             break;
           }
 
-          if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk)) {
+          if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk || !browserOk)) {
             await failEarly(
               [
               "UI verification is required but agent-browser prerequisites are missing.",

@@ -1,7 +1,7 @@
 import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
 import { marioStateDir } from "./paths";
-import { RunState, WorkSessionState } from "./types";
+import { RunState, UiVerifyState, WorkSessionState } from "./types";
 import { seedMarioAssets } from "./assets";
 
 const stateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "state.json");
@@ -10,6 +10,7 @@ type MarioState = {
   version: 1;
   run?: RunState;
   workSession?: WorkSessionState;
+  uiVerify?: UiVerifyState;
 };
 
 const defaultRunState = (): RunState => ({
@@ -28,6 +29,7 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
         version: 1,
         run: parsed.run,
         workSession: parsed.workSession,
+        uiVerify: parsed.uiVerify,
       };
     } catch {
       // Back up the corrupt state file and reset.
@@ -92,4 +94,18 @@ export const bumpIteration = async (repoRoot: string): Promise<RunState> => {
   };
   await writeRunState(repoRoot, next);
   return next;
+};
+
+export const readUiVerifyState = async (repoRoot: string): Promise<UiVerifyState> => {
+  const state = await readState(repoRoot);
+  return state.uiVerify ?? {};
+};
+
+export const writeUiVerifyState = async (repoRoot: string, patch: Partial<UiVerifyState>): Promise<void> => {
+  const current = await readState(repoRoot);
+  const next: UiVerifyState = {
+    ...(current.uiVerify ?? {}),
+    ...patch,
+  };
+  await writeState(repoRoot, { ...current, uiVerify: next });
 };

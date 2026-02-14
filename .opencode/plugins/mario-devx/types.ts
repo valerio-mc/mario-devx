@@ -23,3 +23,10 @@ export type RunState = {
   startedAt?: string;
   updatedAt: string;
 };
+
+export type UiVerifyState = {
+  agentBrowserVersion?: string;
+  browserInstallOkAt?: string;
+  lastInstallAttemptAt?: string;
+  lastInstallExitCode?: number;
+};
