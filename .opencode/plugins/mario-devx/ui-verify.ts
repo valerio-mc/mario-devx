@@ -48,6 +48,37 @@ const runShellLogged = async (
   return payload;
 };
 
+const runPrereqStep = async (
+  ctx: any,
+  command: string,
+  log: UiLog | undefined,
+  step: string,
+  reasonCode: string,
+): Promise<LoggedShellResult> => {
+  await log?.({
+    level: "info",
+    event: `ui.prereq.${step}.start`,
+    message: `Starting prerequisite step: ${command}`,
+    extra: { command },
+  });
+  const result = await runShellLogged(ctx, command, log, {
+    eventPrefix: `ui.prereq.${step}`,
+    reasonCode,
+  });
+  await log?.({
+    level: result.exitCode === 0 ? "info" : "error",
+    event: `ui.prereq.${step}.done`,
+    message: `Finished prerequisite step: ${command}`,
+    ...(result.exitCode !== 0 ? { reasonCode } : {}),
+    extra: {
+      command,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+    },
+  });
+  return result;
+};
+
 const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config");
 
 const getGlobalSkillPath = (skillName: string): string => {
@@ -208,10 +239,13 @@ export const ensureAgentBrowserPrereqs = async (
     const cli = await hasAgentBrowserCli(ctx);
     if (!cli) {
       attempted.push("npm install -g agent-browser");
-      await runShellLogged(ctx, "npm install -g agent-browser", log, {
-        eventPrefix: "ui.prereq.cli-install",
-        reasonCode: "UI_PREREQ_CLI_INSTALL_FAILED",
-      });
+      await runPrereqStep(
+        ctx,
+        "npm install -g agent-browser",
+        log,
+        "cli-install",
+        "UI_PREREQ_CLI_INSTALL_FAILED",
+      );
     }
 
     const version = await getAgentBrowserVersion();
@@ -219,10 +253,13 @@ export const ensureAgentBrowserPrereqs = async (
     const shouldInstallBrowser = !cached.browserInstallOkAt || !version || cached.agentBrowserVersion !== version;
     if (shouldInstallBrowser) {
       attempted.push("agent-browser install");
-      const installResult = await runShellLogged(ctx, "agent-browser install", log, {
-        eventPrefix: "ui.prereq.browser-install",
-        reasonCode: "UI_PREREQ_BROWSER_INSTALL_FAILED",
-      });
+      const installResult = await runPrereqStep(
+        ctx,
+        "agent-browser install",
+        log,
+        "browser-install",
+        "UI_PREREQ_BROWSER_INSTALL_FAILED",
+      );
       browserInstallExitCode = installResult.exitCode;
       await writeUiVerifyState(repoRoot, {
         ...(version ? { agentBrowserVersion: version } : {}),
@@ -246,10 +283,13 @@ export const ensureAgentBrowserPrereqs = async (
     const skill = await hasAgentBrowserSkill(repoRoot);
     if (!skill) {
       attempted.push("npx skills add vercel-labs/agent-browser");
-      await runShellLogged(ctx, "npx skills add vercel-labs/agent-browser", log, {
-        eventPrefix: "ui.prereq.skill-install",
-        reasonCode: "UI_PREREQ_SKILL_INSTALL_FAILED",
-      });
+      await runPrereqStep(
+        ctx,
+        "npx skills add vercel-labs/agent-browser",
+        log,
+        "skill-install",
+        "UI_PREREQ_SKILL_INSTALL_FAILED",
+      );
     }
   }
   return {

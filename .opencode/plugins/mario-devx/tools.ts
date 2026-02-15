@@ -113,6 +113,7 @@ const pidLooksAlive = (pid: unknown): boolean | null => {
 const acquireRunLock = async (
   repoRoot: string,
   controlSessionId: string | undefined,
+  onEvent?: (event: { type: "stale-pid-removed"; lockPath: string; stalePid: number }) => Promise<void>,
 ): Promise<{ ok: true } | { ok: false; message: string }> => {
   const lockPath = runLockPath(repoRoot);
   await mkdir(path.dirname(lockPath), { recursive: true });
@@ -128,6 +129,13 @@ const acquireRunLock = async (
         const parsed = JSON.parse(existing) as { pid?: unknown };
         const alive = pidLooksAlive(parsed.pid);
         if (alive === false) {
+          if (typeof parsed.pid === "number") {
+            await onEvent?.({
+              type: "stale-pid-removed",
+              lockPath,
+              stalePid: parsed.pid,
+            });
+          }
           await unlink(lockPath);
         } else {
           return {
@@ -1207,6 +1215,9 @@ export const createTools = (ctx: PluginContext) => {
 
         await ensureMario(repoRoot, false);
         const runId = createRunId();
+        await logRunEvent(ctx, repoRoot, "info", "run.preflight.start", "Run preflight started", {
+          controlSessionId: context.sessionID ?? null,
+        }, { runId });
 
         const previousRun = await readRunState(repoRoot);
         if (
@@ -1224,7 +1235,14 @@ export const createTools = (ctx: PluginContext) => {
           return previousRun.lastRunResult;
         }
 
-        const lock = await acquireRunLock(repoRoot, context.sessionID);
+        const lock = await acquireRunLock(repoRoot, context.sessionID, async (event) => {
+          if (event.type === "stale-pid-removed") {
+            await logRunEvent(ctx, repoRoot, "warn", "run.lock.stale-pid", "Removed stale run lock owned by dead process", {
+              lockPath: event.lockPath,
+              stalePid: event.stalePid,
+            }, { runId, reasonCode: "STALE_LOCK_REMOVED" });
+          }
+        });
         if (!lock.ok) {
           await logRunEvent(ctx, repoRoot, "warn", "run.lock.acquire-failed", "Run lock acquire failed", {
             lockMessage: lock.message,
@@ -1382,6 +1400,9 @@ export const createTools = (ctx: PluginContext) => {
         let autoInstallAttempted: string[] = [];
         if (uiVerifyEnabled && isWebApp) {
           const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot, async (entry) => {
+            if (entry.event === "ui.prereq.browser-install.start") {
+              await showToast(ctx, "Run: installing browser runtime for UI verification (may take a few minutes)", "info");
+            }
             await logRunEvent(
               ctx,
               repoRoot,
