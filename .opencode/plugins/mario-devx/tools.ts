@@ -808,6 +808,65 @@ const runShellWithFailureLog = async (
   return { exitCode, stdout, stderr, durationMs };
 };
 
+const isLikelyJsonEofError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /unexpected eof|unexpected end of json input|json parse error/i.test(message);
+};
+
+const sleep = async (ms: number): Promise<void> => {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+};
+
+const promptAndResolveWithRetry = async (opts: {
+  ctx: PluginContext;
+  repoRoot: string;
+  sessionId: string;
+  promptText: string;
+  runId: string;
+  taskId: string;
+  agent?: string;
+  timeoutMs: number;
+}): Promise<string> => {
+  const { ctx, repoRoot, sessionId, promptText, runId, taskId, agent, timeoutMs } = opts;
+  const maxAttempts = 3;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await logRunEvent(ctx, repoRoot, "info", "run.verify.prompt.sent", "Verifier prompt sent", {
+        attempt,
+        maxAttempts,
+      }, { runId, taskId });
+      const verifierResponse = await ctx.client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          ...(agent ? { agent } : {}),
+          parts: [{ type: "text", text: promptText }],
+        },
+      });
+      const verifierText = await resolvePromptText(ctx, sessionId, verifierResponse, timeoutMs);
+      await logRunEvent(ctx, repoRoot, "info", "run.verify.response.received", "Verifier response received", {
+        attempt,
+        hasText: verifierText.trim().length > 0,
+      }, { runId, taskId });
+      return verifierText;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      await logRunEvent(ctx, repoRoot, "error", "run.verify.transport.error", "Verifier transport/parse error", {
+        attempt,
+        maxAttempts,
+        error: message,
+        stack: error instanceof Error ? error.stack ?? "" : "",
+      }, { runId, taskId, reasonCode: "VERIFIER_TRANSPORT_ERROR" });
+      if (!isLikelyJsonEofError(error) || attempt === maxAttempts) {
+        break;
+      }
+      await sleep(500 * attempt);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Verifier prompt failed"));
+};
+
 const persistBlockedTaskAttempt = async (opts: {
   ctx: PluginContext;
   repoRoot: string;
@@ -1603,6 +1662,9 @@ export const createTools = (ctx: PluginContext) => {
 
               const wsForVerifier = await ensureWorkSession(ctx, repoRoot, context.agent);
               await setWorkSessionTitle(ctx, wsForVerifier.sessionId, `mario-devx (work) - reconcile judge ${task.id}`);
+              await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass (reconcile)", {
+                taskId: task.id,
+              }, { runId, taskId: task.id });
               const verifierPrompt = await buildPrompt(
                 repoRoot,
                 "verify",
@@ -1638,15 +1700,16 @@ export const createTools = (ctx: PluginContext) => {
                   .filter((x) => x)
                   .join("\n"),
               );
-
-              const verifierResponse = await ctx.client.session.prompt({
-                path: { id: wsForVerifier.sessionId },
-                body: {
-                  ...(context.agent ? { agent: context.agent } : {}),
-                  parts: [{ type: "text", text: verifierPrompt }],
-                },
+              const verifierText = await promptAndResolveWithRetry({
+                ctx,
+                repoRoot,
+                sessionId: wsForVerifier.sessionId,
+                promptText: verifierPrompt,
+                runId,
+                taskId: task.id,
+                ...(context.agent ? { agent: context.agent } : {}),
+                timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
               });
-              const verifierText = await resolvePromptText(ctx, wsForVerifier.sessionId, verifierResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
               const judge = parseJudgeAttemptFromText(verifierText);
               const lastAttempt: PrdTaskAttempt = {
                 at: attemptAt,
@@ -2150,24 +2213,24 @@ export const createTools = (ctx: PluginContext) => {
           );
 
               await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
-              const verifierResponse = await ctx.client.session.prompt({
-                path: { id: ws.sessionId },
-                body: {
-                  ...(context.agent ? { agent: context.agent } : {}),
-                  parts: [{ type: "text", text: verifierPrompt }],
-                },
+              await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass", {
+                taskId: task.id,
+              }, { runId, taskId: task.id });
+              const verifierText = await promptAndResolveWithRetry({
+                ctx,
+                repoRoot,
+                sessionId: ws.sessionId,
+                promptText: verifierPrompt,
+                runId,
+                taskId: task.id,
+                ...(context.agent ? { agent: context.agent } : {}),
+                timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
               });
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("after-judge");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
-          const verifierText = await resolvePromptText(
-            ctx,
-            ws.sessionId,
-            verifierResponse,
-            TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
-          );
           const judge = parseJudgeAttemptFromText(verifierText);
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
@@ -2243,6 +2306,24 @@ export const createTools = (ctx: PluginContext) => {
           }, { runId, ...(latestTask?.id ? { taskId: latestTask.id } : {}) });
 
           return result;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          await logRunEvent(ctx, repoRoot, "error", "run.fatal.exception", "Run crashed with unhandled exception", {
+            error: errorMessage,
+            stack: error instanceof Error ? error.stack ?? "" : "",
+          }, { runId, reasonCode: "RUN_FATAL_EXCEPTION" });
+          const current = await readRunState(repoRoot);
+          await writeRunState(repoRoot, {
+            ...current,
+            status: "BLOCKED",
+            phase: "run",
+            updatedAt: nowIso(),
+            ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
+            lastRunAt: nowIso(),
+            lastRunResult: `Run failed unexpectedly: ${errorMessage}. See .mario/state/mario-devx.log for details.`,
+          });
+          await showToast(ctx, "Run crashed unexpectedly; see mario-devx.log for details", "warning");
+          return `Run failed unexpectedly: ${errorMessage}\nCheck .mario/state/mario-devx.log and rerun /mario-devx:run 1.`;
         } finally {
           await releaseRunLock(repoRoot);
         }
