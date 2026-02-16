@@ -2,8 +2,24 @@ import path from "path";
 import { readTextIfExists } from "./fs";
 import { redactForLog } from "./logging";
 import { readPrdJsonIfExists } from "./prd";
-import { readWorkSessionState } from "./state";
+import { readRunState, readWorkSessionState } from "./state";
 import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
+
+const pidLooksAlive = (pid: unknown): boolean | null => {
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) {
+    return null;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code === "ESRCH") {
+      return false;
+    }
+    return null;
+  }
+};
 
 export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => {
   const issues: string[] = [];
@@ -35,6 +51,28 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
     if (blocked.length > 0) {
       issues.push(`Blocked tasks: ${blocked.join(", ")}`);
       fixes.push("For each blocked task, read prd.json.tasks[].lastAttempt.judge.nextActions, fix them, then rerun /mario-devx:run 1.");
+    }
+  }
+
+  const runState = await readRunState(repoRoot);
+  if (runState.status === "DOING") {
+    const lockPath = path.join(repoRoot, ".mario", "state", "run.lock");
+    const lockRaw = await readTextIfExists(lockPath);
+    if (!lockRaw) {
+      issues.push("Run state is DOING but run.lock is missing (stale interrupted run).");
+      fixes.push("Rerun /mario-devx:run 1 (plugin now auto-recovers stale DOING state).");
+    } else {
+      try {
+        const lock = JSON.parse(lockRaw) as { pid?: unknown; heartbeatAt?: string };
+        const pidAlive = pidLooksAlive(lock.pid);
+        if (pidAlive === false) {
+          issues.push(`Run state is DOING but lock pid is dead (${String(lock.pid)}).`);
+          fixes.push("Rerun /mario-devx:run 1 (plugin now auto-recovers stale DOING state).");
+        }
+      } catch {
+        issues.push("Run state is DOING but run.lock is malformed (stale interrupted run).");
+        fixes.push("Rerun /mario-devx:run 1 (plugin now auto-recovers stale DOING state).");
+      }
     }
   }
 
