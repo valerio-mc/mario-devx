@@ -1,5 +1,6 @@
-import { readText } from "./fs";
-import { getPromptTemplatePath } from "./assets";
+import path from "path";
+import { readText, readTextIfExists } from "./fs";
+import { assetsDir, getPromptTemplatePath } from "./assets";
 
 export const buildPrompt = async (
   repoRoot: string,
@@ -8,6 +9,8 @@ export const buildPrompt = async (
 ): Promise<string> => {
   const templatePath = mode === "verify" ? getPromptTemplatePath("verify_llm") : getPromptTemplatePath("run_build");
   const template = await readText(templatePath);
+  const uiVerifierPath = path.join(assetsDir(), "prompts", "UI_VERIFIER.md");
+  const uiVerifier = mode === "verify" ? await readTextIfExists(uiVerifierPath) : null;
 
   const header = [
     "# mario-devx",
@@ -27,5 +30,9 @@ export const buildPrompt = async (
     header.push(extra, "");
   }
 
-  return `${header.join("\n")}\n---\n\n${template}`;
+  const sections = [`${header.join("\n")}\n---\n\n${template}`];
+  if (mode === "verify" && uiVerifier && uiVerifier.trim().length > 0) {
+    sections.push(`\n---\n\n${uiVerifier.trim()}\n`);
+  }
+  return sections.join("\n");
 };
