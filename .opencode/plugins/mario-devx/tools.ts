@@ -1,6 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
-import { mkdir, readFile, stat, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
@@ -76,7 +75,8 @@ import {
 } from "./config";
 import { logError, logInfo, logWarning } from "./errors";
 import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
-import { pidLooksAlive } from "./process";
+import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
+import { buildRunSummary } from "./run-report";
 import { runShellCommand } from "./shell";
 
 type ToolContext = {
@@ -87,117 +87,6 @@ type ToolContext = {
 type PluginContext = Parameters<Plugin>[0];
 
 const nowIso = (): string => new Date().toISOString();
-
-const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
-
-const acquireRunLock = async (
-  repoRoot: string,
-  controlSessionId: string | undefined,
-  onEvent?: (event: { type: "stale-pid-removed"; lockPath: string; stalePid: number }) => Promise<void>,
-): Promise<{ ok: true } | { ok: false; message: string }> => {
-  const lockPath = runLockPath(repoRoot);
-  await mkdir(path.dirname(lockPath), { recursive: true });
-
-  const staleAfterMs = TIMEOUTS.STALE_LOCK_TIMEOUT_MS;
-  try {
-    const s = await stat(lockPath);
-    const existing = await readFile(lockPath, "utf8");
-    const lockIsOld = Date.now() - s.mtimeMs > staleAfterMs;
-    try {
-      const parsed = JSON.parse(existing) as { pid?: unknown };
-      const alive = pidLooksAlive(parsed.pid);
-      if (alive === false || (lockIsOld && alive !== true)) {
-        if (typeof parsed.pid === "number") {
-          await onEvent?.({
-            type: "stale-pid-removed",
-            lockPath,
-            stalePid: parsed.pid,
-          });
-        }
-        await unlink(lockPath);
-      } else {
-        return {
-          ok: false,
-          message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
-        };
-      }
-    } catch {
-      // Corrupt lock file; treat as stale.
-      try {
-        await unlink(lockPath);
-      } catch {
-        return {
-          ok: false,
-          message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
-        };
-      }
-    }
-  } catch {
-    // No lock.
-  }
-
-  const payload = {
-    at: nowIso(),
-    pid: process.pid,
-    controlSessionId: controlSessionId ?? null,
-  };
-  try {
-    await writeFile(lockPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-  } catch {
-    const existing = await readFile(lockPath, "utf8").catch(() => "");
-    return {
-      ok: false,
-      message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
-    };
-  }
-  return { ok: true };
-};
-
-/**
- * Updates the heartbeat timestamp in the run lock file.
- * 
- * BACKPRESSURE: This is the core of the backpressure system. The lock file
- * acts as a heartbeat - if we can't update it (disk full, permissions, etc.),
- * execution stops immediately. This prevents:
- * - Runaway processes
- * - Multiple concurrent runs
- * - Silent failures
- * 
- * Called at checkpoints throughout task execution.
- * 
- * SAFETY: This function checks that the lock file belongs to the current
- * process before writing a heartbeat update.
- */
-const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
-  const lockPath = runLockPath(repoRoot);
-  try {
-    const raw = await readFile(lockPath, "utf8");
-    const parsed = JSON.parse(raw) as { pid?: number; heartbeatAt?: string };
-    
-    // Verify this lock belongs to the current process
-    if (parsed.pid !== process.pid) {
-      logError("heartbeat", `Lock belongs to pid ${parsed.pid}, current pid is ${process.pid}`);
-      return false;
-    }
-    
-    // Atomic write with current PID verification
-    const next = { ...parsed, heartbeatAt: nowIso() };
-    await writeFile(lockPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8" });
-    return true;
-  } catch (err) {
-    logError("heartbeat", `Update failed: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
-};
-
-const releaseRunLock = async (repoRoot: string): Promise<void> => {
-  const lockPath = runLockPath(repoRoot);
-  try {
-    await unlink(lockPath);
-  } catch {
-    // Best-effort only.
-  }
-};
 
 const repairPlanning = (existing: PrdJson) => ({
   decompositionStrategy: hasNonEmpty(existing.planning?.decompositionStrategy)
@@ -2207,33 +2096,18 @@ export const createTools = (ctx: PluginContext) => {
             updatedAt: nowIso(),
           });
 
-          const latestTask = (prd.tasks ?? [])
-            .filter((t) => t.lastAttempt)
-            .sort((a, b) => (b.lastAttempt?.iteration ?? 0) - (a.lastAttempt?.iteration ?? 0))[0] ?? null;
-          const latestAttempt = latestTask?.lastAttempt;
-          const passedGates = latestAttempt?.gates.commands.filter((c) => c.ok).length ?? 0;
-          const totalGates = latestAttempt?.gates.commands.length ?? 0;
-          const uiSummary = latestAttempt?.ui
-            ? (latestAttempt.ui.ran ? `UI verify: ${latestAttempt.ui.ok ? "PASS" : "FAIL"}${uiVerifyRequired ? " (required)" : " (optional)"}` : "UI verify: not run")
-            : "UI verify: not available";
-          const judgeTopReason = latestAttempt?.judge.reason?.[0] ?? "No judge reason recorded.";
-
-          const note =
-            completed === attempted && attempted === maxItems
-              ? "Reached max_items limit."
-              : completed === attempted
-                ? "No more open/in_progress tasks found."
-                : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
-
-          const result = [
-            `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`,
-            ...(runNotes.length > 0 ? [`Notes: ${runNotes.join(" ")}`] : []),
-            latestTask ? `Task: ${latestTask.id} (${latestTask.status}) - ${latestTask.title}` : "Task: n/a",
-            `Gates: ${passedGates}/${totalGates} PASS`,
-            uiSummary,
-            latestAttempt ? `Judge: ${latestAttempt.judge.status} (exit=${latestAttempt.judge.exitSignal})` : "Judge: n/a",
-            `Reason: ${judgeTopReason}`,
-          ].join("\n");
+          const {
+            result,
+            latestTask,
+            judgeTopReason,
+          } = buildRunSummary({
+            attempted,
+            completed,
+            maxItems,
+            tasks: prd.tasks ?? [],
+            runNotes,
+            uiVerifyRequired,
+          });
 
           await updateRunState(repoRoot, {
             ...(context.sessionID ? { lastRunControlSessionId: context.sessionID } : {}),
