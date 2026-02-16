@@ -79,6 +79,15 @@ const runPrereqStep = async (
   return result;
 };
 
+const looksInteractivePrompt = (output: string): boolean => {
+  const text = output.toLowerCase();
+  return (
+    text.includes("ok to proceed")
+    || text.includes("need to install the following packages")
+    || /\(y\/n\)|\by\/n\b/.test(text)
+  );
+};
+
 const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config");
 
 const getGlobalSkillPath = (skillName: string): string => {
@@ -268,6 +277,21 @@ export const ensureAgentBrowserPrereqs = async (
           "UI_PREREQ_BROWSER_INSTALL_FAILED",
         );
         installResult = result;
+        if (result.exitCode !== 0) {
+          const combinedOutput = `${result.stdout}\n${result.stderr}`;
+          if (looksInteractivePrompt(combinedOutput)) {
+            await log?.({
+              level: "warn",
+              event: "ui.prereq.browser-install.interactive-prompt",
+              message: "Interactive prompt detected during browser install; continuing with non-interactive fallback",
+              reasonCode: "INTERACTIVE_PROMPT_BLOCKED",
+              extra: {
+                command,
+                exitCode: result.exitCode,
+              },
+            });
+          }
+        }
         if (result.exitCode === 0) {
           break;
         }
