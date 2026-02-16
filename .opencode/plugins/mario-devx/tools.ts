@@ -221,6 +221,13 @@ type CompileInterviewEnvelope = {
 
 const INTERVIEW_QUESTION_PREFIX = "q-";
 const INTERVIEW_ANSWER_PREFIX = "a-";
+const STYLE_REFS_ACK_KEY = "__style_refs_ack";
+const STYLE_REFS_REQUIRED_QUESTION = "Share at least one style reference URL/image path, or reply 'none' to proceed without references.";
+
+const isNoneLikeAnswer = (input: string): boolean => {
+  const s = input.trim().toLowerCase();
+  return s === "none" || s === "no" || s === "n/a" || s === "na";
+};
 
 const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: PluginContext): Promise<PrdJson> => {
   if (Array.isArray(prd.tasks) && prd.tasks.length > 0) {
@@ -388,6 +395,7 @@ const interviewPrompt = (prd: PrdJson, input: string): string => {
     "- frontend",
     "- uiVerificationRequired if frontend=true",
     "- ui.designSystem/ui.visualDirection/ui.uxRequirements if frontend=true",
+    "- ui.styleReferences prompt acknowledged if frontend=true",
     "- docs.readmeRequired/docs.readmeSections",
     "- language/framework",
     "- targetUsers/userProblems",
@@ -926,6 +934,23 @@ export const createTools = (ctx: PluginContext) => {
         }
 
         const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
+        if (
+          hasAnswer
+          && typeof cachedQuestion === "string"
+          && normalizeQuestionKey(cachedQuestion) === normalizeQuestionKey(STYLE_REFS_REQUIRED_QUESTION)
+          && isNoneLikeAnswer(rawInput)
+        ) {
+          prd = {
+            ...prd,
+            wizard: {
+              ...prd.wizard,
+              answers: {
+                ...prd.wizard.answers,
+                [STYLE_REFS_ACK_KEY]: "true",
+              },
+            },
+          };
+        }
         if (!hasAnswer && cachedQuestion) {
           await logToolEvent(ctx, repoRoot, "info", "new.question.cached", "Returning cached interview question");
           return [
@@ -1019,6 +1044,16 @@ export const createTools = (ctx: PluginContext) => {
           }
           done = isPrdComplete(prd);
           finalQuestion = (compiled.envelope?.next_question || "What should we clarify next to finish the PRD?").trim();
+        }
+
+        if (
+          done
+          && prd.frontend
+          && (prd.ui.styleReferences ?? []).length === 0
+          && prd.wizard.answers?.[STYLE_REFS_ACK_KEY] !== "true"
+        ) {
+          done = false;
+          finalQuestion = STYLE_REFS_REQUIRED_QUESTION;
         }
 
         if (!done) {
