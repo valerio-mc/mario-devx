@@ -43,3 +43,4 @@ Additional rules:
 - Each reason bullet must cite either a repo file path or a specific gate result.
 - Next actions should be concrete steps the builder can take.
 - Autonomous UI checks are allowed but bounded: prefer at most 8 browser commands and prioritize `snapshot`, `console`, and `errors` evidence.
+- For UI tasks, include a balanced aesthetic rubric summary in reasons (hierarchy/spacing/contrast/consistency/style-reference alignment).

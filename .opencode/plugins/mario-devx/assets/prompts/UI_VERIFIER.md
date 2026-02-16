@@ -50,6 +50,12 @@ Balanced pass policy:
 - For scaffold/foundation tasks, allow minor visual roughness if UX and structure are correct.
 - Fail only for major visual mismatch, broken usability, or PRD contradiction.
 
+Reporting requirement:
+
+- Include a compact rubric summary in verifier reasons, for example:
+  - `Rubric: hierarchy=1 spacing=1 contrast=2 consistency=1 styleRef=1 (balanced PASS)`
+- If failing on aesthetics, explicitly state which rubric dimensions are below acceptable threshold.
+
 ## Evidence standards
 
 - Every PASS/FAIL statement must cite concrete evidence:
