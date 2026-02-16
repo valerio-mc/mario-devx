@@ -63,6 +63,7 @@ export type LogEventPayload = {
 
 const LOG_FILE = "mario-devx.log";
 const MAX_LOG_BYTES = 50 * 1024 * 1024;
+const MAX_LOG_STRING_CHARS = 20_000;
 
 const REDACT_PATTERNS: RegExp[] = [
   /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
@@ -109,12 +110,18 @@ export const coerceShellOutput = (value: unknown): string => {
   }
 };
 
+const truncateForLog = (value: string): string => {
+  if (value.length <= MAX_LOG_STRING_CHARS) return value;
+  const omitted = value.length - MAX_LOG_STRING_CHARS;
+  return `${value.slice(0, MAX_LOG_STRING_CHARS)}\n...[truncated ${omitted} chars]`;
+};
+
 const sanitizeExtra = (extra?: Record<string, unknown>): Record<string, unknown> => {
   if (!extra) return {};
   try {
     const normalized = JSON.parse(JSON.stringify(extra, (_key, value) => {
       if (typeof value === "string") {
-        return redactForLog(value);
+        return truncateForLog(redactForLog(value));
       }
       return value;
     }));
