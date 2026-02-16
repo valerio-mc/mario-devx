@@ -798,6 +798,41 @@ const runShellWithFailureLog = async (
   return { exitCode, stdout, stderr, durationMs };
 };
 
+const persistBlockedTaskAttempt = async (opts: {
+  ctx: PluginContext;
+  repoRoot: string;
+  prd: PrdJson;
+  task: PrdTask;
+  attemptAt: string;
+  iteration: number;
+  gates: PrdGatesAttempt;
+  ui: PrdUiAttempt;
+  judge: PrdJudgeAttempt;
+  runId: string;
+}): Promise<PrdJson> => {
+  const { ctx, repoRoot, prd, task, attemptAt, iteration, gates, ui, judge, runId } = opts;
+  const lastAttempt: PrdTaskAttempt = {
+    at: attemptAt,
+    iteration,
+    gates,
+    ui,
+    judge,
+  };
+  let nextPrd = setPrdTaskStatus(prd, task.id, "blocked");
+  nextPrd = setPrdTaskLastAttempt(nextPrd, task.id, lastAttempt);
+  await writePrdJson(repoRoot, nextPrd);
+  await updateRunState(repoRoot, {
+    status: "BLOCKED",
+    phase: "run",
+    currentPI: task.id,
+  });
+  await logRunEvent(ctx, repoRoot, "error", "run.blocked.fail-early", `Run blocked on ${task.id}`, {
+    taskId: task.id,
+    reason: judge.reason?.[0] ?? "Unknown failure",
+  }, { runId, taskId: task.id, reasonCode: "TASK_FAIL_EARLY" });
+  return nextPrd;
+};
+
 const notifyControlSession = async (
   ctx: PluginContext,
   controlSessionId: string | undefined,
@@ -1349,20 +1384,17 @@ export const createTools = (ctx: PluginContext) => {
                   `Complete ${prerequisiteTask.id} first, then rerun /mario-devx:run 1.`,
                 ],
               };
-              const lastAttempt: PrdTaskAttempt = {
-                at: attemptAt,
+              prd = await persistBlockedTaskAttempt({
+                ctx,
+                repoRoot,
+                prd,
+                task,
+                attemptAt,
                 iteration: state.iteration,
                 gates,
                 ui,
                 judge,
-              };
-              prd = setPrdTaskStatus(prd, task.id, "blocked");
-              prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-              await writePrdJson(repoRoot, prd);
-              await updateRunState(repoRoot, {
-                status: "BLOCKED",
-                phase: "run",
-                currentPI: task.id,
+                runId,
               });
               await logRunEvent(ctx, repoRoot, "warn", "run.blocked.prerequisite", `Run blocked: prerequisite task pending for ${task.id}`, {
                 taskId: task.id,
@@ -1905,25 +1937,18 @@ export const createTools = (ctx: PluginContext) => {
               reason: reasonLines,
               nextActions: nextActions && nextActions.length > 0 ? nextActions : ["Fix the failing checks, then rerun /mario-devx:run 1."],
             };
-            const lastAttempt: PrdTaskAttempt = {
-              at: attemptAt,
+            prd = await persistBlockedTaskAttempt({
+              ctx,
+              repoRoot,
+              prd,
+              task,
+              attemptAt,
               iteration: state.iteration,
               gates,
               ui,
               judge,
-            };
-            prd = setPrdTaskStatus(prd, task.id, "blocked");
-            prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-            await writePrdJson(repoRoot, prd);
-            await updateRunState(repoRoot, {
-              status: "BLOCKED",
-              phase: "run",
-              currentPI: task.id,
+              runId,
             });
-            await logRunEvent(ctx, repoRoot, "error", "run.blocked.fail-early", `Run blocked on ${task.id}`, {
-              taskId: task.id,
-              reason: reasonLines[0] ?? "Unknown failure",
-            }, { runId, taskId: task.id, reasonCode: "TASK_FAIL_EARLY" });
           };
 
           if (!gateResult.ok) {
