@@ -1588,6 +1588,12 @@ export const createTools = (ctx: PluginContext) => {
                   `- Open usage: ${agentBrowserCaps.openUsage ?? "unknown"}`,
                   `- Commands: ${agentBrowserCaps.commands.join(", ") || "none"}`,
                   ...(agentBrowserCaps.notes.length > 0 ? [`- Notes: ${agentBrowserCaps.notes.join("; ")}`] : []),
+                  "",
+                  "Autonomous UI check policy:",
+                  `- UI URL: ${uiVerifyUrl}`,
+                  "- You may run agent-browser commands autonomously to gather missing evidence.",
+                  "- Maximum 8 browser commands for this verification pass.",
+                  "- Prefer snapshot/console/errors evidence before issuing FAIL.",
                 ]
                   .filter((x) => x)
                   .join("\n"),
@@ -2087,6 +2093,12 @@ export const createTools = (ctx: PluginContext) => {
               `- Open usage: ${agentBrowserCaps.openUsage ?? "unknown"}`,
               `- Commands: ${agentBrowserCaps.commands.join(", ") || "none"}`,
               ...(agentBrowserCaps.notes.length > 0 ? [`- Notes: ${agentBrowserCaps.notes.join("; ")}`] : []),
+              "",
+              "Autonomous UI check policy:",
+              `- UI URL: ${uiVerifyUrl}`,
+              "- You may run agent-browser commands autonomously to gather missing evidence.",
+              "- Maximum 8 browser commands for this verification pass.",
+              "- Prefer snapshot/console/errors evidence before issuing FAIL.",
             ]
               .filter((x) => x)
               .join("\n"),

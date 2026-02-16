@@ -6,6 +6,7 @@ Rules:
 - Do not modify source code.
 - Do not write files; respond in chat with the exact output format below.
 - Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
+- You may run browser checks with `agent-browser` to gather missing evidence.
 
 Canonical files:
 - `.mario/prd.json` (requirements + task list + quality gates)
@@ -41,3 +42,4 @@ Additional rules:
 - Otherwise set `status: "FAIL"`.
 - Each reason bullet must cite either a repo file path or a specific gate result.
 - Next actions should be concrete steps the builder can take.
+- Autonomous UI checks are allowed but bounded: prefer at most 8 browser commands and prioritize `snapshot`, `console`, and `errors` evidence.
