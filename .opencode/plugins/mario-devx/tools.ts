@@ -75,8 +75,9 @@ import {
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo, logWarning } from "./errors";
-import { coerceShellOutput, createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
+import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
 import { pidLooksAlive } from "./process";
+import { runShellCommand } from "./shell";
 
 type ToolContext = {
   sessionID?: string;
@@ -884,12 +885,9 @@ const runShellWithFailureLog = async (
     );
     return { exitCode: 127, stdout: "", stderr, durationMs: 0 };
   }
-  const started = Date.now();
-  const result = await ctx.$`sh -c ${command}`.nothrow();
-  const stdout = redactForLog(coerceShellOutput(result.stdout));
-  const stderr = redactForLog(coerceShellOutput(result.stderr));
-  const durationMs = Date.now() - started;
-  if (result.exitCode !== 0) {
+  const commandResult = await runShellCommand(ctx.$, command);
+  const { exitCode, stdout, stderr, durationMs } = commandResult;
+  if (exitCode !== 0) {
     await logRunEvent(
       ctx,
       repoRoot,
@@ -898,7 +896,7 @@ const runShellWithFailureLog = async (
       logMeta.message,
       {
         command,
-        exitCode: result.exitCode,
+        exitCode,
         durationMs,
         stdout,
         stderr,
@@ -911,7 +909,7 @@ const runShellWithFailureLog = async (
       },
     );
   }
-  return { exitCode: result.exitCode, stdout, stderr, durationMs };
+  return { exitCode, stdout, stderr, durationMs };
 };
 
 const notifyControlSession = async (

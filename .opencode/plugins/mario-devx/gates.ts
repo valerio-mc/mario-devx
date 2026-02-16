@@ -1,6 +1,6 @@
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
-import { coerceShellOutput, redactForLog } from "./logging";
+import { runShellCommand } from "./shell";
 
 export type GateCommand = { name: string; command: string };
 
@@ -188,10 +188,10 @@ export const runGateCommands = async (
     const wrapped = workdirAbs
       ? `cd ${shellSingleQuote(workdirAbs)} && ${cmd}`
       : cmd;
-    const result = await $`sh -c ${wrapped}`.nothrow();
+    const result = await runShellCommand($, wrapped);
     const ok = result.exitCode === 0;
-    const stdout = redactForLog(coerceShellOutput(result.stdout));
-    const stderr = redactForLog(coerceShellOutput(result.stderr));
+    const stdout = result.stdout;
+    const stderr = result.stderr;
     results.push({
       name: gate.name,
       command: cmd,

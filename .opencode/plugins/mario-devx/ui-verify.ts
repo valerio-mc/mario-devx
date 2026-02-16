@@ -1,6 +1,7 @@
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
-import { coerceShellOutput, redactForLog } from "./logging";
+import { redactForLog } from "./logging";
+import { runShellCommand } from "./shell";
 import { readUiVerifyState, writeUiVerifyState } from "./state";
 
 export type LoggedShellResult = {
@@ -25,18 +26,8 @@ const runShellLogged = async (
   log?: UiLog,
   options?: { eventPrefix?: string; reasonCode?: string },
 ): Promise<LoggedShellResult> => {
-  const started = Date.now();
-  const result = await ctx.$`sh -c ${command}`.nothrow();
-  const stdout = redactForLog(coerceShellOutput(result.stdout));
-  const stderr = redactForLog(coerceShellOutput(result.stderr));
-  const payload: LoggedShellResult = {
-    command,
-    exitCode: result.exitCode,
-    stdout,
-    stderr,
-    durationMs: Date.now() - started,
-  };
-  if (log && result.exitCode !== 0) {
+  const payload = await runShellCommand(ctx.$, command);
+  if (log && payload.exitCode !== 0) {
     await log({
       level: "error",
       event: `${options?.eventPrefix ?? "shell.command"}.failed`,
