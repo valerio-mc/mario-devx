@@ -1267,11 +1267,19 @@ export const createTools = (ctx: PluginContext) => {
           }
           const currentRun = await readRunState(repoRoot);
           if (currentRun.status === "DOING") {
-            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.active-run", "Run blocked because another run is active", {
-              currentPhase: currentRun.phase,
-              currentPI: currentRun.currentPI ?? null,
-            }, { runId, reasonCode: "RUN_ALREADY_DOING" });
-            return `A mario-devx run is already in progress (${currentRun.phase}). Wait for it to finish, then rerun /mario-devx:status.`;
+            const recoveredState = {
+              ...currentRun,
+              status: "BLOCKED" as const,
+              updatedAt: nowIso(),
+            };
+            await writeRunState(repoRoot, recoveredState);
+            await logRunEvent(ctx, repoRoot, "warn", "run.state.stale-doing-recovered", "Recovered stale in-progress run state", {
+              previousPhase: currentRun.phase,
+              previousCurrentPI: currentRun.currentPI ?? null,
+              previousStartedAt: currentRun.startedAt ?? null,
+              previousControlSessionId: currentRun.controlSessionId ?? null,
+            }, { runId, reasonCode: "STALE_DOING_RECOVERED" });
+            await showToast(ctx, "Run: recovered stale in-progress state from interrupted session", "warning");
           }
 
           let prd = await ensurePrd(repoRoot);
