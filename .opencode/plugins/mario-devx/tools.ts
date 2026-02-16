@@ -81,7 +81,7 @@ import {
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo, logWarning } from "./errors";
-import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
+import { coerceShellOutput, createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
 
 type ToolContext = {
   sessionID?: string;
@@ -911,8 +911,8 @@ const runShellWithFailureLog = async (
   }
   const started = Date.now();
   const result = await ctx.$`sh -c ${command}`.nothrow();
-  const stdout = redactForLog(typeof result.stdout === "string" ? result.stdout : "");
-  const stderr = redactForLog(typeof result.stderr === "string" ? result.stderr : "");
+  const stdout = redactForLog(coerceShellOutput(result.stdout));
+  const stderr = redactForLog(coerceShellOutput(result.stderr));
   const durationMs = Date.now() - started;
   if (result.exitCode !== 0) {
     await logRunEvent(

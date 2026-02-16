@@ -89,6 +89,26 @@ export const redactForLog = (value: string): string => {
   return next;
 };
 
+export const coerceShellOutput = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (value === null || value === undefined) return "";
+  if (value instanceof Uint8Array) {
+    return Buffer.from(value).toString("utf8");
+  }
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView;
+    return Buffer.from(view.buffer, view.byteOffset, view.byteLength).toString("utf8");
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value).toString("utf8");
+  }
+  try {
+    return String(value);
+  } catch {
+    return "";
+  }
+};
+
 const sanitizeExtra = (extra?: Record<string, unknown>): Record<string, unknown> => {
   if (!extra) return {};
   try {

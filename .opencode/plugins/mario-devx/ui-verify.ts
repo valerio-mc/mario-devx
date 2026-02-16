@@ -1,6 +1,6 @@
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
-import { redactForLog } from "./logging";
+import { coerceShellOutput, redactForLog } from "./logging";
 import { readUiVerifyState, writeUiVerifyState } from "./state";
 
 export type LoggedShellResult = {
@@ -27,8 +27,8 @@ const runShellLogged = async (
 ): Promise<LoggedShellResult> => {
   const started = Date.now();
   const result = await ctx.$`sh -c ${command}`.nothrow();
-  const stdout = redactForLog(typeof result.stdout === "string" ? result.stdout : "");
-  const stderr = redactForLog(typeof result.stderr === "string" ? result.stderr : "");
+  const stdout = redactForLog(coerceShellOutput(result.stdout));
+  const stderr = redactForLog(coerceShellOutput(result.stderr));
   const payload: LoggedShellResult = {
     command,
     exitCode: result.exitCode,
