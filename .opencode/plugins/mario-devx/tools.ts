@@ -74,6 +74,7 @@ import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete,
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
 import { buildRunSummary } from "./run-report";
 import { resolveUiRunSetup } from "./run-ui";
+import { RUN_PHASE, type RunExecutionContext, type RunLogMeta, type RunPhaseName } from "./run-types";
 import { runShellCommand } from "./shell";
 
 type ToolContext = {
@@ -704,7 +705,7 @@ const logRunEvent = async (
   event: string,
   message: string,
   extra?: Record<string, unknown>,
-  runCtx?: { runId?: string; taskId?: string; iteration?: number; reasonCode?: string },
+  runCtx?: RunLogMeta,
 ): Promise<void> => {
   await logEvent(ctx, repoRoot, {
     level,
@@ -1321,8 +1322,15 @@ export const createTools = (ctx: PluginContext) => {
           let attempted = 0;
           let completed = 0;
           const runNotes: string[] = [];
+          const runCtx: RunExecutionContext = {
+            runId,
+            repoRoot,
+            workspaceRoot,
+            workspaceAbs,
+            ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
+          };
           const logGateRunResults = async (
-            phase: string,
+            phase: RunPhaseName,
             taskId: string,
             gateResults: GateRunItem[],
           ): Promise<void> => {
@@ -1419,8 +1427,8 @@ export const createTools = (ctx: PluginContext) => {
             attempted += 1;
             logInfo("task", `Starting ${task.id}: ${task.title}`);
 
-            const reconcileGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-            await logGateRunResults("reconcile", task.id, reconcileGateResult.results);
+            const reconcileGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
+            await logGateRunResults(RUN_PHASE.RECONCILE, task.id, reconcileGateResult.results);
             if (reconcileGateResult.ok) {
               const uiResult = shouldRunUiVerify
                 ? await runUiVerification({
@@ -1771,8 +1779,8 @@ export const createTools = (ctx: PluginContext) => {
                 }
               }
 
-              let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-              await logGateRunResults("gate-check", task.id, gateResult.results);
+              let gateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
+              await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
 
               const failSigFromGate = (): string => {
                 const failed = gateResult.failed;
@@ -1825,8 +1833,8 @@ export const createTools = (ctx: PluginContext) => {
                   if (scaffoldRun.exitCode !== 0) {
                     await showToast(ctx, `Run: default scaffold failed on ${task.id}, falling back to agent repair`, "warning");
                   }
-                  gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-                  await logGateRunResults("gate-check-scaffold", task.id, gateResult.results);
+                  gateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
+                  await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
                   if (gateResult.ok) {
                     break;
                   }
@@ -1866,15 +1874,15 @@ export const createTools = (ctx: PluginContext) => {
                 }
 
                 repairAttempts += 1;
-                gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-                await logGateRunResults("gate-check-repair", task.id, gateResult.results);
+                gateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
+                await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
               }
 
               if (!gateResult.ok) {
                 const settleIdle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.GATE_SETTLE_IDLE_MS, 2);
                 if (settleIdle) {
-                  const reconciledGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-                  await logGateRunResults("gate-settle", task.id, reconciledGateResult.results);
+                  const reconciledGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
+                  await logGateRunResults(RUN_PHASE.RECONCILE, task.id, reconciledGateResult.results);
                   if (reconciledGateResult.ok) {
                     gateResult = reconciledGateResult;
                   }
