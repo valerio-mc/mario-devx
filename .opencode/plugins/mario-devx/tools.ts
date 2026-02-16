@@ -817,6 +817,13 @@ const sleep = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
 };
 
+const sanitizeForPrompt = (text: string): string => {
+  return text
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .trim();
+};
+
 const promptAndResolveWithRetry = async (opts: {
   ctx: PluginContext;
   repoRoot: string;
@@ -836,7 +843,7 @@ const promptAndResolveWithRetry = async (opts: {
         attempt,
         maxAttempts,
       }, { runId, taskId });
-      const verifierResponse = await ctx.client.session.prompt({
+      const verifierResponse = await ctx.client.session.promptAsync({
         path: { id: sessionId },
         body: {
           ...(agent ? { agent } : {}),
@@ -1671,7 +1678,7 @@ export const createTools = (ctx: PluginContext) => {
               const verifierPrompt = await buildPrompt(
                 repoRoot,
                 "verify",
-                [
+                sanitizeForPrompt([
                   `Task: ${task.id} - ${task.title}`,
                   effectiveDoneWhen.length > 0
                     ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}`
@@ -1701,18 +1708,53 @@ export const createTools = (ctx: PluginContext) => {
                   "- Prefer snapshot/console/errors evidence before issuing FAIL.",
                 ]
                   .filter((x) => x)
-                  .join("\n"),
+                  .join("\n")),
               );
-              const verifierText = await promptAndResolveWithRetry({
-                ctx,
-                repoRoot,
-                sessionId: wsForVerifier.sessionId,
-                promptText: verifierPrompt,
-                runId,
-                taskId: task.id,
-                ...(context.agent ? { agent: context.agent } : {}),
-                timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
-              });
+              let verifierText = "";
+              try {
+                verifierText = await promptAndResolveWithRetry({
+                  ctx,
+                  repoRoot,
+                  sessionId: wsForVerifier.sessionId,
+                  promptText: verifierPrompt,
+                  runId,
+                  taskId: task.id,
+                  ...(context.agent ? { agent: context.agent } : {}),
+                  timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
+                });
+              } catch (error) {
+                const errMsg = error instanceof Error ? error.message : String(error);
+                const judge: PrdJudgeAttempt = {
+                  status: "FAIL",
+                  exitSignal: false,
+                  reason: [
+                    formatReasonCode("VERIFIER_TRANSPORT_EOF"),
+                    `Verifier transport failed during reconcile: ${errMsg}`,
+                  ],
+                  nextActions: [
+                    "Retry /mario-devx:run 1.",
+                    "If it repeats, inspect .mario/state/mario-devx.log for run.verify.transport.error.",
+                  ],
+                };
+                prd = await persistBlockedTaskAttempt({
+                  ctx,
+                  repoRoot,
+                  prd,
+                  task,
+                  attemptAt,
+                  iteration: state.iteration,
+                  gates,
+                  ui,
+                  judge,
+                  runId,
+                });
+                await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed during reconcile for ${task.id}`, {
+                  taskId: task.id,
+                  error: errMsg,
+                }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
+                await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
+                break;
+              }
               const judge = parseJudgeAttemptFromText(verifierText);
               const lastAttempt: PrdTaskAttempt = {
                 at: attemptAt,
@@ -2182,7 +2224,7 @@ export const createTools = (ctx: PluginContext) => {
           const verifierPrompt = await buildPrompt(
             repoRoot,
             "verify",
-            [
+            sanitizeForPrompt([
               `Task: ${task.id} - ${task.title}`,
               effectiveDoneWhen.length > 0
                 ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}`
@@ -2212,23 +2254,41 @@ export const createTools = (ctx: PluginContext) => {
               "- Prefer snapshot/console/errors evidence before issuing FAIL.",
             ]
               .filter((x) => x)
-              .join("\n"),
+              .join("\n")),
           );
 
               await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
               await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass", {
                 taskId: task.id,
               }, { runId, taskId: task.id });
-              const verifierText = await promptAndResolveWithRetry({
-                ctx,
-                repoRoot,
-                sessionId: ws.sessionId,
-                promptText: verifierPrompt,
-                runId,
-                taskId: task.id,
-                ...(context.agent ? { agent: context.agent } : {}),
-                timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
-              });
+              let verifierText = "";
+              try {
+                verifierText = await promptAndResolveWithRetry({
+                  ctx,
+                  repoRoot,
+                  sessionId: ws.sessionId,
+                  promptText: verifierPrompt,
+                  runId,
+                  taskId: task.id,
+                  ...(context.agent ? { agent: context.agent } : {}),
+                  timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
+                });
+              } catch (error) {
+                const errMsg = error instanceof Error ? error.message : String(error);
+                await failEarly([
+                  formatReasonCode("VERIFIER_TRANSPORT_EOF"),
+                  `Verifier transport failed: ${errMsg}`,
+                ], [
+                  "Retry /mario-devx:run 1.",
+                  "If it repeats, inspect .mario/state/mario-devx.log for run.verify.transport.error.",
+                ]);
+                await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed for ${task.id}`, {
+                  taskId: task.id,
+                  error: errMsg,
+                }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
+                await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
+                break;
+              }
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("after-judge");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
