@@ -252,20 +252,39 @@ export const ensureAgentBrowserPrereqs = async (
     const cached = await readUiVerifyState(repoRoot);
     const shouldInstallBrowser = !cached.browserInstallOkAt || !version || cached.agentBrowserVersion !== version;
     if (shouldInstallBrowser) {
-      attempted.push("agent-browser install");
-      const installResult = await runPrereqStep(
-        ctx,
-        "agent-browser install",
-        log,
-        "browser-install",
-        "UI_PREREQ_BROWSER_INSTALL_FAILED",
-      );
-      browserInstallExitCode = installResult.exitCode;
+      const browserInstallCommands = [
+        "CI=1 npm_config_yes=true npx --yes playwright install chromium",
+        "CI=1 npm_config_yes=true npx --yes playwright install",
+        "CI=1 npm_config_yes=true agent-browser install",
+      ];
+      let installResult: LoggedShellResult | null = null;
+      for (const command of browserInstallCommands) {
+        attempted.push(command);
+        const result = await runPrereqStep(
+          ctx,
+          command,
+          log,
+          "browser-install",
+          "UI_PREREQ_BROWSER_INSTALL_FAILED",
+        );
+        installResult = result;
+        if (result.exitCode === 0) {
+          break;
+        }
+      }
+      const finalInstallResult = installResult ?? {
+        command: "",
+        exitCode: 1,
+        stdout: "",
+        stderr: "No browser install command was executed.",
+        durationMs: 0,
+      };
+      browserInstallExitCode = finalInstallResult.exitCode;
       await writeUiVerifyState(repoRoot, {
         ...(version ? { agentBrowserVersion: version } : {}),
         lastInstallAttemptAt: new Date().toISOString(),
-        lastInstallExitCode: installResult.exitCode,
-        ...(installResult.exitCode === 0 ? { browserInstallOkAt: new Date().toISOString() } : {}),
+        lastInstallExitCode: finalInstallResult.exitCode,
+        ...(finalInstallResult.exitCode === 0 ? { browserInstallOkAt: new Date().toISOString() } : {}),
       });
     } else {
       browserInstallExitCode = 0;
