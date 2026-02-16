@@ -844,9 +844,12 @@ const promptAndResolveWithRetry = async (opts: {
         },
       });
       const verifierText = await resolvePromptText(ctx, sessionId, verifierResponse, timeoutMs);
+      if (!verifierText.trim()) {
+        throw new Error("Empty verifier response text");
+      }
       await logRunEvent(ctx, repoRoot, "info", "run.verify.response.received", "Verifier response received", {
         attempt,
-        hasText: verifierText.trim().length > 0,
+        hasText: true,
       }, { runId, taskId });
       return verifierText;
     } catch (error) {
