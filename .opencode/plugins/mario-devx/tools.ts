@@ -1948,7 +1948,7 @@ export const createTools = (ctx: PluginContext) => {
                   break;
                 }
 
-                const repairIdle = await waitForSessionIdleStable(ctx, ws.sessionId, 15 * 60 * 1000);
+                const repairIdle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
                 if (!repairIdle) {
                   break;
                 }
@@ -1959,7 +1959,7 @@ export const createTools = (ctx: PluginContext) => {
               }
 
               if (!gateResult.ok) {
-                const settleIdle = await waitForSessionIdleStable(ctx, ws.sessionId, 15000, 2);
+                const settleIdle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.GATE_SETTLE_IDLE_MS, 2);
                 if (settleIdle) {
                   const reconciledGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
                   await logGateRunResults("gate-settle", task.id, reconciledGateResult.results);

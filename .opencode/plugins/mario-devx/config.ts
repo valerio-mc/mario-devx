@@ -12,6 +12,12 @@ export const TIMEOUTS = {
   
   // Maximum time to wait for a session to become idle (20 minutes)
   SESSION_IDLE_TIMEOUT_MS: 20 * 60 * 1000,
+
+  // Idle wait after repair prompts before re-running gates (15 minutes)
+  REPAIR_IDLE_TIMEOUT_MS: 15 * 60 * 1000,
+
+  // Short idle settle before a final gate reconciliation pass (15 seconds)
+  GATE_SETTLE_IDLE_MS: 15 * 1000,
   
   // Window to prevent duplicate runs (8 seconds)
   RUN_DUPLICATE_WINDOW_MS: 8000,
