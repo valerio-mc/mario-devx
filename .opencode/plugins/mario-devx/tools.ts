@@ -15,11 +15,7 @@ import {
   runGateCommands,
 } from "./gates";
 import {
-  ensureAgentBrowserPrereqs,
-  hasAgentBrowserCli,
-  hasAgentBrowserSkill,
   hasAgentsKey,
-  isLikelyWebApp,
   parseAgentsEnv,
   runUiVerification,
   upsertAgentsKey,
@@ -77,6 +73,7 @@ import { logError, logInfo, logWarning } from "./errors";
 import { createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
 import { buildRunSummary } from "./run-report";
+import { resolveUiRunSetup } from "./run-ui";
 import { runShellCommand } from "./shell";
 
 type ToolContext = {
@@ -1250,26 +1247,14 @@ export const createTools = (ctx: PluginContext) => {
         const parsed = rawMax.length === 0 ? 1 : Number.parseInt(rawMax, 10);
         const maxItems = Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 1;
 
-        const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-        const agentsRaw = await readTextIfExists(agentsPath);
-        const agentsParsed = agentsRaw ? parseAgentsEnv(agentsRaw) : { env: {}, warnings: [] };
-        const agentsEnv = agentsParsed.env;
-        if (agentsParsed.warnings.length > 0) {
-          await showToast(ctx, `Run warning: AGENTS.md parse warnings (${agentsParsed.warnings.length})`, "warning");
-        }
-        const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
-        const uiVerifyCmd = agentsEnv.UI_VERIFY_CMD || (workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
-        const uiVerifyUrl = agentsEnv.UI_VERIFY_URL || "http://localhost:3000";
-        const uiVerifyRequired = agentsEnv.UI_VERIFY_REQUIRED === "1";
-        const agentBrowserRepo = agentsEnv.AGENT_BROWSER_REPO || "https://github.com/vercel-labs/agent-browser";
-
-        const isWebApp = await isLikelyWebApp(repoRoot);
-        let cliOk = await hasAgentBrowserCli(ctx);
-        let skillOk = await hasAgentBrowserSkill(repoRoot);
-        let browserOk = true;
-        let autoInstallAttempted: string[] = [];
-        if (uiVerifyEnabled && isWebApp) {
-          const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot, async (entry) => {
+        const uiSetup = await resolveUiRunSetup({
+          ctx,
+          repoRoot,
+          workspaceRoot,
+          onWarnings: async (count) => {
+            await showToast(ctx, `Run warning: AGENTS.md parse warnings (${count})`, "warning");
+          },
+          onPrereqLog: async (entry) => {
             if (entry.event === "ui.prereq.browser-install.start") {
               await showToast(ctx, "Run: installing browser runtime for UI verification (may take a few minutes)", "info");
             }
@@ -1282,13 +1267,21 @@ export const createTools = (ctx: PluginContext) => {
               entry.extra,
               { runId, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
             );
-          });
-          cliOk = ensured.cliOk;
-          skillOk = ensured.skillOk;
-          browserOk = ensured.browserOk;
-          autoInstallAttempted = ensured.attempted;
-        }
-        const shouldRunUiVerify = uiVerifyEnabled && isWebApp && cliOk && skillOk && browserOk;
+          },
+        });
+        const {
+          uiVerifyEnabled,
+          uiVerifyCmd,
+          uiVerifyUrl,
+          uiVerifyRequired,
+          agentBrowserRepo,
+          isWebApp,
+          cliOk,
+          skillOk,
+          browserOk,
+          autoInstallAttempted,
+          shouldRunUiVerify,
+        } = uiSetup;
 
           let attempted = 0;
           let completed = 0;
