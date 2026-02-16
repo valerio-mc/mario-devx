@@ -810,7 +810,7 @@ const runShellWithFailureLog = async (
 
 const isLikelyJsonEofError = (error: unknown): boolean => {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return /unexpected eof|unexpected end of json input|json parse error/i.test(message);
+  return /unexpected eof|unexpected end of json input|json parse error|empty verifier response text/i.test(message);
 };
 
 const sleep = async (ms: number): Promise<void> => {
@@ -843,7 +843,7 @@ const promptAndResolveWithRetry = async (opts: {
         attempt,
         maxAttempts,
       }, { runId, taskId });
-      const verifierResponse = await ctx.client.session.promptAsync({
+      const verifierResponse = await ctx.client.session.prompt({
         path: { id: sessionId },
         body: {
           ...(agent ? { agent } : {}),
