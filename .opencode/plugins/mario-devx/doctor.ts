@@ -1,5 +1,7 @@
 import path from "path";
 import { readTextIfExists } from "./fs";
+import { assetsDir } from "./assets";
+import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { redactForLog } from "./logging";
 import { pidLooksAlive } from "./process";
 import { readPrdJsonIfExists } from "./prd";
@@ -90,6 +92,22 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
         fixes.push("Install: npm install -g agent-browser && agent-browser install");
         fixes.push("Optional: set UI_VERIFY=0 in .mario/AGENTS.md to disable best-effort UI checks.");
       } else {
+        const caps = await discoverAgentBrowserCapabilities(ctx);
+        if (!caps.available) {
+          issues.push("agent-browser CLI appears unavailable during capability probe.");
+          fixes.push("Reinstall: npm install -g agent-browser");
+        } else if (caps.openUsage && !caps.openUsage.includes("open <url>")) {
+          issues.push(`agent-browser open signature differs from expected contract (${caps.openUsage}).`);
+          fixes.push("Update agent-browser to latest release and rerun /mario-devx:doctor.");
+        }
+
+        const uiVerifierPath = path.join(assetsDir(), "prompts", "UI_VERIFIER.md");
+        const uiVerifierPlaybook = await readTextIfExists(uiVerifierPath);
+        if (!uiVerifierPlaybook || uiVerifierPlaybook.trim().length === 0) {
+          issues.push("UI verifier playbook is missing (UI_VERIFIER.md). Autonomous UI judging may drift.");
+          fixes.push("Restore .opencode/plugins/mario-devx/assets/prompts/UI_VERIFIER.md and reinstall plugin.");
+        }
+
         const runtime = await hasAgentBrowserRuntime(ctx);
         if (!runtime.ok) {
           issues.push("UI_VERIFY=1 and agent-browser CLI exists, but browser runtime is missing or broken.");
