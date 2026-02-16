@@ -1,4 +1,5 @@
 import path from "path";
+import { spawn } from "child_process";
 import { readTextIfExists, writeText } from "./fs";
 import { redactForLog } from "./logging";
 import { runShellCommand } from "./shell";
@@ -77,6 +78,50 @@ const looksInteractivePrompt = (output: string): boolean => {
     || text.includes("need to install the following packages")
     || /\(y\/n\)|\by\/n\b/.test(text)
   );
+};
+
+const waitForUrlReady = async (url: string, timeoutMs: number): Promise<boolean> => {
+  const started = Date.now();
+  const attempt = async (): Promise<boolean> => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 3000);
+      const res = await fetch(url, { method: "GET", signal: ctrl.signal });
+      clearTimeout(timer);
+      return res.status < 500;
+    } catch {
+      return false;
+    }
+  };
+
+  while (Date.now() - started < timeoutMs) {
+    if (await attempt()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return false;
+};
+
+const startDevServer = (command: string): { pid: number | null; stop: () => Promise<void> } => {
+  const child = spawn("sh", ["-c", command], {
+    stdio: "ignore",
+    env: { ...process.env, CI: "1", npm_config_yes: "true" },
+  });
+  const pid = child.pid ?? null;
+  const stop = async (): Promise<void> => {
+    if (!pid) return;
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already closed
+    }
+  };
+  return { pid, stop };
 };
 
 const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config");
@@ -392,14 +437,35 @@ export const runUiVerification = async (opts: {
   };
 
   const steps = [
-    {
-      name: "open",
-      command: `agent-browser open --cmd=${JSON.stringify(devCmd)} --url=${JSON.stringify(url)} --wait=${effectiveWait}`,
-    },
+    { name: "open", command: `agent-browser open ${JSON.stringify(url)}` },
     { name: "snapshot", command: "agent-browser snapshot" },
     { name: "console", command: "agent-browser console --limit=50" },
     { name: "errors", command: "agent-browser errors" },
   ];
+
+  const initialReady = await waitForUrlReady(url, 1500);
+  let server: { pid: number | null; stop: () => Promise<void> } | null = null;
+  if (!initialReady) {
+    server = startDevServer(devCmd);
+    await log?.({
+      level: "info",
+      event: "ui.verify.server.start",
+      message: "Started UI dev server for verification",
+      extra: { devCmd, pid: server.pid },
+    });
+    const ready = await waitForUrlReady(url, effectiveWait);
+    if (!ready) {
+      await log?.({
+        level: "error",
+        event: "ui.verify.server.timeout",
+        message: "UI dev server did not become ready before timeout",
+        reasonCode: "UI_VERIFY_SERVER_TIMEOUT",
+        extra: { devCmd, url, waitMs: effectiveWait, pid: server.pid },
+      });
+      await server.stop();
+      return { ok: false, note: `UI dev server did not become ready within ${effectiveWait}ms for ${url}.` };
+    }
+  }
 
   try {
     for (const step of steps) {
@@ -443,6 +509,15 @@ export const runUiVerification = async (opts: {
       eventPrefix: "ui.verify.close",
       reasonCode: "UI_VERIFY_CLOSE_FAILED",
     });
+    if (server) {
+      await server.stop();
+      await log?.({
+        level: "info",
+        event: "ui.verify.server.stop",
+        message: "Stopped UI dev server for verification",
+        extra: { pid: server.pid },
+      });
+    }
   }
 };
 
