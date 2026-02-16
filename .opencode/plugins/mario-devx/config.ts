@@ -49,38 +49,3 @@ export const WIZARD_REQUIREMENTS = {
   // Total wizard steps (for display)
   TOTAL_STEPS: 17,
 } as const;
-
-// Task statuses
-export const TASK_STATUS = {
-  OPEN: "open",
-  IN_PROGRESS: "in_progress",
-  BLOCKED: "blocked",
-  COMPLETED: "completed",
-  CANCELLED: "cancelled",
-} as const;
-
-// Run phases and statuses
-export const RUN_STATE = {
-  PHASE: "run" as const,
-  STATUS: {
-    NONE: "NONE",
-    DOING: "DOING",
-    DONE: "DONE",
-    BLOCKED: "BLOCKED",
-  } as const,
-};
-
-// Verification results
-export const VERIFICATION = {
-  PASS: "PASS",
-  FAIL: "FAIL",
-} as const;
-
-// LLM Response tags
-export const LLM_TAGS = {
-  PRD_INTERVIEW_JSON: "MARIO_JSON",
-  PRD_INTERVIEW_QUESTION: "MARIO_QUESTION",
-  FEATURE_JSON: "FEATURE_JSON",
-  REPLAN_JSON: "REPLAN_JSON",
-  VERIFIER_JSON: "VERIFIER_JSON",
-} as const;

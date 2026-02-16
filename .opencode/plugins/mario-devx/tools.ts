@@ -4,13 +4,12 @@ import { mkdir, readFile, stat, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
-import { ensureMario, bumpIteration, readWorkSessionState, readRunState, writeRunState } from "./state";
+import { ensureMario, bumpIteration, readRunState, writeRunState } from "./state";
 
 import { getRepoRoot } from "./paths";
 import {
   ensureT0002QualityBootstrap,
   type GateRunItem,
-  extractScriptFromCommand,
   hasNodeModules,
   missingPackageScriptForCommand,
   resolveNodeWorkspaceRoot,
@@ -33,7 +32,6 @@ import {
   hasNonEmpty,
   isPrdComplete,
   mergeStyleReferences,
-  normalizeStyleReferences,
   normalizeTextArray,
 } from "./interview";
 import {
@@ -44,7 +42,6 @@ import {
   makeTask,
   nextBacklogId,
   nextTaskOrdinal,
-  normalizeMustHaveFeatureAtoms,
   normalizeTaskId,
   setPrdTaskLastAttempt,
   setPrdTaskStatus,
@@ -74,14 +71,12 @@ import {
 } from "./prd";
 import {
   LIMITS,
-  RUN_STATE,
-  TASK_STATUS,
   TIMEOUTS,
-  VERIFICATION,
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo, logWarning } from "./errors";
 import { coerceShellOutput, createRunId, logEvent, logTaskComplete, logTaskBlocked, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
+import { pidLooksAlive } from "./process";
 
 type ToolContext = {
   sessionID?: string;
@@ -93,22 +88,6 @@ type PluginContext = Parameters<Plugin>[0];
 const nowIso = (): string => new Date().toISOString();
 
 const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
-
-const pidLooksAlive = (pid: unknown): boolean | null => {
-  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) {
-    return null;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    const code = (e as { code?: string }).code;
-    if (code === "ESRCH") {
-      return false;
-    }
-    return null;
-  }
-};
 
 const acquireRunLock = async (
   repoRoot: string,

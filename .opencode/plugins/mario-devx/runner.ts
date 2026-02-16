@@ -1,5 +1,3 @@
-import path from "path";
-import { readTextIfExists } from "./fs";
 import { ensureMario, readRunState, readWorkSessionState, writeRunState, writeWorkSessionState } from "./state";
 import type { RunState } from "./types";
 
@@ -252,13 +250,4 @@ export const resolvePromptText = async (
   }
 
   return readSessionMessageText(ctx, sessionId, messageId);
-};
-
-export const stateFilePath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "state.json");
-
-export const hasStaleWorkSessionRefs = async (repoRoot: string): Promise<boolean> => {
-  const ws = await readWorkSessionState(repoRoot);
-  if (!ws?.sessionId) return false;
-  const stateRaw = await readTextIfExists(stateFilePath(repoRoot));
-  return !!stateRaw && stateRaw.includes(ws.sessionId);
 };

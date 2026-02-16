@@ -17,7 +17,7 @@ Rules:
 - Do not edit control-plane files directly: `.mario/prd.json`, `.mario/state/state.json`, `.mario/AGENTS.md`.
 
 Prime directive:
-- Do not advance. You are not done unless the deterministic gates pass and the verifier outputs `Status: PASS` + `EXIT_SIGNAL: true`.
+- Do not advance. You are not done unless deterministic gates pass and the verifier returns `<VERIFIER_JSON>` with `"status": "PASS"`.
 
 Stop conditions (do not guess):
 - If the task block you received does not match `.mario/prd.json` for that task id, STOP and mark the task `blocked` with a short note describing the mismatch.

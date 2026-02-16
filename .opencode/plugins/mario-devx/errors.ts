@@ -26,12 +26,6 @@ export class MarioErrorClass extends Error implements MarioError {
   }
 }
 
-export const createError = (code: string, message: string, details?: unknown): MarioError => ({
-  code,
-  message,
-  details,
-});
-
 export const logError = (context: string, error: unknown): void => {
   if (error instanceof MarioErrorClass) {
     console.error(`[mario-devx] ${context}: [${error.code}] ${error.message}`);
@@ -54,30 +48,4 @@ export const logWarning = (context: string, message: string): void => {
 
 export const logInfo = (context: string, message: string): void => {
   console.log(`[mario-devx] ${context}: ${message}`);
-};
-
-export const handleAsyncError = async <T>(
-  operation: () => Promise<T>,
-  context: string,
-  errorCode: string,
-  defaultValue?: T
-): Promise<T> => {
-  try {
-    return await operation();
-  } catch (error) {
-    logError(context, error);
-    if (defaultValue !== undefined) {
-      return defaultValue;
-    }
-    throw new MarioErrorClass(errorCode, `Failed in ${context}: ${error instanceof Error ? error.message : String(error)}`, error);
-  }
-};
-
-export const safelyParseJSON = <T>(json: string, context: string): T | null => {
-  try {
-    return JSON.parse(json) as T;
-  } catch (error) {
-    logError(context, createError("JSON_PARSE_ERROR", "Failed to parse JSON", { json: json.substring(0, 200), error }));
-    return null;
-  }
 };

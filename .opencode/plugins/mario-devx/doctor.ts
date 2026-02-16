@@ -1,25 +1,10 @@
 import path from "path";
 import { readTextIfExists } from "./fs";
 import { redactForLog } from "./logging";
+import { pidLooksAlive } from "./process";
 import { readPrdJsonIfExists } from "./prd";
 import { readRunState, readUiVerifyState, readWorkSessionState } from "./state";
 import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
-
-const pidLooksAlive = (pid: unknown): boolean | null => {
-  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) {
-    return null;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    const code = (e as { code?: string }).code;
-    if (code === "ESRCH") {
-      return false;
-    }
-    return null;
-  }
-};
 
 export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => {
   const issues: string[] = [];
