@@ -233,6 +233,9 @@ export const ensureAgentBrowserPrereqs = async (
 ): Promise<{ cliOk: boolean; skillOk: boolean; browserOk: boolean; attempted: string[] }> => {
   const attempted: string[] = [];
   let browserInstallExitCode = 0;
+  let browserInstallReasonCode = "";
+  let browserInstallCommand = "";
+  let browserInstallNote = "";
   const getAgentBrowserVersion = async (): Promise<string | null> => {
     if (!ctx.$) return null;
     const version = await runShellLogged(ctx, "agent-browser --version", log, {
@@ -259,7 +262,11 @@ export const ensureAgentBrowserPrereqs = async (
 
     const version = await getAgentBrowserVersion();
     const cached = await readUiVerifyState(repoRoot);
-    const shouldInstallBrowser = !cached.browserInstallOkAt || !version || cached.agentBrowserVersion !== version;
+    const runtimeBefore = await hasAgentBrowserRuntime(ctx);
+    const shouldInstallBrowser = !cached.browserInstallOkAt
+      || !version
+      || cached.agentBrowserVersion !== version
+      || !runtimeBefore.ok;
     if (shouldInstallBrowser) {
       const browserInstallCommands = [
         "CI=1 npm_config_yes=true npx --yes playwright install chromium",
@@ -269,6 +276,7 @@ export const ensureAgentBrowserPrereqs = async (
       let installResult: LoggedShellResult | null = null;
       for (const command of browserInstallCommands) {
         attempted.push(command);
+        browserInstallCommand = command;
         const result = await runPrereqStep(
           ctx,
           command,
@@ -280,6 +288,8 @@ export const ensureAgentBrowserPrereqs = async (
         if (result.exitCode !== 0) {
           const combinedOutput = `${result.stdout}\n${result.stderr}`;
           if (looksInteractivePrompt(combinedOutput)) {
+            browserInstallReasonCode = "INTERACTIVE_PROMPT_BLOCKED";
+            browserInstallNote = "Interactive installer prompt detected while bootstrapping browser runtime.";
             await log?.({
               level: "warn",
               event: "ui.prereq.browser-install.interactive-prompt",
@@ -304,14 +314,35 @@ export const ensureAgentBrowserPrereqs = async (
         durationMs: 0,
       };
       browserInstallExitCode = finalInstallResult.exitCode;
+      if (browserInstallExitCode !== 0 && !browserInstallReasonCode) {
+        browserInstallReasonCode = "UI_PREREQ_BROWSER_INSTALL_FAILED";
+      }
+      const runtimeAfter = await hasAgentBrowserRuntime(ctx);
+      if (!runtimeAfter.ok) {
+        browserInstallExitCode = browserInstallExitCode === 0 ? 1 : browserInstallExitCode;
+        if (!browserInstallReasonCode) {
+          browserInstallReasonCode = "UI_PREREQ_RUNTIME_CHECK_FAILED";
+        }
+        browserInstallNote = runtimeAfter.note ?? browserInstallNote;
+      }
       await writeUiVerifyState(repoRoot, {
         ...(version ? { agentBrowserVersion: version } : {}),
         lastInstallAttemptAt: new Date().toISOString(),
-        lastInstallExitCode: finalInstallResult.exitCode,
-        ...(finalInstallResult.exitCode === 0 ? { browserInstallOkAt: new Date().toISOString() } : {}),
+        lastInstallExitCode: browserInstallExitCode,
+        ...(browserInstallReasonCode ? { lastInstallReasonCode: browserInstallReasonCode } : {}),
+        ...(browserInstallCommand ? { lastInstallCommand: browserInstallCommand } : {}),
+        ...(browserInstallNote ? { lastInstallNote: browserInstallNote } : {}),
+        ...(browserInstallExitCode === 0 ? { browserInstallOkAt: new Date().toISOString() } : {}),
       });
     } else {
       browserInstallExitCode = 0;
+      await writeUiVerifyState(repoRoot, {
+        ...(version ? { agentBrowserVersion: version } : {}),
+        lastInstallExitCode: 0,
+        lastInstallReasonCode: "",
+        lastInstallCommand: "",
+        lastInstallNote: "",
+      });
       await log?.({
         level: "info",
         event: "ui.prereq.browser-install.cached",

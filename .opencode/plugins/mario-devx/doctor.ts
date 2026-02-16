@@ -2,7 +2,7 @@ import path from "path";
 import { readTextIfExists } from "./fs";
 import { redactForLog } from "./logging";
 import { readPrdJsonIfExists } from "./prd";
-import { readRunState, readWorkSessionState } from "./state";
+import { readRunState, readUiVerifyState, readWorkSessionState } from "./state";
 import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
 
 const pidLooksAlive = (pid: unknown): boolean | null => {
@@ -55,6 +55,7 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
   }
 
   const runState = await readRunState(repoRoot);
+  const uiVerifyState = await readUiVerifyState(repoRoot);
   if (runState.status === "DOING") {
     const lockPath = path.join(repoRoot, ".mario", "state", "run.lock");
     const lockRaw = await readTextIfExists(lockPath);
@@ -108,6 +109,16 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
         if (!runtime.ok) {
           issues.push("UI_VERIFY=1 and agent-browser CLI exists, but browser runtime is missing or broken.");
           fixes.push("Run: agent-browser install");
+          if (uiVerifyState.lastInstallReasonCode === "INTERACTIVE_PROMPT_BLOCKED") {
+            issues.push("Previous browser install attempt hit an interactive prompt and was blocked.");
+            fixes.push("Use non-interactive install: CI=1 npm_config_yes=true npx --yes playwright install chromium");
+          }
+          if (uiVerifyState.lastInstallCommand) {
+            issues.push(`Last install command: ${uiVerifyState.lastInstallCommand}`);
+          }
+          if (uiVerifyState.lastInstallNote) {
+            issues.push(`Last install note: ${redactForLog(uiVerifyState.lastInstallNote).slice(0, 240)}`);
+          }
           if (runtime.note) {
             issues.push(`Runtime detail: ${redactForLog(runtime.note).slice(0, 240)}`);
           }

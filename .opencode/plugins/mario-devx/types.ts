@@ -29,4 +29,7 @@ export type UiVerifyState = {
   browserInstallOkAt?: string;
   lastInstallAttemptAt?: string;
   lastInstallExitCode?: number;
+  lastInstallReasonCode?: string;
+  lastInstallCommand?: string;
+  lastInstallNote?: string;
 };
