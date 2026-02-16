@@ -118,41 +118,38 @@ const acquireRunLock = async (
   const lockPath = runLockPath(repoRoot);
   await mkdir(path.dirname(lockPath), { recursive: true });
 
-  const staleAfterMs = 12 * 60 * 60 * 1000;
+  const staleAfterMs = TIMEOUTS.STALE_LOCK_TIMEOUT_MS;
   try {
     const s = await stat(lockPath);
-    if (Date.now() - s.mtimeMs > staleAfterMs) {
-      await unlink(lockPath);
-    } else {
-      const existing = await readFile(lockPath, "utf8");
+    const existing = await readFile(lockPath, "utf8");
+    const lockIsOld = Date.now() - s.mtimeMs > staleAfterMs;
+    try {
+      const parsed = JSON.parse(existing) as { pid?: unknown };
+      const alive = pidLooksAlive(parsed.pid);
+      if (alive === false || (lockIsOld && alive !== true)) {
+        if (typeof parsed.pid === "number") {
+          await onEvent?.({
+            type: "stale-pid-removed",
+            lockPath,
+            stalePid: parsed.pid,
+          });
+        }
+        await unlink(lockPath);
+      } else {
+        return {
+          ok: false,
+          message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
+        };
+      }
+    } catch {
+      // Corrupt lock file; treat as stale.
       try {
-        const parsed = JSON.parse(existing) as { pid?: unknown };
-        const alive = pidLooksAlive(parsed.pid);
-        if (alive === false) {
-          if (typeof parsed.pid === "number") {
-            await onEvent?.({
-              type: "stale-pid-removed",
-              lockPath,
-              stalePid: parsed.pid,
-            });
-          }
-          await unlink(lockPath);
-        } else {
-          return {
-            ok: false,
-            message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
-          };
-        }
+        await unlink(lockPath);
       } catch {
-        // Corrupt lock file; treat as stale.
-        try {
-          await unlink(lockPath);
-        } catch {
-          return {
-            ok: false,
-            message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
-          };
-        }
+        return {
+          ok: false,
+          message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
+        };
       }
     }
   } catch {
@@ -188,9 +185,8 @@ const acquireRunLock = async (
  * 
  * Called at checkpoints throughout task execution.
  * 
- * SAFETY: This function now checks that the lock file belongs to the current
- * process before updating, preventing race conditions where multiple processes
- * could overwrite each other's heartbeats.
+ * SAFETY: This function checks that the lock file belongs to the current
+ * process before writing a heartbeat update.
  */
 const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
   const lockPath = runLockPath(repoRoot);
@@ -1049,7 +1045,7 @@ export const createTools = (ctx: PluginContext) => {
             parts: [{ type: "text", text: interviewPrompt(prd, interviewInput) }],
           },
         });
-        const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse, TIMEOUTS.SESSION_IDLE_MS);
+        const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
         let parsedInterview = parseInterviewTurn(text);
 
         if (parsedInterview.error) {
@@ -1064,7 +1060,7 @@ export const createTools = (ctx: PluginContext) => {
               parts: [{ type: "text", text: interviewTurnRepairPrompt(text) }],
             },
           });
-          const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_MS);
+          const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
           const repairedInterview = parseInterviewTurn(repairedText);
 
           if (!repairedInterview.error) {
@@ -1095,7 +1091,7 @@ export const createTools = (ctx: PluginContext) => {
               parts: [{ type: "text", text: compileInterviewPrompt(prd) }],
             },
           });
-          const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse, TIMEOUTS.SESSION_IDLE_MS);
+          const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
           let compiled = parseCompileInterviewResponse(compileText);
           if (compiled.error) {
             logError("interview", `Compile parse error: ${compiled.error}`);
@@ -1108,7 +1104,7 @@ export const createTools = (ctx: PluginContext) => {
                 parts: [{ type: "text", text: compileRepairPrompt(compileText) }],
               },
             });
-            const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_MS);
+            const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
             compiled = parseCompileInterviewResponse(repairedText);
             if (compiled.error) {
               logError("interview", `Compile retry parse error: ${compiled.error}`);
@@ -1137,7 +1133,7 @@ export const createTools = (ctx: PluginContext) => {
                 parts: [{ type: "text", text: repeatedQuestionRepairPrompt(cachedQuestion, rawInput) }],
               },
             });
-            const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse, TIMEOUTS.SESSION_IDLE_MS);
+            const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
             const repeatRepairTurn = parseInterviewTurn(repeatRepairText);
             if (!repeatRepairTurn.error && repeatRepairTurn.question) {
               finalQuestion = repeatRepairTurn.question;
@@ -1675,7 +1671,7 @@ export const createTools = (ctx: PluginContext) => {
                   parts: [{ type: "text", text: verifierPrompt }],
                 },
               });
-              const verifierText = await resolvePromptText(ctx, wsForVerifier.sessionId, verifierResponse, TIMEOUTS.SESSION_IDLE_MS);
+              const verifierText = await resolvePromptText(ctx, wsForVerifier.sessionId, verifierResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
               const judge = parseJudgeAttemptFromText(verifierText);
               const lastAttempt: PrdTaskAttempt = {
                 at: attemptAt,
@@ -1983,6 +1979,17 @@ export const createTools = (ctx: PluginContext) => {
                 await logGateRunResults("gate-check-repair", task.id, gateResult.results);
               }
 
+              if (!gateResult.ok) {
+                const settleIdle = await waitForSessionIdleStable(ctx, ws.sessionId, 15000, 2);
+                if (settleIdle) {
+                  const reconciledGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+                  await logGateRunResults("gate-settle", task.id, reconciledGateResult.results);
+                  if (reconciledGateResult.ok) {
+                    gateResult = reconciledGateResult;
+                  }
+                }
+              }
+
               const uiResult = gateResult.ok && shouldRunUiVerify
                 ? await runUiVerification({
                     ctx,
@@ -2059,17 +2066,6 @@ export const createTools = (ctx: PluginContext) => {
               reason: reasonLines[0] ?? "Unknown failure",
             }, { runId, taskId: task.id, reasonCode: "TASK_FAIL_EARLY" });
           };
-
-          if (!gateResult.ok) {
-            const settleIdle = await waitForSessionIdleStable(ctx, ws.sessionId, 15000, 2);
-            if (settleIdle) {
-              const reconciledGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-              await logGateRunResults("gate-settle", task.id, reconciledGateResult.results);
-              if (reconciledGateResult.ok) {
-                gateResult = reconciledGateResult;
-              }
-            }
-          }
 
           if (!gateResult.ok) {
             const failed = gateResult.failed
@@ -2180,7 +2176,12 @@ export const createTools = (ctx: PluginContext) => {
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
-          const verifierText = extractTextFromPromptResponse(verifierResponse);
+          const verifierText = await resolvePromptText(
+            ctx,
+            ws.sessionId,
+            verifierResponse,
+            TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
+          );
           const judge = parseJudgeAttemptFromText(verifierText);
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
