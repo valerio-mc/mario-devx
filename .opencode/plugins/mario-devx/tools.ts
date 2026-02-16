@@ -75,6 +75,7 @@ import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from ".
 import { buildRunSummary } from "./run-report";
 import { resolveUiRunSetup } from "./run-ui";
 import { RUN_PHASE, type RunExecutionContext, type RunLogMeta, type RunPhaseName } from "./run-types";
+import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { runShellCommand } from "./shell";
 
 type ToolContext = {
@@ -1318,6 +1319,24 @@ export const createTools = (ctx: PluginContext) => {
           autoInstallAttempted,
           shouldRunUiVerify,
         } = uiSetup;
+        const agentBrowserCaps = (uiVerifyEnabled && isWebApp)
+          ? await discoverAgentBrowserCapabilities(ctx)
+          : {
+              available: false,
+              version: null,
+              commands: [] as string[],
+              openUsage: null,
+              notes: [] as string[],
+            };
+        if (uiVerifyEnabled && isWebApp) {
+          await logRunEvent(ctx, repoRoot, "info", "run.ui.capabilities", "Discovered agent-browser capabilities", {
+            available: agentBrowserCaps.available,
+            version: agentBrowserCaps.version,
+            openUsage: agentBrowserCaps.openUsage,
+            commands: agentBrowserCaps.commands,
+            notes: agentBrowserCaps.notes,
+          }, { runId });
+        }
 
           let attempted = 0;
           let completed = 0;
@@ -1362,6 +1381,10 @@ export const createTools = (ctx: PluginContext) => {
             uiVerifyRequired,
             shouldRunUiVerify,
             uiVerifyWaitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
+            agentBrowserVersion: agentBrowserCaps.version,
+            agentBrowserOpenUsage: agentBrowserCaps.openUsage,
+            agentBrowserCommands: agentBrowserCaps.commands,
+            agentBrowserNotes: agentBrowserCaps.notes,
           }, { runId });
 
           while (attempted < maxItems) {
@@ -1558,6 +1581,13 @@ export const createTools = (ctx: PluginContext) => {
                   ...reconcileGateResult.results.map((r) => `- ${r.command}: ${r.ok ? "PASS" : `FAIL (exit ${r.exitCode})`}`),
                   uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
                   uiResult?.note ? `UI note: ${uiResult.note}` : "",
+                  "",
+                  "agent-browser capabilities:",
+                  `- Available: ${agentBrowserCaps.available ? "yes" : "no"}`,
+                  `- Version: ${agentBrowserCaps.version ?? "unknown"}`,
+                  `- Open usage: ${agentBrowserCaps.openUsage ?? "unknown"}`,
+                  `- Commands: ${agentBrowserCaps.commands.join(", ") || "none"}`,
+                  ...(agentBrowserCaps.notes.length > 0 ? [`- Notes: ${agentBrowserCaps.notes.join("; ")}`] : []),
                 ]
                   .filter((x) => x)
                   .join("\n"),
@@ -2050,6 +2080,13 @@ export const createTools = (ctx: PluginContext) => {
               ...gateResult.results.map((r) => `- ${r.command}: ${r.ok ? "PASS" : `FAIL (exit ${r.exitCode})`}`),
               uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
               uiResult?.note ? `UI note: ${uiResult.note}` : "",
+              "",
+              "agent-browser capabilities:",
+              `- Available: ${agentBrowserCaps.available ? "yes" : "no"}`,
+              `- Version: ${agentBrowserCaps.version ?? "unknown"}`,
+              `- Open usage: ${agentBrowserCaps.openUsage ?? "unknown"}`,
+              `- Commands: ${agentBrowserCaps.commands.join(", ") || "none"}`,
+              ...(agentBrowserCaps.notes.length > 0 ? [`- Notes: ${agentBrowserCaps.notes.join("; ")}`] : []),
             ]
               .filter((x) => x)
               .join("\n"),
