@@ -695,6 +695,7 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
   let statusExplicit = false;
   const reason: string[] = [];
   const nextActions: string[] = [];
+  let section: "reason" | "next" = "reason";
   
   for (const line of lines) {
     const trimmed = line.trim();
@@ -707,17 +708,25 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
       continue;
     }
     
-    if (trimmed.match(/^(Reason|Reasons):/i)) continue;
-    if (trimmed.match(/^(Next|Next actions|Next steps):/i)) continue;
+    if (trimmed.match(/^(Reason|Reasons):/i)) {
+      section = "reason";
+      continue;
+    }
+    if (trimmed.match(/^(Next|Next actions|Next steps):/i)) {
+      section = "next";
+      continue;
+    }
     
     const content = trimmed.replace(/^[-\s]+/, "").trim();
     if (!content) continue;
     
-    if (trimmed.startsWith("-") && nextActions.length === 0) {
+    if (trimmed.startsWith("-") && section === "reason") {
       reason.push(content);
-    } else if (trimmed.startsWith("-")) {
+    } else if (trimmed.startsWith("-") && section === "next") {
       nextActions.push(content);
-    } else if (reason.length === 0) {
+    } else if (section === "next") {
+      nextActions.push(content);
+    } else {
       reason.push(content);
     }
   }
@@ -947,6 +956,40 @@ const promptAndResolveWithRetry = async (opts: {
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Verifier prompt failed"));
+};
+
+const resolveVerifierJudge = async (opts: {
+  ctx: PluginContext;
+  repoRoot: string;
+  verifierPrompt: string;
+  runId: string;
+  taskId: string;
+  capabilitySummary: string;
+  agent?: string;
+}): Promise<{ judge: PrdJudgeAttempt } | { transportFailure: PrdJudgeAttempt; errorMessage: string }> => {
+  const { ctx, repoRoot, verifierPrompt, runId, taskId, capabilitySummary, agent } = opts;
+  try {
+    const verifierText = await promptAndResolveWithRetry({
+      ctx,
+      repoRoot,
+      promptText: verifierPrompt,
+      runId,
+      taskId,
+      ...(agent ? { agent } : {}),
+      timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
+      capabilitySummary,
+    });
+    return { judge: enforceJudgeOutputQuality(parseJudgeAttemptFromText(verifierText)) };
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    return {
+      transportFailure: buildVerifierTransportFailureJudge(
+        "VERIFIER_TRANSPORT_EOF",
+        `Verifier transport failed: ${errMsg}`,
+      ),
+      errorMessage: errMsg,
+    };
+  }
 };
 
 const persistBlockedTaskAttempt = async (opts: {
@@ -1761,24 +1804,23 @@ export const createTools = (ctx: PluginContext) => {
                   uiUrl: uiVerifyUrl,
                 }),
               );
-              let verifierText = "";
-              try {
-                verifierText = await promptAndResolveWithRetry({
-                  ctx,
-                  repoRoot,
-                  promptText: verifierPrompt,
-                  runId,
-                  taskId: task.id,
-                  ...(context.agent ? { agent: context.agent } : {}),
-                  timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
-                  capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
-                });
-              } catch (error) {
-                const errMsg = error instanceof Error ? error.message : String(error);
-                const judge = buildVerifierTransportFailureJudge(
-                  "VERIFIER_TRANSPORT_EOF",
-                  `Verifier transport failed during reconcile: ${errMsg}`,
-                );
+              const verifierOutcome = await resolveVerifierJudge({
+                ctx,
+                repoRoot,
+                verifierPrompt,
+                runId,
+                taskId: task.id,
+                capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
+                ...(context.agent ? { agent: context.agent } : {}),
+              });
+              if ("transportFailure" in verifierOutcome) {
+                const judge = {
+                  ...verifierOutcome.transportFailure,
+                  reason: [
+                    formatReasonCode("VERIFIER_TRANSPORT_EOF"),
+                    `Verifier transport failed during reconcile: ${verifierOutcome.errorMessage}`,
+                  ],
+                };
                 prd = await persistBlockedTaskAttempt({
                   ctx,
                   repoRoot,
@@ -1793,12 +1835,12 @@ export const createTools = (ctx: PluginContext) => {
                 });
                 await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed during reconcile for ${task.id}`, {
                   taskId: task.id,
-                  error: errMsg,
+                  error: verifierOutcome.errorMessage,
                 }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
                 await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
                 break;
               }
-              const judge = enforceJudgeOutputQuality(parseJudgeAttemptFromText(verifierText));
+              const judge = verifierOutcome.judge;
               const lastAttempt: PrdTaskAttempt = {
                 at: attemptAt,
                 iteration: state.iteration,
@@ -2285,28 +2327,21 @@ export const createTools = (ctx: PluginContext) => {
               await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass", {
                 taskId: task.id,
               }, { runId, taskId: task.id });
-              let verifierText = "";
-              try {
-                verifierText = await promptAndResolveWithRetry({
-                  ctx,
-                  repoRoot,
-                  promptText: verifierPrompt,
-                  runId,
-                  taskId: task.id,
-                  ...(context.agent ? { agent: context.agent } : {}),
-                  timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
-                  capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
-                });
-              } catch (error) {
-                const errMsg = error instanceof Error ? error.message : String(error);
-                const transportJudge = buildVerifierTransportFailureJudge(
-                  "VERIFIER_TRANSPORT_EOF",
-                  `Verifier transport failed: ${errMsg}`,
-                );
+              const verifierOutcome = await resolveVerifierJudge({
+                ctx,
+                repoRoot,
+                verifierPrompt,
+                runId,
+                taskId: task.id,
+                capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
+                ...(context.agent ? { agent: context.agent } : {}),
+              });
+              if ("transportFailure" in verifierOutcome) {
+                const transportJudge = verifierOutcome.transportFailure;
                 await failEarly(transportJudge.reason, transportJudge.nextActions);
                 await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed for ${task.id}`, {
                   taskId: task.id,
-                  error: errMsg,
+                  error: verifierOutcome.errorMessage,
                 }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
                 await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
                 break;
@@ -2316,7 +2351,7 @@ export const createTools = (ctx: PluginContext) => {
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
-          const judge = enforceJudgeOutputQuality(parseJudgeAttemptFromText(verifierText));
+          const judge = verifierOutcome.judge;
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
             iteration: state.iteration,
