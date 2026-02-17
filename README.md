@@ -113,6 +113,10 @@ The PRD wizard is **fully LLM-driven**. Instead of following a rigid script, the
 
 **Style references:** You can mention URLs and/or screenshot paths anywhere in your answers. Mario DevX automatically extracts and merges them into your PRD.
 
+For frontend PRDs, the wizard requires explicit style-reference acknowledgement before completion:
+- provide at least one URL/image path, or
+- reply `none` to proceed without style references.
+
 Example:
 - `Style references: https://linear.app, https://stripe.com, ./references/hero-layout.png`
 
@@ -211,6 +215,7 @@ In your project:
   prd.json                   # requirements + planning + tasks + backlog + verification policy
   AGENTS.md                  # harness knobs (UI_VERIFY*)
   state/state.json           # internal state (iteration, run status, work session ids)
+  state/mario-devx.log       # centralized structured run/tool logs (auto-capped/rotated)
 ```
 
 In this repo:
@@ -267,11 +272,18 @@ When `frontend: true` in your PRD, mario-devx configures:
 - `UI_VERIFY_URL` - URL to test (e.g., `http://localhost:3000`)
 
 **Auto-install prerequisites:**
+
+Mario DevX auto-heals UI prerequisites during `/mario-devx:run` (non-interactive first):
+
 ```bash
 npm install -g agent-browser
-agent-browser install
+CI=1 npm_config_yes=true npx --yes playwright install chromium
+CI=1 npm_config_yes=true npx --yes playwright install
+CI=1 npm_config_yes=true agent-browser install
 npx skills add vercel-labs/agent-browser
 ```
+
+It also caches successful browser-runtime installs per `agent-browser` version and skips redundant reinstalls when safe.
 
 **What happens:**
 1. Starts your dev server (`UI_VERIFY_CMD`)
@@ -292,6 +304,13 @@ The heartbeat system ensures safe, interruptible execution:
 ## Verifier output
 
 The judge output is stored on the task in `.mario/prd.json` under `tasks[].lastAttempt.judge`.
+
+Verifier behavior is guided by:
+- `assets/prompts/PROMPT_verify_llm.md` (core verifier prompt)
+- `assets/prompts/UI_VERIFIER.md` (repo-local UI playbook)
+- runtime `agent-browser` capability probing (`agent-browser --help`, `agent-browser open --help`) injected into verifier context
+
+If verifier transport fails (for example upstream response truncation/EOF), mario-devx blocks the task with a structured FAIL reason and asks you to retry with log-guided diagnostics.
 
 The verifier now returns JSON for reliable parsing:
 
@@ -322,6 +341,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **First task keeps failing** | Check `tasks[0].lastAttempt.judge.nextActions` in `.mario/prd.json` for specific scaffold commands to run. |
 | **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If browser runtime install failed, run non-interactive install: `CI=1 npm_config_yes=true npx --yes playwright install chromium` |
 | **Verifier returns invalid JSON** | The LLM should return JSON in `<VERIFIER_JSON>` tags. If malformed, the task will be marked blocked - check `lastAttempt.judge.rawText` to see what was returned. |
+| **Run stops on verifier transport failure** | Retry `/mario-devx:run 1`. If it repeats, inspect `.mario/state/mario-devx.log` for `run.verify.transport.error` and `ReasonCode` details. |
 | **AGENTS.md parse warnings** | Lines must be `KEY=VALUE` format. Comments start with `#`. No spaces around `=`. |
 | **Run says another run is active after crash/CTRL+C** | Rerun `/mario-devx:run 1` once: mario-devx auto-recovers stale `DOING` state and stale lock PID entries. If it still persists, run `/mario-devx:doctor` and follow suggested fixes. |
 | **Run stops with heartbeat error** | Check disk space and permissions on `.mario/state/run.lock`. Prefer rerunning `/mario-devx:run 1` first; remove lock manually only if doctor indicates it is stale. |
