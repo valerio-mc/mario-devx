@@ -1977,12 +1977,12 @@ export const createTools = (ctx: PluginContext) => {
                 }
 
                 logWarning("task", `${task.id} blocked during reconcile: ${judge.reason?.[0] ?? "No reason provided"}`);
-                await logRunEvent(ctx, repoRoot, "warn", "run.blocked.verifier-reconcile", `Run blocked: verifier failed during reconcile for ${task.id}`, {
+                runNotes.push(`Reconcile failed for ${task.id}; falling back to build/repair.`);
+                await logRunEvent(ctx, repoRoot, "warn", "run.reconcile.verifier-fail", `Verifier failed during reconcile; falling back to build/repair for ${task.id}`, {
                   taskId: task.id,
                   reason: judge.reason?.[0] ?? "No reason provided",
                 }, { runId, taskId: task.id, reasonCode: "VERIFIER_FAILED" });
-                await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
-                break;
+                await showToast(ctx, `Run: reconcile failed for ${task.id}; attempting build/repair`, "info");
               }
             } else {
               await logRunEvent(ctx, repoRoot, "info", "run.reconcile.skipped", "Skipping reconcile pass for non-blocked task", {
