@@ -67,7 +67,23 @@ export const buildVerifierContextText = (opts: {
 };
 
 export const enforceJudgeOutputQuality = (judge: PrdJudgeAttempt): PrdJudgeAttempt => {
+  const isPassEvidenceLine = (line: string): boolean => {
+    const trimmed = String(line ?? "").trim();
+    if (!trimmed) return false;
+    if (/^ui verification:\s*pass\b/i.test(trimmed)) return true;
+    return /^[\w./:\-\s]+:\s*PASS\b/i.test(trimmed);
+  };
+
   if (judge.status === "FAIL") {
+    const reasons = (judge.reason ?? []).map((x) => String(x).trim()).filter(Boolean);
+    if (reasons.length > 1) {
+      const reasonCodes = reasons.filter((line) => /^ReasonCode:\s*[A-Z0-9_]+/i.test(line));
+      const nonPassReasons = reasons.filter((line) => !isPassEvidenceLine(line) && !/^ReasonCode:\s*[A-Z0-9_]+/i.test(line));
+      const passEvidence = reasons.filter((line) => isPassEvidenceLine(line));
+      const reordered = [...reasonCodes, ...nonPassReasons, ...passEvidence];
+      judge = { ...judge, reason: reordered.length > 0 ? reordered : reasons };
+    }
+
     const nextActions = (judge.nextActions ?? []).map((x) => String(x).trim()).filter(Boolean);
     if (nextActions.length < 2) {
       nextActions.push("Retry /mario-devx:run 1.");

@@ -41,6 +41,7 @@ Additional rules:
 - If (and only if) the task is truly complete, set `status: "PASS"`.
 - Otherwise set `status: "FAIL"`.
 - Each reason bullet must cite either a repo file path or a specific gate result.
+- If `status` is `FAIL`, place failing findings first in `reason`; do not start with PASS evidence bullets.
 - Next actions should be concrete steps the builder can take.
 - Autonomous UI checks are allowed but bounded: prefer at most 8 browser commands and prioritize `snapshot`, `console`, and `errors` evidence.
 - For UI tasks, include a balanced aesthetic rubric summary in reasons (hierarchy/spacing/contrast/consistency/style-reference alignment).

@@ -28,7 +28,22 @@ export const buildRunSummary = (opts: BuildRunSummaryOptions): RunSummary => {
   const uiSummary = latestAttempt?.ui
     ? (latestAttempt.ui.ran ? `UI verify: ${latestAttempt.ui.ok ? "PASS" : "FAIL"}${uiVerifyRequired ? " (required)" : " (optional)"}` : "UI verify: not run")
     : "UI verify: not available";
-  const judgeTopReason = latestAttempt?.judge.reason?.[0] ?? "No judge reason recorded.";
+  const selectTopReason = (attempt: PrdTaskAttempt | undefined): string => {
+    const reasons = (attempt?.judge.reason ?? []).map((x) => String(x).trim()).filter(Boolean);
+    if (reasons.length === 0) return "No judge reason recorded.";
+    const isPassEvidenceLine = (line: string): boolean => {
+      if (/^ui verification:\s*pass\b/i.test(line)) return true;
+      return /^[\w./:\-\s]+:\s*PASS\b/i.test(line);
+    };
+    if (attempt?.judge.status === "FAIL") {
+      const reasonCode = reasons.find((line) => /^ReasonCode:\s*[A-Z0-9_]+/i.test(line));
+      if (reasonCode) return reasonCode;
+      const actionable = reasons.find((line) => !isPassEvidenceLine(line));
+      if (actionable) return actionable;
+    }
+    return reasons[0];
+  };
+  const judgeTopReason = selectTopReason(latestAttempt);
 
   const note =
     attempted === 0 && latestAttempt
