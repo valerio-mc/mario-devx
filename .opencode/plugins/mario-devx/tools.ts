@@ -2630,13 +2630,28 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
         const replanCandidates = prd.backlog.featureRequests.filter((f) => f.status === "open" || f.status === "planned");
+        const taskById = new Map((prd.tasks ?? []).map((t) => [t.id, t] as const));
+        const hasLockedTask = (featureId: string): boolean => {
+          const backlogItem = replanCandidates.find((f) => f.id === featureId);
+          if (!backlogItem) return false;
+          return (backlogItem.taskIds ?? []).some((id) => {
+            const task = taskById.get(id);
+            return task?.status === "in_progress" || task?.status === "completed";
+          });
+        };
+        const candidatesToReplan = replanCandidates.filter((f) => !hasLockedTask(f.id));
         await logToolEvent(ctx, repoRoot, "info", "replan.start", "Replan started", {
           candidates: replanCandidates.length,
+          skippedLocked: replanCandidates.length - candidatesToReplan.length,
         });
         
         if (replanCandidates.length === 0) {
           await logToolEvent(ctx, repoRoot, "info", "replan.noop", "No backlog items to replan");
           return "No backlog items to replan.";
+        }
+
+        if (candidatesToReplan.length === 0) {
+          return "No replannable backlog items: all candidates already have active/completed tasks.";
         }
 
         /**
@@ -2670,7 +2685,7 @@ export const createTools = (ctx: PluginContext) => {
           }, null, 2),
           "",
           "Backlog items to replan:",
-          replanCandidates.map((f, i) => `${i + 1}. ${f.title}\n${f.request}`).join("\n\n"),
+          candidatesToReplan.map((f, i) => `${i + 1}. ${f.title}\n${f.request}`).join("\n\n"),
           "",
           "Existing tasks:",
           (prd.tasks || []).filter(t => t.status !== "cancelled").map(t => `- ${t.id}: ${t.title}`).join("\n"),
@@ -2717,20 +2732,21 @@ export const createTools = (ctx: PluginContext) => {
         let n = nextTaskOrdinal(prd.tasks ?? []);
         const generated: PrdTask[] = [];
         let updatedBacklog = [...prd.backlog.featureRequests];
+        const backlogLabel = (id: string): string => `backlog:${id}`;
         
         if (replanMatch) {
           try {
             const parsed = JSON.parse(replanMatch[1].trim());
             
             for (const breakdown of parsed.breakdowns || []) {
-              const backlogItem = replanCandidates.find(f => f.id === breakdown.backlogId);
+              const backlogItem = candidatesToReplan.find(f => f.id === breakdown.backlogId);
               if (!backlogItem) continue;
               
               const tasks = (breakdown.tasks || []).map((t: any) => makeTask({
                 id: normalizeTaskId(n++),
                 title: t.title,
                 doneWhen: t.doneWhen || gates,
-                labels: t.labels || ["feature", "backlog"],
+                labels: [...new Set([...(t.labels || ["feature", "backlog"]), backlogLabel(backlogItem.id)])],
                 acceptance: t.acceptance || [t.title],
                 dependsOn: t.dependsOn,
               }));
@@ -2759,16 +2775,15 @@ export const createTools = (ctx: PluginContext) => {
         // Fallback: simple decomposition if LLM fails
         if (generated.length === 0) {
           logInfo("replan", "Using fallback decomposition");
-          for (const f of replanCandidates) {
+          for (const f of candidatesToReplan) {
             if (f.status === "implemented") continue;
-            if (f.status === "planned" && Array.isArray(f.taskIds) && f.taskIds.length > 0) continue;
             
             const atoms = decomposeFeatureRequestToTasks(f.request);
             const tasks = atoms.map((atom) => makeTask({
               id: normalizeTaskId(n++),
               title: `Implement: ${atom}`,
               doneWhen: gates,
-              labels: ["feature", "backlog"],
+              labels: ["feature", "backlog", backlogLabel(f.id)],
               acceptance: [atom],
             }));
             generated.push(...tasks);
@@ -2781,18 +2796,27 @@ export const createTools = (ctx: PluginContext) => {
           }
         }
         
+        const replannedIds = new Set(candidatesToReplan.map((f) => f.id));
+        const keptTasks = (prd.tasks ?? []).filter((task) => {
+          const labels = task.labels ?? [];
+          const relatedFeatureId = Array.from(replannedIds).find((id) => labels.includes(backlogLabel(id)));
+          if (!relatedFeatureId) return true;
+          return task.status === "in_progress" || task.status === "completed";
+        });
+
         prd = {
           ...prd,
           tasks: [
-            ...(prd.tasks ?? []),
+            ...keptTasks,
             ...generated,
           ],
           backlog: { ...prd.backlog, featureRequests: updatedBacklog },
         };
         await writePrdJson(repoRoot, prd);
-        await logReplanComplete(ctx, repoRoot, replanCandidates.length, generated.length);
+        await logReplanComplete(ctx, repoRoot, candidatesToReplan.length, generated.length);
         await logToolEvent(ctx, repoRoot, "info", "replan.complete", "Replan completed", {
-          backlogItems: replanCandidates.length,
+          backlogItems: candidatesToReplan.length,
+          skippedLocked: replanCandidates.length - candidatesToReplan.length,
           generatedTasks: generated.length,
         });
         
