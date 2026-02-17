@@ -33,3 +33,14 @@ export type UiVerifyState = {
   lastInstallCommand?: string;
   lastInstallNote?: string;
 };
+
+export type VerifierSessionState = {
+  sessionId: string;
+  baselineMessageId: string;
+  baselineFingerprint: string;
+  agent?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastHealthCheckAt?: string;
+  lastFailureCode?: string;
+};
