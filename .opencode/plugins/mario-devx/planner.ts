@@ -194,6 +194,82 @@ export const getTaskDependencyBlockers = (prd: PrdJson, task: PrdTask): { pendin
   return { pending, missing };
 };
 
+export type TaskGraphIssue = {
+  reasonCode: "TASK_GRAPH_DEP_MISSING" | "TASK_GRAPH_CYCLE";
+  taskId: string;
+  message: string;
+  nextActions: string[];
+};
+
+export const validateTaskGraph = (prd: PrdJson): TaskGraphIssue | null => {
+  const tasks = prd.tasks ?? [];
+  const activeTasks = tasks.filter((t) => !isTerminalStatus(t.status));
+  const allTasksById = new Map(tasks.map((t) => [t.id, t] as const));
+  const activeById = new Map(activeTasks.map((t) => [t.id, t] as const));
+
+  for (const task of activeTasks) {
+    for (const depId of task.dependsOn ?? []) {
+      if (!allTasksById.has(depId)) {
+        return {
+          reasonCode: "TASK_GRAPH_DEP_MISSING",
+          taskId: task.id,
+          message: `Task ${task.id} depends on missing task ${depId}.`,
+          nextActions: [
+            `Fix dependsOn for ${task.id} in .mario/prd.json (remove or correct ${depId}).`,
+            "Then rerun /mario-devx:run 1.",
+          ],
+        };
+      }
+    }
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const stack: string[] = [];
+
+  const visit = (taskId: string): string[] | null => {
+    if (visited.has(taskId)) return null;
+    if (visiting.has(taskId)) {
+      const idx = stack.indexOf(taskId);
+      if (idx >= 0) {
+        return [...stack.slice(idx), taskId];
+      }
+      return [taskId, taskId];
+    }
+    visiting.add(taskId);
+    stack.push(taskId);
+    const task = activeById.get(taskId);
+    const deps = task?.dependsOn ?? [];
+    for (const depId of deps) {
+      if (!activeById.has(depId)) continue;
+      const cycle = visit(depId);
+      if (cycle) return cycle;
+    }
+    stack.pop();
+    visiting.delete(taskId);
+    visited.add(taskId);
+    return null;
+  };
+
+  for (const task of activeTasks) {
+    const cycle = visit(task.id);
+    if (cycle) {
+      const chain = cycle.join(" -> ");
+      return {
+        reasonCode: "TASK_GRAPH_CYCLE",
+        taskId: cycle[0] ?? task.id,
+        message: `Task dependency cycle detected: ${chain}.`,
+        nextActions: [
+          "Edit task dependsOn entries in .mario/prd.json to break the cycle.",
+          "Then rerun /mario-devx:run 1.",
+        ],
+      };
+    }
+  }
+
+  return null;
+};
+
 export const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
   const tasks = prd.tasks ?? [];
 

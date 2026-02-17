@@ -41,6 +41,7 @@ import {
   normalizeTaskId,
   setPrdTaskLastAttempt,
   setPrdTaskStatus,
+  validateTaskGraph,
 } from "./planner";
 import {
   ensureWorkSession,
@@ -1522,6 +1523,48 @@ export const createTools = (ctx: PluginContext) => {
           return judge.reason.concat(["", "See tasks[].lastAttempt.judge.nextActions in .mario/prd.json."]).join("\n");
         }
 
+        const taskGraphIssue = validateTaskGraph(prd);
+        if (taskGraphIssue) {
+          const focusTask = (prd.tasks ?? []).find((t) => t.id === taskGraphIssue.taskId) ?? (prd.tasks ?? [])[0];
+          if (focusTask) {
+            const state = await bumpIteration(repoRoot);
+            const attemptAt = nowIso();
+            const gates: PrdGatesAttempt = { ok: false, commands: [] };
+            const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+            const judge: PrdJudgeAttempt = {
+              status: "FAIL",
+              exitSignal: false,
+              reason: [
+                formatReasonCode(taskGraphIssue.reasonCode),
+                taskGraphIssue.message,
+              ],
+              nextActions: taskGraphIssue.nextActions,
+            };
+            prd = await persistBlockedTaskAttempt({
+              ctx,
+              repoRoot,
+              prd,
+              task: focusTask,
+              attemptAt,
+              iteration: state.iteration,
+              gates,
+              ui,
+              judge,
+              runId,
+            });
+          }
+          await logRunEvent(ctx, repoRoot, "error", "run.blocked.task-graph", "Run blocked: invalid task dependency graph", {
+            reasonCode: taskGraphIssue.reasonCode,
+            taskId: taskGraphIssue.taskId,
+            message: taskGraphIssue.message,
+          }, { runId, taskId: taskGraphIssue.taskId, reasonCode: taskGraphIssue.reasonCode });
+          return [
+            formatReasonCode(taskGraphIssue.reasonCode),
+            taskGraphIssue.message,
+            ...taskGraphIssue.nextActions,
+          ].join("\n");
+        }
+
           if (prd.frontend === true) {
             const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
             const raw = (await readTextIfExists(agentsPath)) ?? "";
@@ -1608,6 +1651,8 @@ export const createTools = (ctx: PluginContext) => {
             notes: agentBrowserCaps.notes,
           }, { runId });
         }
+
+          const runStartIteration = (await readRunState(repoRoot)).iteration;
 
           let attempted = 0;
           let completed = 0;
@@ -2466,9 +2511,15 @@ export const createTools = (ctx: PluginContext) => {
             }
           }
 
-          // Mark the run done once the loop ends.
+          const blockedThisRun = (prd.tasks ?? []).some((t) => {
+            if (t.status !== "blocked" || !t.lastAttempt) return false;
+            return t.lastAttempt.iteration > runStartIteration;
+          });
+          const finalRunStatus = blockedThisRun ? "BLOCKED" : "DONE";
+
+          // Mark the run complete once the loop ends.
           await updateRunState(repoRoot, {
-            status: completed === attempted ? "DONE" : "BLOCKED",
+            status: finalRunStatus,
             phase: "run",
             ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
             updatedAt: nowIso(),
@@ -2492,10 +2543,10 @@ export const createTools = (ctx: PluginContext) => {
             lastRunAt: nowIso(),
             lastRunResult: result,
           });
-          await logRunEvent(ctx, repoRoot, completed === attempted ? "info" : "warn", "run.finished", "Run finished", {
+          await logRunEvent(ctx, repoRoot, finalRunStatus === "DONE" ? "info" : "warn", "run.finished", "Run finished", {
             attempted,
             completed,
-            status: completed === attempted ? "DONE" : "BLOCKED",
+            status: finalRunStatus,
             latestTaskId: latestTask?.id ?? null,
             reason: judgeTopReason,
           }, { runId, ...(latestTask?.id ? { taskId: latestTask.id } : {}) });
