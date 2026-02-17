@@ -224,7 +224,45 @@ type CompileInterviewEnvelope = {
 const INTERVIEW_QUESTION_PREFIX = "q-";
 const INTERVIEW_ANSWER_PREFIX = "a-";
 const STYLE_REFS_ACK_KEY = "__style_refs_ack";
+const ADD_INTERVIEW_STATE_KEY = "__add_feature_interview";
 const STYLE_REFS_REQUIRED_QUESTION = "Share at least one style reference URL/image path, or reply 'none' to proceed without references.";
+
+type AddInterviewState = {
+  originalRequest: string;
+  answers: string[];
+  lastQuestion?: string;
+};
+
+const parseAddInterviewState = (raw: string | undefined): AddInterviewState | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as AddInterviewState;
+    if (!parsed || typeof parsed.originalRequest !== "string") return null;
+    return {
+      originalRequest: parsed.originalRequest,
+      answers: Array.isArray(parsed.answers) ? parsed.answers.map((a) => String(a).trim()).filter(Boolean) : [],
+      ...(typeof parsed.lastQuestion === "string" ? { lastQuestion: parsed.lastQuestion } : {}),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeAddInterviewState = (prd: PrdJson, state: AddInterviewState | null): PrdJson => {
+  const answers = { ...(prd.wizard.answers ?? {}) };
+  if (!state) {
+    delete answers[ADD_INTERVIEW_STATE_KEY];
+  } else {
+    answers[ADD_INTERVIEW_STATE_KEY] = JSON.stringify(state);
+  }
+  return {
+    ...prd,
+    wizard: {
+      ...prd.wizard,
+      answers,
+    },
+  };
+};
 
 const isNoneLikeAnswer = (input: string): boolean => {
   const s = input.trim().toLowerCase();
@@ -2391,9 +2429,15 @@ export const createTools = (ctx: PluginContext) => {
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
         const feature = (args.feature ?? "").trim();
+        const pendingAddInterview = parseAddInterviewState(prd.wizard.answers?.[ADD_INTERVIEW_STATE_KEY]);
+        const originalFeatureRequest = pendingAddInterview?.originalRequest ?? feature;
+        const clarificationAnswers = pendingAddInterview
+          ? [...pendingAddInterview.answers, feature]
+          : [];
         await logToolEvent(ctx, repoRoot, "info", "add.start", "Feature decomposition started", {
           featureLength: feature.length,
           runIteration: (await readRunState(repoRoot)).iteration,
+          continuingInterview: !!pendingAddInterview,
         });
         if (!feature) {
           await logToolEvent(ctx, repoRoot, "warn", "add.invalid.empty", "Feature add called with empty input");
@@ -2422,7 +2466,14 @@ export const createTools = (ctx: PluginContext) => {
           "Help the user break down a feature request into implementable tasks.",
           "",
           "Current feature request:",
-          feature,
+          originalFeatureRequest,
+          ...(clarificationAnswers.length > 0
+            ? [
+                "",
+                "Clarification answers gathered so far:",
+                ...clarificationAnswers.map((a, i) => `${i + 1}. ${a}`),
+              ]
+            : []),
           "",
           "Quality gates for this project:",
           JSON.stringify(prd.qualityGates ?? []),
@@ -2485,6 +2536,12 @@ export const createTools = (ctx: PluginContext) => {
         
         // If not ready, ask follow-up question
         if (!envelope.ready || envelope.next_question) {
+          prd = writeAddInterviewState(prd, {
+            originalRequest: originalFeatureRequest,
+            answers: clarificationAnswers,
+            ...(envelope.next_question ? { lastQuestion: envelope.next_question } : {}),
+          });
+          await writePrdJson(repoRoot, prd);
           await logToolEvent(ctx, repoRoot, "info", "add.followup", "Feature interview requested follow-up", {
             nextQuestion: envelope.next_question || "Please provide more detail about this feature.",
           });
@@ -2503,7 +2560,7 @@ export const createTools = (ctx: PluginContext) => {
         const startN = nextTaskOrdinal(prd.tasks ?? []);
         let n = startN;
         
-        const taskAtoms = envelope.tasks?.length ? envelope.tasks : [feature];
+        const taskAtoms = envelope.tasks?.length ? envelope.tasks : [originalFeatureRequest];
         const newTasks = taskAtoms.map((item) => makeTask({
           id: normalizeTaskId(n++),
           title: `Implement: ${item}`,
@@ -2514,7 +2571,10 @@ export const createTools = (ctx: PluginContext) => {
         }));
         
         const request = [
-          feature,
+          originalFeatureRequest,
+          clarificationAnswers.length > 0
+            ? `\nClarifications:\n${clarificationAnswers.map((a) => `- ${a}`).join("\n")}`
+            : "",
           envelope.acceptanceCriteria?.length ? `\nAcceptance:\n${envelope.acceptanceCriteria.map((a) => `- ${a}`).join("\n")}` : "",
           envelope.constraints?.length ? `\nConstraints:\n${envelope.constraints.map((c) => `- ${c}`).join("\n")}` : "",
           envelope.uxNotes ? `\nUX notes:\n${envelope.uxNotes}` : "",
@@ -2531,8 +2591,8 @@ export const createTools = (ctx: PluginContext) => {
               ...prd.backlog.featureRequests,
               {
                 id: backlogId,
-                title: compactIdea(feature),
-                request: request || feature,
+                title: compactIdea(originalFeatureRequest),
+                request: request || originalFeatureRequest,
                 createdAt: nowIso(),
                 status: "planned",
                 taskIds: newTasks.map((t) => t.id),
@@ -2540,6 +2600,7 @@ export const createTools = (ctx: PluginContext) => {
             ],
           },
         };
+        prd = writeAddInterviewState(prd, null);
         await writePrdJson(repoRoot, prd);
         await logToolEvent(ctx, repoRoot, "info", "add.complete", "Feature decomposed into tasks", {
           backlogId,
