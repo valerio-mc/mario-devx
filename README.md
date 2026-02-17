@@ -183,6 +183,8 @@ Task order is scaffold-first by design:
 - remaining tasks: feature implementation
 
 Execution order is dependency-driven at runtime: mario-devx picks the next runnable task whose `dependsOn` chain is satisfied.
+- `open` / `in_progress` tasks run build/repair first, then gates/UI/verifier.
+- `blocked` tasks run reconcile first (quick gates/UI/verifier check) and only fall back to build/repair when needed.
 
 Scaffold nuance:
 - For web/TypeScript ideas in non-empty repos, the default scaffold may be created in `app/` (not root) to avoid clobbering existing files.

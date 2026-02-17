@@ -1773,214 +1773,222 @@ export const createTools = (ctx: PluginContext) => {
             attempted += 1;
             logInfo("task", `Starting ${task.id}: ${task.title}`);
 
-            const reconcileGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
-            await logGateRunResults(RUN_PHASE.RECONCILE, task.id, reconcileGateResult.results);
-            if (reconcileGateResult.ok) {
-              const uiResult = shouldRunUiVerify
-                ? await runUiVerification({
-                    ctx,
-                    devCmd: uiVerifyCmd,
-                    url: uiVerifyUrl,
-                    waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
-                    log: async (entry) => {
-                      await logRunEvent(
-                        ctx,
-                        repoRoot,
-                        entry.level,
-                        entry.event,
-                        entry.message,
-                        entry.extra,
-                        { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
-                      );
-                    },
-                  })
-                : null;
+            const shouldReconcileFirst = task.status === "blocked";
+            if (shouldReconcileFirst) {
+              const reconcileGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
+              await logGateRunResults(RUN_PHASE.RECONCILE, task.id, reconcileGateResult.results);
+              if (reconcileGateResult.ok) {
+                const uiResult = shouldRunUiVerify
+                  ? await runUiVerification({
+                      ctx,
+                      devCmd: uiVerifyCmd,
+                      url: uiVerifyUrl,
+                      waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
+                      log: async (entry) => {
+                        await logRunEvent(
+                          ctx,
+                          repoRoot,
+                          entry.level,
+                          entry.event,
+                          entry.message,
+                          entry.extra,
+                          { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
+                        );
+                      },
+                    })
+                  : null;
 
-              const gates: PrdGatesAttempt = {
-                ok: true,
-                commands: reconcileGateResult.results.map((r) => ({
-                  command: r.command,
-                  ok: r.ok,
-                  exitCode: r.exitCode,
-                  durationMs: r.durationMs,
-                })),
-              };
+                const gates: PrdGatesAttempt = {
+                  ok: true,
+                  commands: reconcileGateResult.results.map((r) => ({
+                    command: r.command,
+                    ok: r.ok,
+                    exitCode: r.exitCode,
+                    durationMs: r.durationMs,
+                  })),
+                };
 
-              const ui: PrdUiAttempt = uiResult
-                ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
-                : {
-                    ran: false,
-                    ok: null,
-                    note: uiVerifyEnabled && isWebApp
-                      ? "UI verification not run."
-                      : "UI verification not configured.",
+                const ui: PrdUiAttempt = uiResult
+                  ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
+                  : {
+                      ran: false,
+                      ok: null,
+                      note: uiVerifyEnabled && isWebApp
+                        ? "UI verification not run."
+                        : "UI verification not configured.",
+                    };
+
+                const state = await bumpIteration(repoRoot);
+                const attemptAt = nowIso();
+
+                if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk || !browserOk)) {
+                  const judge: PrdJudgeAttempt = {
+                    status: "FAIL",
+                    exitSignal: false,
+                    reason: [
+                      "UI verification is required but agent-browser prerequisites are missing.",
+                      ...(autoInstallAttempted.length > 0 ? [`Auto-install attempted: ${autoInstallAttempted.join("; ")}`] : []),
+                    ],
+                    nextActions: [
+                      "Install prerequisites, then rerun /mario-devx:run 1.",
+                      "Or set UI_VERIFY_REQUIRED=0 in .mario/AGENTS.md to make UI verification best-effort.",
+                    ],
                   };
+                  const lastAttempt: PrdTaskAttempt = {
+                    at: attemptAt,
+                    iteration: state.iteration,
+                    gates,
+                    ui,
+                    judge,
+                  };
+                  prd = setPrdTaskStatus(prd, task.id, "blocked");
+                  prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
+                  await writePrdJson(repoRoot, prd);
+                  await updateRunState(repoRoot, {
+                    status: "BLOCKED",
+                    phase: "run",
+                    currentPI: task.id,
+                  });
+                  await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-prereq", `Run blocked: UI prerequisites missing for ${task.id}`, {
+                    taskId: task.id,
+                    uiVerifyRequired,
+                    cliOk,
+                    skillOk,
+                    browserOk,
+                    autoInstallAttempted,
+                  }, { runId, taskId: task.id, reasonCode: "UI_PREREQ_MISSING" });
+                  await showToast(ctx, `Run stopped: UI prerequisites missing on ${task.id}`, "warning");
+                  break;
+                }
 
-              const state = await bumpIteration(repoRoot);
-              const attemptAt = nowIso();
+                if (uiVerifyEnabled && isWebApp && uiVerifyRequired && uiResult && !uiResult.ok) {
+                  const judge: PrdJudgeAttempt = {
+                    status: "FAIL",
+                    exitSignal: false,
+                    reason: ["UI verification failed during reconcile."],
+                    nextActions: ["Fix UI verification failures, then rerun /mario-devx:run 1."],
+                  };
+                  const lastAttempt: PrdTaskAttempt = {
+                    at: attemptAt,
+                    iteration: state.iteration,
+                    gates,
+                    ui,
+                    judge,
+                  };
+                  prd = setPrdTaskStatus(prd, task.id, "blocked");
+                  prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
+                  await writePrdJson(repoRoot, prd);
+                  await updateRunState(repoRoot, {
+                    status: "BLOCKED",
+                    phase: "run",
+                    currentPI: task.id,
+                  });
+                  await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-reconcile", `Run blocked: UI verification failed during reconcile for ${task.id}`, {
+                    taskId: task.id,
+                    uiNote: uiResult?.note ?? null,
+                  }, { runId, taskId: task.id, reasonCode: "UI_VERIFY_FAILED" });
+                  await showToast(ctx, `Run stopped: UI verification failed on ${task.id}`, "warning");
+                  break;
+                }
 
-              if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk || !browserOk)) {
-                const judge: PrdJudgeAttempt = {
-                  status: "FAIL",
-                  exitSignal: false,
-                  reason: [
-                    "UI verification is required but agent-browser prerequisites are missing.",
-                    ...(autoInstallAttempted.length > 0 ? [`Auto-install attempted: ${autoInstallAttempted.join("; ")}`] : []),
-                  ],
-                  nextActions: [
-                    "Install prerequisites, then rerun /mario-devx:run 1.",
-                    "Or set UI_VERIFY_REQUIRED=0 in .mario/AGENTS.md to make UI verification best-effort.",
-                  ],
-                };
-                const lastAttempt: PrdTaskAttempt = {
-                  at: attemptAt,
-                  iteration: state.iteration,
-                  gates,
-                  ui,
-                  judge,
-                };
-                prd = setPrdTaskStatus(prd, task.id, "blocked");
-                prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-                await writePrdJson(repoRoot, prd);
-                await updateRunState(repoRoot, {
-                  status: "BLOCKED",
-                  phase: "run",
-                  currentPI: task.id,
-                });
-                await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-prereq", `Run blocked: UI prerequisites missing for ${task.id}`, {
-                  taskId: task.id,
-                  uiVerifyRequired,
-                  cliOk,
-                  skillOk,
-                  browserOk,
-                  autoInstallAttempted,
-                }, { runId, taskId: task.id, reasonCode: "UI_PREREQ_MISSING" });
-                await showToast(ctx, `Run stopped: UI prerequisites missing on ${task.id}`, "warning");
-                break;
-              }
-
-              if (uiVerifyEnabled && isWebApp && uiVerifyRequired && uiResult && !uiResult.ok) {
-                const judge: PrdJudgeAttempt = {
-                  status: "FAIL",
-                  exitSignal: false,
-                  reason: ["UI verification failed during reconcile."],
-                  nextActions: ["Fix UI verification failures, then rerun /mario-devx:run 1."],
-                };
-                const lastAttempt: PrdTaskAttempt = {
-                  at: attemptAt,
-                  iteration: state.iteration,
-                  gates,
-                  ui,
-                  judge,
-                };
-                prd = setPrdTaskStatus(prd, task.id, "blocked");
-                prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-                await writePrdJson(repoRoot, prd);
-                await updateRunState(repoRoot, {
-                  status: "BLOCKED",
-                  phase: "run",
-                  currentPI: task.id,
-                });
-                await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-reconcile", `Run blocked: UI verification failed during reconcile for ${task.id}`, {
-                  taskId: task.id,
-                  uiNote: uiResult?.note ?? null,
-                }, { runId, taskId: task.id, reasonCode: "UI_VERIFY_FAILED" });
-                await showToast(ctx, `Run stopped: UI verification failed on ${task.id}`, "warning");
-                break;
-              }
-
-              await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass (reconcile)", {
-                taskId: task.id,
-              }, { runId, taskId: task.id });
-              const verifierPrompt = await buildPrompt(
-                repoRoot,
-                "verify",
-                buildVerifierContextText({
-                  task,
-                  doneWhen: effectiveDoneWhen,
-                  gates: reconcileGateResult.results,
-                  uiResult,
-                  ...(uiResult?.note ? { uiNote: uiResult.note } : {}),
-                  visualDirection: prd.ui.visualDirection,
-                  uxRequirements: prd.ui.uxRequirements,
-                  styleReferences: prd.ui.styleReferences,
-                  caps: agentBrowserCaps,
-                  uiUrl: uiVerifyUrl,
-                }),
-              );
-              const verifierOutcome = await resolveVerifierJudge({
-                ctx,
-                repoRoot,
-                verifierPrompt,
-                runId,
-                taskId: task.id,
-                capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
-                ...(context.agent ? { agent: context.agent } : {}),
-              });
-              if ("transportFailure" in verifierOutcome) {
-                const judge = {
-                  ...verifierOutcome.transportFailure,
-                  reason: [
-                    formatReasonCode("VERIFIER_TRANSPORT_EOF"),
-                    `Verifier transport failed during reconcile: ${verifierOutcome.errorMessage}`,
-                  ],
-                };
-                prd = await persistBlockedTaskAttempt({
-                  ctx,
-                  repoRoot,
-                  prd,
-                  task,
-                  attemptAt,
-                  iteration: state.iteration,
-                  gates,
-                  ui,
-                  judge,
-                  runId,
-                });
-                await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed during reconcile for ${task.id}`, {
-                  taskId: task.id,
-                  error: verifierOutcome.errorMessage,
-                }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
-                await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
-                break;
-              }
-              const judge = applyRepeatedFailureBackpressure(task.lastAttempt, verifierOutcome.judge);
-              const lastAttempt: PrdTaskAttempt = {
-                at: attemptAt,
-                iteration: state.iteration,
-                gates,
-                ui,
-                judge,
-              };
-              const isPass = judge.status === "PASS" && judge.exitSignal;
-
-              prd = setPrdTaskStatus(prd, task.id, isPass ? "completed" : "blocked");
-              prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-              await writePrdJson(repoRoot, prd);
-              await updateRunState(repoRoot, {
-                status: isPass ? "DOING" : "BLOCKED",
-                phase: "run",
-                currentPI: task.id,
-                controlSessionId: context.sessionID,
-              });
-
-              if (isPass) {
-                completed += 1;
-                runNotes.push(`Reconciled ${task.id}: deterministic gates already passing; verifier PASS.`);
-                await logRunEvent(ctx, repoRoot, "info", "run.reconcile.pass", `Run reconciled ${task.id}`, {
+                await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass (reconcile)", {
                   taskId: task.id,
                 }, { runId, taskId: task.id });
-                await showToast(ctx, `Run: reconciled ${task.id} (already passing)`, "success");
-                continue;
-              }
+                const verifierPrompt = await buildPrompt(
+                  repoRoot,
+                  "verify",
+                  buildVerifierContextText({
+                    task,
+                    doneWhen: effectiveDoneWhen,
+                    gates: reconcileGateResult.results,
+                    uiResult,
+                    ...(uiResult?.note ? { uiNote: uiResult.note } : {}),
+                    visualDirection: prd.ui.visualDirection,
+                    uxRequirements: prd.ui.uxRequirements,
+                    styleReferences: prd.ui.styleReferences,
+                    caps: agentBrowserCaps,
+                    uiUrl: uiVerifyUrl,
+                  }),
+                );
+                const verifierOutcome = await resolveVerifierJudge({
+                  ctx,
+                  repoRoot,
+                  verifierPrompt,
+                  runId,
+                  taskId: task.id,
+                  capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
+                  ...(context.agent ? { agent: context.agent } : {}),
+                });
+                if ("transportFailure" in verifierOutcome) {
+                  const judge = {
+                    ...verifierOutcome.transportFailure,
+                    reason: [
+                      formatReasonCode("VERIFIER_TRANSPORT_EOF"),
+                      `Verifier transport failed during reconcile: ${verifierOutcome.errorMessage}`,
+                    ],
+                  };
+                  prd = await persistBlockedTaskAttempt({
+                    ctx,
+                    repoRoot,
+                    prd,
+                    task,
+                    attemptAt,
+                    iteration: state.iteration,
+                    gates,
+                    ui,
+                    judge,
+                    runId,
+                  });
+                  await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed during reconcile for ${task.id}`, {
+                    taskId: task.id,
+                    error: verifierOutcome.errorMessage,
+                  }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
+                  await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
+                  break;
+                }
+                const judge = applyRepeatedFailureBackpressure(task.lastAttempt, verifierOutcome.judge);
+                const lastAttempt: PrdTaskAttempt = {
+                  at: attemptAt,
+                  iteration: state.iteration,
+                  gates,
+                  ui,
+                  judge,
+                };
+                const isPass = judge.status === "PASS" && judge.exitSignal;
 
-              logWarning("task", `${task.id} blocked during reconcile: ${judge.reason?.[0] ?? "No reason provided"}`);
-              await logRunEvent(ctx, repoRoot, "warn", "run.blocked.verifier-reconcile", `Run blocked: verifier failed during reconcile for ${task.id}`, {
+                prd = setPrdTaskStatus(prd, task.id, isPass ? "completed" : "blocked");
+                prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
+                await writePrdJson(repoRoot, prd);
+                await updateRunState(repoRoot, {
+                  status: isPass ? "DOING" : "BLOCKED",
+                  phase: "run",
+                  currentPI: task.id,
+                  controlSessionId: context.sessionID,
+                });
+
+                if (isPass) {
+                  completed += 1;
+                  runNotes.push(`Reconciled ${task.id}: deterministic gates already passing; verifier PASS.`);
+                  await logRunEvent(ctx, repoRoot, "info", "run.reconcile.pass", `Run reconciled ${task.id}`, {
+                    taskId: task.id,
+                  }, { runId, taskId: task.id });
+                  await showToast(ctx, `Run: reconciled ${task.id} (already passing)`, "success");
+                  continue;
+                }
+
+                logWarning("task", `${task.id} blocked during reconcile: ${judge.reason?.[0] ?? "No reason provided"}`);
+                await logRunEvent(ctx, repoRoot, "warn", "run.blocked.verifier-reconcile", `Run blocked: verifier failed during reconcile for ${task.id}`, {
+                  taskId: task.id,
+                  reason: judge.reason?.[0] ?? "No reason provided",
+                }, { runId, taskId: task.id, reasonCode: "VERIFIER_FAILED" });
+                await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
+                break;
+              }
+            } else {
+              await logRunEvent(ctx, repoRoot, "info", "run.reconcile.skipped", "Skipping reconcile pass for non-blocked task", {
                 taskId: task.id,
-                reason: judge.reason?.[0] ?? "No reason provided",
-              }, { runId, taskId: task.id, reasonCode: "VERIFIER_FAILED" });
-              await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
-              break;
+                taskStatus: task.status,
+              }, { runId, taskId: task.id });
             }
 
             prd = setPrdTaskStatus(prd, task.id, "in_progress");
