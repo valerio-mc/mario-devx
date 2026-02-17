@@ -77,6 +77,7 @@ import { resolveUiRunSetup } from "./run-ui";
 import { RUN_PHASE, type RunExecutionContext, type RunLogMeta, type RunPhaseName } from "./run-types";
 import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { runShellCommand } from "./shell";
+import { ensureVerifierSession, resetVerifierSessionToBaseline, runVerifierTurn } from "./verifier-session";
 
 type ToolContext = {
   sessionID?: string;
@@ -824,33 +825,56 @@ const sanitizeForPrompt = (text: string): string => {
     .trim();
 };
 
+const buildCapabilitySummary = (caps: {
+  available: boolean;
+  version: string | null;
+  openUsage: string | null;
+  commands: string[];
+  notes: string[];
+}): string => {
+  return [
+    `available: ${caps.available ? "yes" : "no"}`,
+    `version: ${caps.version ?? "unknown"}`,
+    `open usage: ${caps.openUsage ?? "unknown"}`,
+    `commands: ${caps.commands.join(", ") || "none"}`,
+    ...(caps.notes.length > 0 ? [`notes: ${caps.notes.join("; ")}`] : []),
+  ].join("\n");
+};
+
 const promptAndResolveWithRetry = async (opts: {
   ctx: PluginContext;
   repoRoot: string;
-  sessionId: string;
   promptText: string;
   runId: string;
   taskId: string;
   agent?: string;
   timeoutMs: number;
+  capabilitySummary: string;
 }): Promise<string> => {
-  const { ctx, repoRoot, sessionId, promptText, runId, taskId, agent, timeoutMs } = opts;
+  const { ctx, repoRoot, promptText, runId, taskId, agent, timeoutMs, capabilitySummary } = opts;
   const maxAttempts = 3;
   let lastError: unknown = null;
+  const verifierSession = await ensureVerifierSession({
+    ctx,
+    repoRoot,
+    capabilitySummary,
+    ...(agent ? { agent } : {}),
+  });
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      await resetVerifierSessionToBaseline(ctx, repoRoot, verifierSession);
       await logRunEvent(ctx, repoRoot, "info", "run.verify.prompt.sent", "Verifier prompt sent", {
         attempt,
         maxAttempts,
+        verifierSessionId: verifierSession.sessionId,
       }, { runId, taskId });
-      const verifierResponse = await ctx.client.session.prompt({
-        path: { id: sessionId },
-        body: {
-          ...(agent ? { agent } : {}),
-          parts: [{ type: "text", text: promptText }],
-        },
+      const verifierText = await runVerifierTurn({
+        ctx,
+        sessionId: verifierSession.sessionId,
+        promptText,
+        timeoutMs,
+        ...(agent ? { agent } : {}),
       });
-      const verifierText = await resolvePromptText(ctx, sessionId, verifierResponse, timeoutMs);
       if (!verifierText.trim()) {
         throw new Error("Empty verifier response text");
       }
@@ -1670,8 +1694,6 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-              const wsForVerifier = await ensureWorkSession(ctx, repoRoot, context.agent);
-              await setWorkSessionTitle(ctx, wsForVerifier.sessionId, `mario-devx (work) - reconcile judge ${task.id}`);
               await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass (reconcile)", {
                 taskId: task.id,
               }, { runId, taskId: task.id });
@@ -1715,12 +1737,12 @@ export const createTools = (ctx: PluginContext) => {
                 verifierText = await promptAndResolveWithRetry({
                   ctx,
                   repoRoot,
-                  sessionId: wsForVerifier.sessionId,
                   promptText: verifierPrompt,
                   runId,
                   taskId: task.id,
                   ...(context.agent ? { agent: context.agent } : {}),
                   timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
+                  capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
                 });
               } catch (error) {
                 const errMsg = error instanceof Error ? error.message : String(error);
@@ -2266,12 +2288,12 @@ export const createTools = (ctx: PluginContext) => {
                 verifierText = await promptAndResolveWithRetry({
                   ctx,
                   repoRoot,
-                  sessionId: ws.sessionId,
                   promptText: verifierPrompt,
                   runId,
                   taskId: task.id,
                   ...(context.agent ? { agent: context.agent } : {}),
                   timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
+                  capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
                 });
               } catch (error) {
                 const errMsg = error instanceof Error ? error.message : String(error);
