@@ -78,6 +78,7 @@ import { RUN_PHASE, type RunExecutionContext, type RunLogMeta, type RunPhaseName
 import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { runShellCommand } from "./shell";
 import { ensureVerifierSession, resetVerifierSessionToBaseline, runVerifierTurn } from "./verifier-session";
+import { buildVerifierContextText, buildVerifierTransportFailureJudge, enforceJudgeOutputQuality } from "./run-verifier";
 
 type ToolContext = {
   sessionID?: string;
@@ -818,13 +819,6 @@ const sleep = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
 };
 
-const sanitizeForPrompt = (text: string): string => {
-  return text
-    .replace(/\u001b\[[0-9;]*m/g, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .trim();
-};
-
 const buildCapabilitySummary = (caps: {
   available: boolean;
   version: string | null;
@@ -860,9 +854,21 @@ const promptAndResolveWithRetry = async (opts: {
     capabilitySummary,
     ...(agent ? { agent } : {}),
   });
+  await logRunEvent(ctx, repoRoot, "info", "verifier.session.ensure.ok", "Verifier session ensured", {
+    verifierSessionId: verifierSession.sessionId,
+    baselineFingerprint: verifierSession.baselineFingerprint,
+  }, { runId, taskId });
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      await logRunEvent(ctx, repoRoot, "info", "verifier.session.reset.start", "Resetting verifier session to baseline", {
+        verifierSessionId: verifierSession.sessionId,
+        attempt,
+      }, { runId, taskId });
       await resetVerifierSessionToBaseline(ctx, repoRoot, verifierSession);
+      await logRunEvent(ctx, repoRoot, "info", "verifier.session.reset.ok", "Verifier session reset complete", {
+        verifierSessionId: verifierSession.sessionId,
+        attempt,
+      }, { runId, taskId });
       await logRunEvent(ctx, repoRoot, "info", "run.verify.prompt.sent", "Verifier prompt sent", {
         attempt,
         maxAttempts,
@@ -886,6 +892,10 @@ const promptAndResolveWithRetry = async (opts: {
     } catch (error) {
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
+      await logRunEvent(ctx, repoRoot, "error", "verifier.session.reset.fail", "Verifier session turn failed", {
+        attempt,
+        error: message,
+      }, { runId, taskId, reasonCode: "VERIFIER_TRANSPORT_ERROR" });
       await logRunEvent(ctx, repoRoot, "error", "run.verify.transport.error", "Verifier transport/parse error", {
         attempt,
         maxAttempts,
@@ -1700,37 +1710,18 @@ export const createTools = (ctx: PluginContext) => {
               const verifierPrompt = await buildPrompt(
                 repoRoot,
                 "verify",
-                sanitizeForPrompt([
-                  `Task: ${task.id} - ${task.title}`,
-                  effectiveDoneWhen.length > 0
-                    ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}`
-                    : "Done when: (none)",
-                  "",
-                  "Deterministic gates:",
-                  ...reconcileGateResult.results.map((r) => `- ${r.command}: ${r.ok ? "PASS" : `FAIL (exit ${r.exitCode})`}`),
-                  uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
-                  uiResult?.note ? `UI note: ${uiResult.note}` : "",
-                  "",
-                  "UI product context:",
-                  `- Visual direction: ${prd.ui.visualDirection || "unspecified"}`,
-                  `- UX requirements: ${(prd.ui.uxRequirements ?? []).join("; ") || "unspecified"}`,
-                  `- Style references: ${(prd.ui.styleReferences ?? []).join(", ") || "none"}`,
-                  "",
-                  "agent-browser capabilities:",
-                  `- Available: ${agentBrowserCaps.available ? "yes" : "no"}`,
-                  `- Version: ${agentBrowserCaps.version ?? "unknown"}`,
-                  `- Open usage: ${agentBrowserCaps.openUsage ?? "unknown"}`,
-                  `- Commands: ${agentBrowserCaps.commands.join(", ") || "none"}`,
-                  ...(agentBrowserCaps.notes.length > 0 ? [`- Notes: ${agentBrowserCaps.notes.join("; ")}`] : []),
-                  "",
-                  "Autonomous UI check policy:",
-                  `- UI URL: ${uiVerifyUrl}`,
-                  "- You may run agent-browser commands autonomously to gather missing evidence.",
-                  "- Maximum 8 browser commands for this verification pass.",
-                  "- Prefer snapshot/console/errors evidence before issuing FAIL.",
-                ]
-                  .filter((x) => x)
-                  .join("\n")),
+                buildVerifierContextText({
+                  task,
+                  doneWhen: effectiveDoneWhen,
+                  gates: reconcileGateResult.results,
+                  uiResult,
+                  ...(uiResult?.note ? { uiNote: uiResult.note } : {}),
+                  visualDirection: prd.ui.visualDirection,
+                  uxRequirements: prd.ui.uxRequirements,
+                  styleReferences: prd.ui.styleReferences,
+                  caps: agentBrowserCaps,
+                  uiUrl: uiVerifyUrl,
+                }),
               );
               let verifierText = "";
               try {
@@ -1746,18 +1737,10 @@ export const createTools = (ctx: PluginContext) => {
                 });
               } catch (error) {
                 const errMsg = error instanceof Error ? error.message : String(error);
-                const judge: PrdJudgeAttempt = {
-                  status: "FAIL",
-                  exitSignal: false,
-                  reason: [
-                    formatReasonCode("VERIFIER_TRANSPORT_EOF"),
-                    `Verifier transport failed during reconcile: ${errMsg}`,
-                  ],
-                  nextActions: [
-                    "Retry /mario-devx:run 1.",
-                    "If it repeats, inspect .mario/state/mario-devx.log for run.verify.transport.error.",
-                  ],
-                };
+                const judge = buildVerifierTransportFailureJudge(
+                  "VERIFIER_TRANSPORT_EOF",
+                  `Verifier transport failed during reconcile: ${errMsg}`,
+                );
                 prd = await persistBlockedTaskAttempt({
                   ctx,
                   repoRoot,
@@ -1777,7 +1760,7 @@ export const createTools = (ctx: PluginContext) => {
                 await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
                 break;
               }
-              const judge = parseJudgeAttemptFromText(verifierText);
+              const judge = enforceJudgeOutputQuality(parseJudgeAttemptFromText(verifierText));
               const lastAttempt: PrdTaskAttempt = {
                 at: attemptAt,
                 iteration: state.iteration,
@@ -2246,37 +2229,18 @@ export const createTools = (ctx: PluginContext) => {
           const verifierPrompt = await buildPrompt(
             repoRoot,
             "verify",
-            sanitizeForPrompt([
-              `Task: ${task.id} - ${task.title}`,
-              effectiveDoneWhen.length > 0
-                ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}`
-                : "Done when: (none)",
-              "",
-              "Deterministic gates:",
-              ...gateResult.results.map((r) => `- ${r.command}: ${r.ok ? "PASS" : `FAIL (exit ${r.exitCode})`}`),
-              uiResult ? `UI verification: ${uiResult.ok ? "PASS" : "FAIL"}` : "UI verification: (not run)",
-              uiResult?.note ? `UI note: ${uiResult.note}` : "",
-              "",
-              "UI product context:",
-              `- Visual direction: ${prd.ui.visualDirection || "unspecified"}`,
-              `- UX requirements: ${(prd.ui.uxRequirements ?? []).join("; ") || "unspecified"}`,
-              `- Style references: ${(prd.ui.styleReferences ?? []).join(", ") || "none"}`,
-              "",
-              "agent-browser capabilities:",
-              `- Available: ${agentBrowserCaps.available ? "yes" : "no"}`,
-              `- Version: ${agentBrowserCaps.version ?? "unknown"}`,
-              `- Open usage: ${agentBrowserCaps.openUsage ?? "unknown"}`,
-              `- Commands: ${agentBrowserCaps.commands.join(", ") || "none"}`,
-              ...(agentBrowserCaps.notes.length > 0 ? [`- Notes: ${agentBrowserCaps.notes.join("; ")}`] : []),
-              "",
-              "Autonomous UI check policy:",
-              `- UI URL: ${uiVerifyUrl}`,
-              "- You may run agent-browser commands autonomously to gather missing evidence.",
-              "- Maximum 8 browser commands for this verification pass.",
-              "- Prefer snapshot/console/errors evidence before issuing FAIL.",
-            ]
-              .filter((x) => x)
-              .join("\n")),
+            buildVerifierContextText({
+              task,
+              doneWhen: effectiveDoneWhen,
+              gates: gateResult.results,
+              uiResult,
+              ...(uiResult?.note ? { uiNote: uiResult.note } : {}),
+              visualDirection: prd.ui.visualDirection,
+              uxRequirements: prd.ui.uxRequirements,
+              styleReferences: prd.ui.styleReferences,
+              caps: agentBrowserCaps,
+              uiUrl: uiVerifyUrl,
+            }),
           );
 
               await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
@@ -2297,13 +2261,11 @@ export const createTools = (ctx: PluginContext) => {
                 });
               } catch (error) {
                 const errMsg = error instanceof Error ? error.message : String(error);
-                await failEarly([
-                  formatReasonCode("VERIFIER_TRANSPORT_EOF"),
+                const transportJudge = buildVerifierTransportFailureJudge(
+                  "VERIFIER_TRANSPORT_EOF",
                   `Verifier transport failed: ${errMsg}`,
-                ], [
-                  "Retry /mario-devx:run 1.",
-                  "If it repeats, inspect .mario/state/mario-devx.log for run.verify.transport.error.",
-                ]);
+                );
+                await failEarly(transportJudge.reason, transportJudge.nextActions);
                 await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed for ${task.id}`, {
                   taskId: task.id,
                   error: errMsg,
@@ -2316,7 +2278,7 @@ export const createTools = (ctx: PluginContext) => {
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
-          const judge = parseJudgeAttemptFromText(verifierText);
+          const judge = enforceJudgeOutputQuality(parseJudgeAttemptFromText(verifierText));
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
             iteration: state.iteration,
