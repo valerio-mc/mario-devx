@@ -318,10 +318,11 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **Wizard won't progress** | The PRD wizard is LLM-driven. Just answer naturally - it will ask follow-ups until complete. Check `.mario/prd.json` to see current state. |
 | **Quality gates fail instantly** | Verify `.mario/prd.json` has runnable commands under `qualityGates` (e.g., `npm test`, `npm run lint`). |
 | **First task keeps failing** | Check `tasks[0].lastAttempt.judge.nextActions` in `.mario/prd.json` for specific scaffold commands to run. |
-| **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If auto-install failed, run: `npm install -g agent-browser && agent-browser install` |
+| **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If browser runtime install failed, run non-interactive install: `CI=1 npm_config_yes=true npx --yes playwright install chromium` |
 | **Verifier returns invalid JSON** | The LLM should return JSON in `<VERIFIER_JSON>` tags. If malformed, the task will be marked blocked - check `lastAttempt.judge.rawText` to see what was returned. |
 | **AGENTS.md parse warnings** | Lines must be `KEY=VALUE` format. Comments start with `#`. No spaces around `=`. |
-| **Run stops with heartbeat error** | Check disk space and permissions on `.mario/state/run.lock`. Clear the lock file if stuck: `rm .mario/state/run.lock` |
+| **Run says another run is active after crash/CTRL+C** | Rerun `/mario-devx:run 1` once: mario-devx auto-recovers stale `DOING` state and stale lock PID entries. If it still persists, run `/mario-devx:doctor` and follow suggested fixes. |
+| **Run stops with heartbeat error** | Check disk space and permissions on `.mario/state/run.lock`. Prefer rerunning `/mario-devx:run 1` first; remove lock manually only if doctor indicates it is stale. |
 | **General health check** | Run `/mario-devx:doctor` to diagnose common issues. |
 
 ## Acknowledgements
