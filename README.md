@@ -164,6 +164,8 @@ To keep going:
 
 If it stops, the answer is in the focus task's `lastAttempt` verdict.
 
+On the next `/mario-devx:run`, mario-devx carries forward previous verifier findings for blocked tasks and prioritizes repairing them before unrelated changes.
+
 ```
 /mario-devx:status
 ```

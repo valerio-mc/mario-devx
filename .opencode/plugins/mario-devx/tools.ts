@@ -398,6 +398,57 @@ const generateFallbackTasks = (prd: PrdJson): PrdTask[] => {
 
 const formatReasonCode = (code: string): string => `ReasonCode: ${code}`;
 
+const isSystemReasonCode = (line: string): boolean => {
+  const m = line.match(/^ReasonCode:\s*([A-Z0-9_]+)/i);
+  if (!m) return false;
+  const code = (m[1] ?? "").toUpperCase();
+  return code.startsWith("VERIFIER_TRANSPORT")
+    || code.startsWith("RUN_")
+    || code.startsWith("HEARTBEAT_")
+    || code.startsWith("COMMAND_NOT_FOUND")
+    || code.startsWith("MISSING_SCRIPT_");
+};
+
+const normalizeIssueLine = (line: string): string => {
+  return line.replace(/^ReasonCode:\s*[A-Z0-9_]+\s*/i, "").trim().toLowerCase();
+};
+
+const collectCarryForwardIssues = (task: PrdTask): string[] => {
+  const attempt = task.lastAttempt;
+  if (!attempt || task.status !== "blocked") return [];
+  const reasons = (attempt.judge.reason ?? [])
+    .map((r) => String(r).trim())
+    .filter(Boolean)
+    .filter((r) => !isSystemReasonCode(r));
+  const actions = (attempt.judge.nextActions ?? [])
+    .map((a) => String(a).trim())
+    .filter(Boolean)
+    .filter((a) => !/retry \/mario-devx:run 1/i.test(a));
+  const uiNotes = attempt.ui?.note ? [String(attempt.ui.note).trim()] : [];
+  return Array.from(new Set([...reasons, ...actions, ...uiNotes])).slice(0, 10);
+};
+
+const applyRepeatedFailureBackpressure = (
+  previous: PrdTaskAttempt | undefined,
+  judge: PrdJudgeAttempt,
+): PrdJudgeAttempt => {
+  if (!previous || judge.status !== "FAIL") return judge;
+  const prev = (previous.judge.reason ?? []).map(normalizeIssueLine).filter(Boolean);
+  const curr = (judge.reason ?? []).map(normalizeIssueLine).filter(Boolean);
+  if (prev.length === 0 || curr.length === 0) return judge;
+  const overlap = curr.filter((c) => prev.includes(c));
+  if (overlap.length === 0) return judge;
+  const reason = [
+    formatReasonCode("REPEATED_UI_FINDINGS"),
+    ...judge.reason,
+  ];
+  const nextActions = Array.from(new Set([
+    ...(judge.nextActions ?? []),
+    "Previous UI findings are repeating; address these findings explicitly before new changes.",
+  ]));
+  return { ...judge, reason, nextActions };
+};
+
 const interviewTranscript = (prd: PrdJson): string[] => {
   const entries = Object.entries(prd.wizard.answers ?? {})
     .filter(([key]) => key !== LAST_QUESTION_KEY)
@@ -1840,7 +1891,7 @@ export const createTools = (ctx: PluginContext) => {
                 await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
                 break;
               }
-              const judge = verifierOutcome.judge;
+              const judge = applyRepeatedFailureBackpressure(task.lastAttempt, verifierOutcome.judge);
               const lastAttempt: PrdTaskAttempt = {
                 at: attemptAt,
                 iteration: state.iteration,
@@ -1884,6 +1935,13 @@ export const createTools = (ctx: PluginContext) => {
 
           const state = await bumpIteration(repoRoot);
           const attemptAt = nowIso();
+          const carryForwardIssues = collectCarryForwardIssues(task);
+          if (carryForwardIssues.length > 0) {
+            await logRunEvent(ctx, repoRoot, "info", "run.remediation.feedback_applied", "Applied carry-forward verifier findings", {
+              taskId: task.id,
+              findings: carryForwardIssues,
+            }, { runId, taskId: task.id });
+          }
 
           const iterationPlan = [
             `# Iteration Task (${task.id})`,
@@ -1906,6 +1964,9 @@ export const createTools = (ctx: PluginContext) => {
             prd.docs.readmeRequired
               ? `README policy: required sections -> ${(prd.docs.readmeSections ?? []).join(", ")}`
               : "README policy: optional",
+            carryForwardIssues.length > 0
+              ? `Previous verifier findings to fix now:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
+              : "",
           ]
             .filter((x) => x)
             .join("\n");
@@ -2111,6 +2172,9 @@ export const createTools = (ctx: PluginContext) => {
 
                 const repairPrompt = [
                   `Task ${task.id} failed deterministic gate: ${failedGate}.`,
+                  carryForwardIssues.length > 0
+                    ? `Carry-forward findings from previous verifier attempt:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
+                    : "",
                   gateResult.failed?.command && isScaffoldMissingGateCommand(gateResult.failed.command)
                     ? "If project scaffold is missing, scaffold the app first before feature edits."
                     : "",
@@ -2118,6 +2182,9 @@ export const createTools = (ctx: PluginContext) => {
                     ? `Detected missing npm script '${missingScript}'. Add it to package.json and required config/files so it passes.`
                     : "",
                   scaffoldHint ? `Optional scaffold default: ${scaffoldHint}` : "",
+                  carryForwardIssues.length > 0
+                    ? "Prioritize fixing the carry-forward findings before adding unrelated changes."
+                    : "",
                   "Fix the repository so all deterministic gates pass.",
                   "Do not ask questions. Apply edits and stop when done.",
                 ].join("\n");
@@ -2351,7 +2418,7 @@ export const createTools = (ctx: PluginContext) => {
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
               }
-          const judge = verifierOutcome.judge;
+          const judge = applyRepeatedFailureBackpressure(task.lastAttempt, verifierOutcome.judge);
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
             iteration: state.iteration,
