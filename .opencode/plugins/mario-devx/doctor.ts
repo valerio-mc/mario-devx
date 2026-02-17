@@ -5,8 +5,9 @@ import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { redactForLog } from "./logging";
 import { pidLooksAlive } from "./process";
 import { readPrdJsonIfExists } from "./prd";
-import { readRunState, readUiVerifyState, readWorkSessionState } from "./state";
+import { readRunState, readUiVerifyState, readVerifierSessionState, readWorkSessionState } from "./state";
 import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
+import { buildVerifierBaseline } from "./verifier-session";
 
 export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => {
   const issues: string[] = [];
@@ -43,6 +44,7 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
 
   const runState = await readRunState(repoRoot);
   const uiVerifyState = await readUiVerifyState(repoRoot);
+  const verifierSession = await readVerifierSessionState(repoRoot);
   if (runState.status === "DOING") {
     const lockPath = path.join(repoRoot, ".mario", "state", "run.lock");
     const lockRaw = await readTextIfExists(lockPath);
@@ -106,6 +108,30 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
         if (!uiVerifierPlaybook || uiVerifierPlaybook.trim().length === 0) {
           issues.push("UI verifier playbook is missing (UI_VERIFIER.md). Autonomous UI judging may drift.");
           fixes.push("Restore .opencode/plugins/mario-devx/assets/prompts/UI_VERIFIER.md and reinstall plugin.");
+        }
+
+        const capabilitySummary = [
+          `available: ${caps.available ? "yes" : "no"}`,
+          `version: ${caps.version ?? "unknown"}`,
+          `open usage: ${caps.openUsage ?? "unknown"}`,
+          `commands: ${caps.commands.join(", ") || "none"}`,
+          ...(caps.notes.length > 0 ? [`notes: ${caps.notes.join("; ")}`] : []),
+        ].join("\n");
+        const baseline = await buildVerifierBaseline(capabilitySummary);
+        if (!verifierSession) {
+          issues.push("Verifier session state is missing; it will be recreated on next run.");
+        } else {
+          if (verifierSession.baselineFingerprint !== baseline.fingerprint) {
+            issues.push("Verifier session baseline is stale relative to current playbook/capabilities.");
+            fixes.push("Rerun /mario-devx:run 1 (verifier session baseline will be recreated).");
+          }
+          try {
+            await ctx.client.session.get({ path: { id: verifierSession.sessionId } });
+            await ctx.client.session.message({ path: { id: verifierSession.sessionId, messageID: verifierSession.baselineMessageId } });
+          } catch {
+            issues.push("Verifier session references missing session/baseline message.");
+            fixes.push("Rerun /mario-devx:run 1 to recreate verifier session baseline.");
+          }
         }
 
         const runtime = await hasAgentBrowserRuntime(ctx);
