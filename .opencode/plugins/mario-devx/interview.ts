@@ -1,9 +1,8 @@
 import { type PrdJson } from "./prd";
+import { WIZARD_REQUIREMENTS } from "./config";
 
-export const WIZARD_TOTAL_STEPS = 17;
+export const WIZARD_TOTAL_STEPS = WIZARD_REQUIREMENTS.TOTAL_STEPS;
 export const LAST_QUESTION_KEY = "__last_question";
-export const MIN_FEATURES = 3;
-export const MIN_QUALITY_GATES = 2;
 
 export const hasNonEmpty = (value: string | null | undefined): boolean => typeof value === "string" && value.trim().length > 0;
 
@@ -66,13 +65,13 @@ export const isPrdComplete = (prd: PrdJson): boolean => {
     && hasNonEmpty(prd.framework)
     && hasMeaningfulList(prd.product.targetUsers)
     && hasMeaningfulList(prd.product.userProblems)
-    && hasMeaningfulList(prd.product.mustHaveFeatures, MIN_FEATURES)
+    && hasMeaningfulList(prd.product.mustHaveFeatures, WIZARD_REQUIREMENTS.MIN_FEATURES)
     && hasMeaningfulList(prd.product.nonGoals)
     && hasMeaningfulList(prd.product.successMetrics)
     && hasMeaningfulList(prd.product.constraints)
     && typeof prd.docs.readmeRequired === "boolean"
     && (prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections))
-    && hasMeaningfulList(prd.qualityGates, MIN_QUALITY_GATES)
+    && hasMeaningfulList(prd.qualityGates, WIZARD_REQUIREMENTS.MIN_QUALITY_GATES)
   );
 };
 

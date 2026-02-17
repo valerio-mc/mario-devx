@@ -1982,7 +1982,7 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-              const idle = await waitForSessionIdleStable(ctx, ws.sessionId, 20 * 60 * 1000);
+              const idle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
               if (!idle) {
                 const gates: PrdGatesAttempt = { ok: false, commands: [] };
                 const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
