@@ -198,7 +198,7 @@ If your `/mario-devx:add` request is too vague, mario-devx will use an **LLM-dri
 
 This is not a rigid multi-step form - the LLM adapts to your specific feature and asks only what's needed.
 
-`/mario-devx:replan` also repairs malformed open feature tasks by canceling non-atomic fragments and regenerating clean atomic tasks from PRD/backlog.
+`/mario-devx:replan` is idempotent for open/planned backlog items: it regenerates clean atomic tasks for replannable items while skipping features that already have in-progress/completed tasks.
 
 ## What gets created
 
