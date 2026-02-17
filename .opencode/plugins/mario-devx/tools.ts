@@ -33,6 +33,7 @@ import {
   decomposeFeatureRequestToTasks,
   firstScaffoldHintFromNotes,
   getNextPrdTask,
+  getTaskDependencyBlockers,
   isScaffoldMissingGateCommand,
   makeTask,
   nextBacklogId,
@@ -1663,26 +1664,28 @@ export const createTools = (ctx: PluginContext) => {
               break;
             }
 
-            const prerequisiteTask = (prd.tasks ?? []).find((t) => {
-              if (t.id === task.id) return false;
-              if (t.status === "completed" || t.status === "cancelled") return false;
-              const labels = t.labels ?? [];
-              return labels.includes("scaffold") || labels.includes("quality") || labels.includes("docs") || labels.includes("foundation");
-            });
-            if ((task.labels ?? []).includes("feature") && prerequisiteTask) {
+            const dependencyBlockers = getTaskDependencyBlockers(prd, task);
+            if (dependencyBlockers.pending.length > 0 || dependencyBlockers.missing.length > 0) {
+              const blockerTask = dependencyBlockers.pending[0];
+              const missingDep = dependencyBlockers.missing[0] ?? "unknown";
               const state = await bumpIteration(repoRoot);
               const attemptAt = nowIso();
               const gates: PrdGatesAttempt = { ok: false, commands: [] };
               const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+              const detail = blockerTask
+                ? `Cannot execute ${task.id} before dependency ${blockerTask.id} (${blockerTask.title}) is completed.`
+                : `Cannot execute ${task.id} because dependency ${missingDep} is missing from .mario/prd.json.`;
               const judge: PrdJudgeAttempt = {
                 status: "FAIL",
                 exitSignal: false,
                 reason: [
                   formatReasonCode("PREREQ_TASK_PENDING"),
-                  `Cannot execute feature task ${task.id} before prerequisite task ${prerequisiteTask.id} (${prerequisiteTask.title}) is completed.`,
+                  detail,
                 ],
                 nextActions: [
-                  `Complete ${prerequisiteTask.id} first, then rerun /mario-devx:run 1.`,
+                  blockerTask
+                    ? `Complete ${blockerTask.id} first, then rerun /mario-devx:run 1.`
+                    : `Fix missing dependency ${missingDep} in .mario/prd.json, then rerun /mario-devx:run 1.`,
                 ],
               };
               prd = await persistBlockedTaskAttempt({
@@ -1697,11 +1700,16 @@ export const createTools = (ctx: PluginContext) => {
                 judge,
                 runId,
               });
-              await logRunEvent(ctx, repoRoot, "warn", "run.blocked.prerequisite", `Run blocked: prerequisite task pending for ${task.id}`, {
+              runNotes.push(`Blocked before execution: unresolved dependency for ${task.id}.`);
+              await logRunEvent(ctx, repoRoot, "warn", "run.blocked.prerequisite", `Run blocked: unresolved dependency for ${task.id}`, {
                 taskId: task.id,
-                prerequisiteTaskId: prerequisiteTask.id,
+                dependencyTaskIds: dependencyBlockers.pending.map((x) => x.id),
+                missingDependencies: dependencyBlockers.missing,
               }, { runId, taskId: task.id, reasonCode: "PREREQ_PENDING" });
-              await showToast(ctx, `Run blocked: ${task.id} requires ${prerequisiteTask.id}`, "warning");
+              await showToast(ctx, blockerTask
+                ? `Run blocked: ${task.id} requires ${blockerTask.id}`
+                : `Run blocked: ${task.id} has missing dependency ${missingDep}`,
+              "warning");
               break;
             }
 

@@ -31,7 +31,9 @@ export const buildRunSummary = (opts: BuildRunSummaryOptions): RunSummary => {
   const judgeTopReason = latestAttempt?.judge.reason?.[0] ?? "No judge reason recorded.";
 
   const note =
-    completed === attempted && attempted === maxItems
+    attempted === 0 && latestAttempt
+      ? "Stopped before execution. See task.lastAttempt.judge in .mario/prd.json."
+      : completed === attempted && attempted === maxItems
       ? "Reached max_items limit."
       : completed === attempted
         ? "No more open/in_progress tasks found."

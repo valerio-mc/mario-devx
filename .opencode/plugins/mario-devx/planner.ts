@@ -167,10 +167,52 @@ export const makeTask = (params: {
   };
 };
 
+const isTerminalStatus = (status: PrdTaskStatus): boolean => status === "completed" || status === "cancelled";
+
+const isRunnableCandidateStatus = (status: PrdTaskStatus): boolean => {
+  return status === "open" || status === "in_progress" || status === "blocked";
+};
+
+export const getTaskDependencyBlockers = (prd: PrdJson, task: PrdTask): { pending: PrdTask[]; missing: string[] } => {
+  const dependencies = task.dependsOn ?? [];
+  if (dependencies.length === 0) {
+    return { pending: [], missing: [] };
+  }
+  const tasksById = new Map((prd.tasks ?? []).map((t) => [t.id, t] as const));
+  const pending: PrdTask[] = [];
+  const missing: string[] = [];
+  for (const depId of dependencies) {
+    const dep = tasksById.get(depId);
+    if (!dep) {
+      missing.push(depId);
+      continue;
+    }
+    if (!isTerminalStatus(dep.status)) {
+      pending.push(dep);
+    }
+  }
+  return { pending, missing };
+};
+
 export const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
   const tasks = prd.tasks ?? [];
+
   for (const task of tasks) {
-    if (task.status !== "completed" && task.status !== "cancelled") {
+    if (!isRunnableCandidateStatus(task.status)) continue;
+    const blockers = getTaskDependencyBlockers(prd, task);
+    if (blockers.pending.length === 0 && blockers.missing.length === 0) {
+      return task;
+    }
+  }
+
+  for (const task of tasks) {
+    if (task.status === "open" || task.status === "in_progress") {
+      return task;
+    }
+  }
+
+  for (const task of tasks) {
+    if (!isTerminalStatus(task.status)) {
       return task;
     }
   }
