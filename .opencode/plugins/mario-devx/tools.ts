@@ -726,40 +726,98 @@ const compileRepairPrompt = (invalidResponse: string): string => {
   ].join("\n");
 };
 
-/**
- * Applies interview updates to the PRD with automatic normalization.
- * 
- * ARCHITECTURE: Instead of 40+ explicit IF statements checking each field,
- * we use a recursive merge function that:
- * 1. Automatically trims strings
- * 2. Normalizes arrays (deduplicates, filters empty)
- * 3. Deep merges objects
- * 4. Derives dependent fields (platform → frontend, etc.)
- * 
- * This eliminates the massive switch statement that previously handled
- * each field individually.
- */
+/** Applies interview updates to the PRD with explicit field mapping. */
 const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefined): PrdJson => {
   if (!updates) return prd;
-  
-  // Deep merge with automatic normalization
-  const merge = (target: any, source: any): any => {
-    if (source === undefined || source === null) return target;
-    if (typeof source === "string") return source.trim();
-    if (Array.isArray(source)) return normalizeTextArray(source);
-    if (typeof source === "object") {
-      const result = { ...target };
-      for (const key of Object.keys(source)) {
-        result[key] = merge(result[key], source[key]);
-      }
-      return result;
-    }
-    return source;
+
+  const updatesAny = updates as Record<string, unknown>;
+  const nestedUi = (updatesAny.ui && typeof updatesAny.ui === "object") ? updatesAny.ui as Record<string, unknown> : null;
+  const nestedDocs = (updatesAny.docs && typeof updatesAny.docs === "object") ? updatesAny.docs as Record<string, unknown> : null;
+  const nestedProduct = (updatesAny.product && typeof updatesAny.product === "object") ? updatesAny.product as Record<string, unknown> : null;
+
+  let next: PrdJson = {
+    ...prd,
+    ui: { ...prd.ui },
+    docs: { ...prd.docs },
+    product: { ...prd.product },
+    verificationPolicy: { ...prd.verificationPolicy },
   };
-  
-  let next = merge(prd, updates) as PrdJson;
-  
-  // Derive dependent fields
+
+  if (typeof updates.idea === "string") next.idea = updates.idea.trim();
+  if (updates.platform) next.platform = updates.platform;
+  if (typeof updates.frontend === "boolean") next.frontend = updates.frontend;
+  if (typeof updates.uiVerificationRequired === "boolean") next.uiVerificationRequired = updates.uiVerificationRequired;
+  if (updates.language) next.language = updates.language;
+  if (typeof updates.framework === "string") next.framework = updates.framework.trim();
+  if (updates.framework === null) next.framework = null;
+
+  const designSystem = updates.uiDesignSystem ?? nestedUi?.designSystem;
+  if (designSystem === "none" || designSystem === "tailwind" || designSystem === "shadcn" || designSystem === "custom") {
+    next.ui.designSystem = designSystem;
+  }
+
+  const styleReferenceMode = updates.uiStyleReferenceMode ?? nestedUi?.styleReferenceMode;
+  if (styleReferenceMode === "url" || styleReferenceMode === "screenshot" || styleReferenceMode === "mixed") {
+    next.ui.styleReferenceMode = styleReferenceMode;
+  }
+
+  const styleRefs = Array.isArray(updates.uiStyleReferences)
+    ? updates.uiStyleReferences
+    : (Array.isArray(nestedUi?.styleReferences) ? nestedUi.styleReferences as string[] : undefined);
+  if (styleRefs) {
+    next.ui.styleReferences = mergeStyleReferences(next.ui.styleReferences, normalizeTextArray(styleRefs));
+  }
+
+  const visualDirection = updates.uiVisualDirection ?? (typeof nestedUi?.visualDirection === "string" ? nestedUi.visualDirection : undefined);
+  if (typeof visualDirection === "string") next.ui.visualDirection = visualDirection.trim();
+
+  const uxRequirements = Array.isArray(updates.uiUxRequirements)
+    ? updates.uiUxRequirements
+    : (Array.isArray(nestedUi?.uxRequirements) ? nestedUi.uxRequirements as string[] : undefined);
+  if (uxRequirements) next.ui.uxRequirements = normalizeTextArray(uxRequirements);
+
+  const readmeRequired = updates.docsReadmeRequired ?? (typeof nestedDocs?.readmeRequired === "boolean" ? nestedDocs.readmeRequired : undefined);
+  if (typeof readmeRequired === "boolean") next.docs.readmeRequired = readmeRequired;
+
+  const readmeSections = Array.isArray(updates.docsReadmeSections)
+    ? updates.docsReadmeSections
+    : (Array.isArray(nestedDocs?.readmeSections) ? nestedDocs.readmeSections as string[] : undefined);
+  if (readmeSections) next.docs.readmeSections = normalizeTextArray(readmeSections);
+
+  const targetUsers = Array.isArray(updates.targetUsers)
+    ? updates.targetUsers
+    : (Array.isArray(nestedProduct?.targetUsers) ? nestedProduct.targetUsers as string[] : undefined);
+  if (targetUsers) next.product.targetUsers = normalizeTextArray(targetUsers);
+
+  const userProblems = Array.isArray(updates.userProblems)
+    ? updates.userProblems
+    : (Array.isArray(nestedProduct?.userProblems) ? nestedProduct.userProblems as string[] : undefined);
+  if (userProblems) next.product.userProblems = normalizeTextArray(userProblems);
+
+  const mustHaveFeatures = Array.isArray(updates.mustHaveFeatures)
+    ? updates.mustHaveFeatures
+    : (Array.isArray(nestedProduct?.mustHaveFeatures) ? nestedProduct.mustHaveFeatures as string[] : undefined);
+  if (mustHaveFeatures) next.product.mustHaveFeatures = normalizeTextArray(mustHaveFeatures);
+
+  const nonGoals = Array.isArray(updates.nonGoals)
+    ? updates.nonGoals
+    : (Array.isArray(nestedProduct?.nonGoals) ? nestedProduct.nonGoals as string[] : undefined);
+  if (nonGoals) next.product.nonGoals = normalizeTextArray(nonGoals);
+
+  const successMetrics = Array.isArray(updates.successMetrics)
+    ? updates.successMetrics
+    : (Array.isArray(nestedProduct?.successMetrics) ? nestedProduct.successMetrics as string[] : undefined);
+  if (successMetrics) next.product.successMetrics = normalizeTextArray(successMetrics);
+
+  const constraints = Array.isArray(updates.constraints)
+    ? updates.constraints
+    : (Array.isArray(nestedProduct?.constraints) ? nestedProduct.constraints as string[] : undefined);
+  if (constraints) next.product.constraints = normalizeTextArray(constraints);
+
+  if (Array.isArray(updates.qualityGates)) {
+    next.qualityGates = normalizeTextArray(updates.qualityGates);
+  }
+
   if (next.platform && next.platform !== "web") {
     next.frontend = false;
     next.uiVerificationRequired = false;
