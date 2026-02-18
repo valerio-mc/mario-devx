@@ -2036,20 +2036,17 @@ export const createTools = (ctx: PluginContext) => {
                       "Or set UI_VERIFY_REQUIRED=0 in .mario/AGENTS.md to make UI verification best-effort.",
                     ],
                   };
-                  const lastAttempt: PrdTaskAttempt = {
-                    at: attemptAt,
+                  prd = await persistBlockedTaskAttempt({
+                    ctx,
+                    repoRoot,
+                    prd,
+                    task,
+                    attemptAt,
                     iteration: state.iteration,
                     gates,
                     ui,
                     judge,
-                  };
-                  prd = setPrdTaskStatus(prd, task.id, "blocked");
-                  prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-                  await writePrdJson(repoRoot, prd);
-                  await updateRunState(repoRoot, {
-                    status: "BLOCKED",
-                    phase: "run",
-                    currentPI: task.id,
+                    runId,
                   });
                   await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_UI_PREREQ, `Run blocked: UI prerequisites missing for ${task.id}`, {
                     taskId: task.id,
@@ -2070,20 +2067,17 @@ export const createTools = (ctx: PluginContext) => {
                     reason: ["UI verification failed during reconcile."],
                     nextActions: ["Fix UI verification failures, then rerun /mario-devx:run 1."],
                   };
-                  const lastAttempt: PrdTaskAttempt = {
-                    at: attemptAt,
+                  prd = await persistBlockedTaskAttempt({
+                    ctx,
+                    repoRoot,
+                    prd,
+                    task,
+                    attemptAt,
                     iteration: state.iteration,
                     gates,
                     ui,
                     judge,
-                  };
-                  prd = setPrdTaskStatus(prd, task.id, "blocked");
-                  prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-                  await writePrdJson(repoRoot, prd);
-                  await updateRunState(repoRoot, {
-                    status: "BLOCKED",
-                    phase: "run",
-                    currentPI: task.id,
+                    runId,
                   });
                   await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_UI_RECONCILE, `Run blocked: UI verification failed during reconcile for ${task.id}`, {
                     taskId: task.id,
@@ -2247,20 +2241,17 @@ export const createTools = (ctx: PluginContext) => {
                 reason: [`Failed to update run.lock heartbeat during ${phase} (${runLockPath(repoRoot)}).`],
                 nextActions: ["Check disk space/permissions for .mario/state/run.lock, then rerun /mario-devx:run 1."],
               };
-             const lastAttempt: PrdTaskAttempt = {
-               at: attemptAt,
-               iteration: state.iteration,
-               gates,
-               ui,
-               judge,
-             };
-             prd = setPrdTaskStatus(prd, task.id, "blocked");
-             prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-             await writePrdJson(repoRoot, prd);
-              await updateRunState(repoRoot, {
-                status: "BLOCKED",
-                phase: "run",
-                currentPI: task.id,
+              prd = await persistBlockedTaskAttempt({
+                ctx,
+                repoRoot,
+                prd,
+                task,
+                attemptAt,
+                iteration: state.iteration,
+                gates,
+                ui,
+                judge,
+                runId,
               });
               await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_HEARTBEAT, `Run blocked: lock heartbeat failed during ${phase}`, {
                 taskId: task.id,
@@ -2334,20 +2325,17 @@ export const createTools = (ctx: PluginContext) => {
                   reason: ["Build timed out waiting for the work session to go idle."],
                   nextActions: ["Rerun /mario-devx:status; if it remains stuck, inspect the work session via /sessions."],
                 };
-                const lastAttempt: PrdTaskAttempt = {
-                  at: attemptAt,
+                prd = await persistBlockedTaskAttempt({
+                  ctx,
+                  repoRoot,
+                  prd,
+                  task,
+                  attemptAt,
                   iteration: state.iteration,
                   gates,
                   ui,
                   judge,
-                };
-                prd = setPrdTaskStatus(prd, task.id, "blocked");
-                prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
-                await writePrdJson(repoRoot, prd);
-                await updateRunState(repoRoot, {
-                  status: "BLOCKED",
-                  phase: "run",
-                  currentPI: task.id,
+                  runId,
                 });
                 await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_BUILD_TIMEOUT, `Run blocked: build timed out for ${task.id}`, {
                   taskId: task.id,
