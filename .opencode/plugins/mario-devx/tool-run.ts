@@ -366,15 +366,48 @@ export const createRunTool = (opts: {
             autoInstallAttempted,
             shouldRunUiVerify,
           } = uiSetup;
+          const defaultAgentBrowserCaps = {
+            available: false,
+            version: null,
+            commands: [] as string[],
+            openUsage: null,
+            notes: [] as string[],
+          };
           const agentBrowserCaps = (uiVerifyEnabled && isWebApp)
-            ? await discoverAgentBrowserCapabilities(ctx)
-            : {
-                available: false,
-                version: null,
-                commands: [] as string[],
-                openUsage: null,
-                notes: [] as string[],
-              };
+            ? await Promise.race([
+              discoverAgentBrowserCapabilities(ctx),
+              new Promise<typeof defaultAgentBrowserCaps>((resolve) => {
+                setTimeout(() => {
+                  resolve({
+                    ...defaultAgentBrowserCaps,
+                    notes: ["Capability probe timed out after 8s; continuing without capability metadata."],
+                  });
+                }, 8000);
+              }),
+            ])
+            : defaultAgentBrowserCaps;
+
+          if (uiVerifyEnabled && isWebApp) {
+            await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.UI_CAPABILITIES, "Discovered agent-browser capabilities", {
+              available: agentBrowserCaps.available,
+              version: agentBrowserCaps.version,
+              openUsage: agentBrowserCaps.openUsage,
+              commands: agentBrowserCaps.commands,
+              notes: agentBrowserCaps.notes,
+            }, { runId });
+          }
+
+          await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.STARTED, "Run started", {
+            maxItems,
+            uiVerifyEnabled,
+            uiVerifyRequired,
+            shouldRunUiVerify,
+            uiVerifyWaitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
+            agentBrowserVersion: agentBrowserCaps.version,
+            agentBrowserOpenUsage: agentBrowserCaps.openUsage,
+            agentBrowserCommands: agentBrowserCaps.commands,
+            agentBrowserNotes: agentBrowserCaps.notes,
+          }, { runId });
 
           const runStartIteration = (await readRunState(repoRoot)).iteration;
           let attempted = 0;
