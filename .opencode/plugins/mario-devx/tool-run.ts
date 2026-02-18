@@ -518,12 +518,123 @@ export const createRunTool = (opts: {
               }, { runId, taskId: task.id, reasonCode: RUN_REASON.HEARTBEAT_FAILED });
             };
 
+            const blockForPromptDispatchFailure = async (
+              phase: "build" | "repair" | "semantic-repair",
+              errorMessage: string,
+            ): Promise<void> => {
+              const gates: PrdGatesAttempt = { ok: false, commands: [] };
+              const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+              const judge: PrdJudgeAttempt = {
+                status: "FAIL",
+                exitSignal: false,
+                reason: [
+                  formatReasonCode(RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT),
+                  `Work-session prompt dispatch timed out during ${phase} (${TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS}ms).`,
+                  errorMessage,
+                ],
+                nextActions: [
+                  "Retry /mario-devx:run 1.",
+                  "If it repeats, restart OpenCode to refresh session RPC state.",
+                ],
+              };
+              prd = await persistBlockedTaskAttempt({
+                ctx,
+                repoRoot,
+                prd,
+                task,
+                attemptAt,
+                iteration: state.iteration,
+                gates,
+                ui,
+                judge,
+                runId,
+              });
+              await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_WORK_PROMPT_TIMEOUT, "Run blocked: work-session prompt dispatch timed out", {
+                taskId: task.id,
+                phase,
+                timeoutMs: TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS,
+                error: errorMessage,
+              }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT });
+            };
+
+            const promptWorkSessionWithTimeout = async (
+              phase: "build" | "repair" | "semantic-repair",
+              text: string,
+            ): Promise<boolean> => {
+              try {
+                await Promise.race([
+                  ctx.client.session.promptAsync({
+                    path: { id: ws.sessionId },
+                    body: {
+                      ...(context.agent ? { agent: context.agent } : {}),
+                      parts: [{ type: "text", text }],
+                    },
+                  }),
+                  new Promise<never>((_, reject) => {
+                    setTimeout(() => {
+                      reject(new Error(`promptAsync timeout (${phase})`));
+                    }, TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS);
+                  }),
+                ]);
+                return true;
+              } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                await blockForPromptDispatchFailure(phase, errorMessage);
+                return false;
+              }
+            };
+
             if (!(await heartbeatRunLock(repoRoot))) {
               await blockForHeartbeatFailure("pre-work-session-reset");
               break;
             }
 
-            const ws = await resetWorkSession(ctx, repoRoot, context.agent);
+            const ws = await Promise.race([
+              resetWorkSession(ctx, repoRoot, context.agent),
+              new Promise<never>((_, reject) => {
+                setTimeout(() => {
+                  reject(new Error("resetWorkSession timeout"));
+                }, TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS);
+              }),
+            ]).catch(async (error) => {
+              const gates: PrdGatesAttempt = { ok: false, commands: [] };
+              const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+              const errorMessage = error instanceof Error ? error.message : String(error);
+              const judge: PrdJudgeAttempt = {
+                status: "FAIL",
+                exitSignal: false,
+                reason: [
+                  formatReasonCode(RUN_REASON.WORK_SESSION_RESET_TIMEOUT),
+                  `Work session reset timed out (${TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS}ms).`,
+                  errorMessage,
+                ],
+                nextActions: [
+                  "Retry /mario-devx:run 1.",
+                  "If this repeats, restart OpenCode and rerun.",
+                ],
+              };
+              prd = await persistBlockedTaskAttempt({
+                ctx,
+                repoRoot,
+                prd,
+                task,
+                attemptAt,
+                iteration: state.iteration,
+                gates,
+                ui,
+                judge,
+                runId,
+              });
+              await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_WORK_SESSION_RESET_TIMEOUT, "Run blocked: work-session reset timed out", {
+                taskId: task.id,
+                timeoutMs: TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS,
+                error: errorMessage,
+              }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_RESET_TIMEOUT });
+              return null;
+            });
+            if (!ws) {
+              break;
+            }
             await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
             await updateRunState(repoRoot, {
               status: "DOING",
@@ -535,13 +646,10 @@ export const createRunTool = (opts: {
               startedAt: nowIso(),
             });
 
-            await ctx.client.session.promptAsync({
-              path: { id: ws.sessionId },
-              body: {
-                ...(context.agent ? { agent: context.agent } : {}),
-                parts: [{ type: "text", text: buildModePrompt }],
-              },
-            });
+            const buildPromptSent = await promptWorkSessionWithTimeout("build", buildModePrompt);
+            if (!buildPromptSent) {
+              break;
+            }
 
             if (!(await heartbeatRunLock(repoRoot))) {
               await blockForHeartbeatFailure("after-build-prompt");
@@ -645,13 +753,10 @@ export const createRunTool = (opts: {
               });
 
               const repairSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
-              await ctx.client.session.promptAsync({
-                path: { id: ws.sessionId },
-                body: {
-                  ...(context.agent ? { agent: context.agent } : {}),
-                  parts: [{ type: "text", text: repairPrompt }],
-                },
-              });
+              const repairPromptSent = await promptWorkSessionWithTimeout("repair", repairPrompt);
+              if (!repairPromptSent) {
+                break;
+              }
 
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("during-auto-repair");
@@ -802,13 +907,11 @@ export const createRunTool = (opts: {
               const semanticRepairPrompt = buildSemanticRepairPrompt({ taskId: task.id, acceptance: task.acceptance ?? [], actionableReason, judge, carryForwardIssues, strictChecklist });
 
               const semanticSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
-              await ctx.client.session.promptAsync({
-                path: { id: ws.sessionId },
-                body: {
-                  ...(context.agent ? { agent: context.agent } : {}),
-                  parts: [{ type: "text", text: semanticRepairPrompt }],
-                },
-              });
+              const semanticPromptSent = await promptWorkSessionWithTimeout("semantic-repair", semanticRepairPrompt);
+              if (!semanticPromptSent) {
+                blockedByVerifierFailure = true;
+                break;
+              }
 
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("during-semantic-repair");

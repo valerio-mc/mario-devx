@@ -27,6 +27,12 @@ export const TIMEOUTS = {
   
   // UI verification wait time (60 seconds)
   UI_VERIFY_WAIT_MS: 60000,
+
+  // Max wait for session prompt dispatch RPC before blocking run (45 seconds)
+  PROMPT_DISPATCH_TIMEOUT_MS: 45 * 1000,
+
+  // Max wait for work-session reset/revert RPC before blocking run (30 seconds)
+  WORK_SESSION_RESET_TIMEOUT_MS: 30 * 1000,
 } as const;
 
 // Retry and attempt limits
