@@ -1947,6 +1947,28 @@ export const createTools = (ctx: PluginContext) => {
               );
             }
           };
+          const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string } | null> => {
+            if (!shouldRunUiVerify) {
+              return null;
+            }
+            return runUiVerification({
+              ctx,
+              devCmd: uiVerifyCmd,
+              url: uiVerifyUrl,
+              waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
+              log: async (entry) => {
+                await logRunEvent(
+                  ctx,
+                  repoRoot,
+                  entry.level,
+                  entry.event,
+                  entry.message,
+                  entry.extra,
+                  { runId, taskId, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
+                );
+              },
+            });
+          };
           await logRunEvent(ctx, repoRoot, "info", "run.started", "Run started", {
             maxItems,
             uiVerifyEnabled,
@@ -2034,25 +2056,7 @@ export const createTools = (ctx: PluginContext) => {
               const reconcileGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
               await logGateRunResults(RUN_PHASE.RECONCILE, task.id, reconcileGateResult.results);
               if (reconcileGateResult.ok) {
-                const uiResult = shouldRunUiVerify
-                  ? await runUiVerification({
-                      ctx,
-                      devCmd: uiVerifyCmd,
-                      url: uiVerifyUrl,
-                      waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
-                      log: async (entry) => {
-                        await logRunEvent(
-                          ctx,
-                          repoRoot,
-                          entry.level,
-                          entry.event,
-                          entry.message,
-                          entry.extra,
-                          { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
-                        );
-                      },
-                    })
-                  : null;
+                const uiResult = await runUiVerifyForTask(task.id);
 
                 const gates: PrdGatesAttempt = {
                   ok: true,
@@ -2544,25 +2548,7 @@ export const createTools = (ctx: PluginContext) => {
               }
 
               let latestGateResult = gateResult;
-              let latestUiResult = latestGateResult.ok && shouldRunUiVerify
-                ? await runUiVerification({
-                    ctx,
-                    devCmd: uiVerifyCmd,
-                    url: uiVerifyUrl,
-                    waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
-                    log: async (entry) => {
-                      await logRunEvent(
-                        ctx,
-                        repoRoot,
-                        entry.level,
-                        entry.event,
-                        entry.message,
-                        entry.extra,
-                        { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
-                      );
-                    },
-                  })
-                : null;
+              let latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
 
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("after-gates-ui");
@@ -2839,25 +2825,7 @@ export const createTools = (ctx: PluginContext) => {
 
             latestGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
             await logGateRunResults(RUN_PHASE.REPAIR, task.id, latestGateResult.results);
-            latestUiResult = latestGateResult.ok && shouldRunUiVerify
-              ? await runUiVerification({
-                  ctx,
-                  devCmd: uiVerifyCmd,
-                  url: uiVerifyUrl,
-                  waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
-                  log: async (entry) => {
-                    await logRunEvent(
-                      ctx,
-                      repoRoot,
-                      entry.level,
-                      entry.event,
-                      entry.message,
-                      entry.extra,
-                      { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
-                    );
-                  },
-                })
-              : null;
+            latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
 
             gates = toGatesAttempt(latestGateResult);
             ui = toUiAttempt(latestGateResult, latestUiResult);

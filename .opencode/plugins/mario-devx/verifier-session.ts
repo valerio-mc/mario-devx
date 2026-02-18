@@ -134,10 +134,6 @@ export const resetVerifierSessionToBaseline = async (
   await writeVerifierSessionState(repoRoot, { ...session, updatedAt: nowIso() });
 };
 
-export const invalidateVerifierSession = async (repoRoot: string): Promise<void> => {
-  await writeVerifierSessionState(repoRoot, null);
-};
-
 export const runVerifierTurn = async (opts: {
   ctx: any;
   sessionId: string;

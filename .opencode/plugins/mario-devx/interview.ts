@@ -41,16 +41,7 @@ export const extractStyleReferencesFromText = (input: string): string[] => {
   return normalizeStyleReferences(refs);
 };
 
-export const stripTrailingSentencePunctuation = (value: string): string => value.replace(/[.?!]+$/g, "").trim();
-
 export const hasMeaningfulList = (value: string[] | undefined, min = 1): boolean => normalizeTextArray(value).length >= min;
-
-export const sameQuestion = (a: string | null | undefined, b: string | null | undefined): boolean => {
-  if (!a || !b) {
-    return false;
-  }
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
-};
 
 export const isPrdComplete = (prd: PrdJson): boolean => {
   return (
@@ -73,12 +64,6 @@ export const isPrdComplete = (prd: PrdJson): boolean => {
     && (prd.docs.readmeRequired === false || hasMeaningfulList(prd.docs.readmeSections))
     && hasMeaningfulList(prd.qualityGates, WIZARD_REQUIREMENTS.MIN_QUALITY_GATES)
   );
-};
-
-export const deriveWizardStep = (prd: PrdJson): number => {
-  // Simple binary: 0 = not started, 17 = complete, or let LLM decide
-  if (isPrdComplete(prd)) return WIZARD_TOTAL_STEPS;
-  return 0;
 };
 
 export const compactIdea = (input: string): string => {
@@ -105,15 +90,4 @@ export const looksLikeUiChoiceArtifact = (input: string): boolean => {
     return true;
   }
   return /(single-choice|multi-choice|free-text|show current status|stop for now|hardcoded|fixed questions|generate 3 questions)/i.test(s);
-};
-
-export const looksTooBroadQuestion = (question: string): boolean => {
-  const q = question.trim();
-  if (!q) {
-    return true;
-  }
-  const wordCount = q.split(/\s+/).filter(Boolean).length;
-  const clauseSignals = (q.match(/,| and | or |;/gi) ?? []).length;
-  const hasListCue = /(include|cover|describe.*(flow|end-to-end)|what.*and.*what|first.*then)/i.test(q);
-  return wordCount > 30 || clauseSignals >= 4 || hasListCue;
 };

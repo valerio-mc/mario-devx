@@ -1,6 +1,6 @@
 import path from "path";
 import { spawn } from "child_process";
-import { readTextIfExists, writeText } from "./fs";
+import { readTextIfExists } from "./fs";
 import { redactForLog } from "./logging";
 import { runShellCommand } from "./shell";
 import { readUiVerifyState, writeUiVerifyState } from "./state";
@@ -518,13 +518,5 @@ export const runUiVerification = async (opts: {
         extra: { pid: server.pid },
       });
     }
-  }
-};
-
-export const ensureAgentsFile = async (repoRoot: string, templateContent: string): Promise<void> => {
-  const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-  const existing = await readTextIfExists(agentsPath);
-  if (!existing) {
-    await writeText(agentsPath, templateContent);
   }
 };
