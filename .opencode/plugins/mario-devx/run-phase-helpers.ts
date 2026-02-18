@@ -1,3 +1,5 @@
+import { readdir, stat } from "fs/promises";
+import path from "path";
 import { runUiVerification } from "./ui-verify";
 import type { GateRunItem } from "./gates";
 import type { PrdGatesAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
@@ -127,4 +129,97 @@ export const runUiVerifyForTask = async (opts: {
       );
     },
   });
+};
+
+const SNAPSHOT_EXCLUDED_DIRS = new Set([
+  ".git",
+  "node_modules",
+  ".next",
+  ".mario",
+  ".opencode",
+]);
+
+const shouldIncludeSnapshotFile = (relativePath: string): boolean => {
+  if (!relativePath) return false;
+  if (relativePath.startsWith("public/")) return true;
+  if (relativePath.startsWith("src/")) return true;
+  if (/^README\.md$/i.test(relativePath)) return true;
+  if (/^(package|pnpm-workspace)\.json$/i.test(relativePath)) return true;
+  if (/^(pnpm-lock\.yaml|tsconfig\.json|next\.config\.(js|mjs|ts))$/i.test(relativePath)) return true;
+  return false;
+};
+
+export type WorkspaceSnapshot = Map<string, string>;
+
+export const captureWorkspaceSnapshot = async (repoRoot: string): Promise<WorkspaceSnapshot> => {
+  const snapshot: WorkspaceSnapshot = new Map();
+
+  const walk = async (dirAbs: string): Promise<void> => {
+    let entries: Awaited<ReturnType<typeof readdir>>;
+    try {
+      entries = await readdir(dirAbs, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const abs = path.join(dirAbs, entry.name);
+      const rel = path.relative(repoRoot, abs).replace(/\\/g, "/");
+      if (entry.isDirectory()) {
+        if (SNAPSHOT_EXCLUDED_DIRS.has(entry.name)) continue;
+        await walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!shouldIncludeSnapshotFile(rel)) continue;
+      try {
+        const s = await stat(abs);
+        snapshot.set(rel, `${s.size}:${Math.round(s.mtimeMs)}`);
+      } catch {
+        // Best-effort snapshot.
+      }
+    }
+  };
+
+  await walk(repoRoot);
+  return snapshot;
+};
+
+export const summarizeWorkspaceDelta = (before: WorkspaceSnapshot, after: WorkspaceSnapshot): {
+  added: number;
+  modified: number;
+  deleted: number;
+  changed: number;
+  sample: string[];
+} => {
+  let added = 0;
+  let modified = 0;
+  let deleted = 0;
+  const sample: string[] = [];
+
+  for (const [file, sig] of after.entries()) {
+    const prev = before.get(file);
+    if (!prev) {
+      added += 1;
+      if (sample.length < 8) sample.push(file);
+      continue;
+    }
+    if (prev !== sig) {
+      modified += 1;
+      if (sample.length < 8) sample.push(file);
+    }
+  }
+  for (const file of before.keys()) {
+    if (!after.has(file)) {
+      deleted += 1;
+      if (sample.length < 8) sample.push(file);
+    }
+  }
+
+  return {
+    added,
+    modified,
+    deleted,
+    changed: added + modified + deleted,
+    sample,
+  };
 };

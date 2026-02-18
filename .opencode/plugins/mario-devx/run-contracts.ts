@@ -24,6 +24,7 @@ export const RUN_REASON = {
   COMMAND_NOT_FOUND: "COMMAND_NOT_FOUND",
   SEMANTIC_REPAIR_GATE_REGRESSION: "SEMANTIC_REPAIR_GATE_REGRESSION",
   SEMANTIC_REPAIR_UI_REGRESSION: "SEMANTIC_REPAIR_UI_REGRESSION",
+  WORK_SESSION_NO_PROGRESS: "WORK_SESSION_NO_PROGRESS",
 } as const;
 
 export type RunReasonCode = (typeof RUN_REASON)[keyof typeof RUN_REASON];
@@ -62,6 +63,7 @@ export const RUN_EVENT = {
   GATE_FAIL: "run.gate.fail",
   BOOTSTRAP_INSTALL_FAILED: "run.bootstrap.install.failed",
   SCAFFOLD_DEFAULT_FAILED: "run.scaffold.default.failed",
+  REPAIR_NO_PROGRESS: "run.repair.no-progress",
   FATAL_EXCEPTION: "run.fatal.exception",
 } as const;
 

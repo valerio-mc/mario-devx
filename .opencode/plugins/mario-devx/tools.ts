@@ -74,7 +74,7 @@ import { runShellCommand } from "./shell";
 import { ensureVerifierSession, resetVerifierSessionToBaseline, runVerifierTurn } from "./verifier-session";
 import { buildVerifierContextText, buildVerifierTransportFailureJudge, enforceJudgeOutputQuality } from "./run-verifier";
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
-import { logGateRunResults as logGateRunResultsPhase, resolveEffectiveDoneWhen, runUiVerifyForTask as runUiVerifyForTaskPhase, toGateCommands, toGatesAttempt, toUiAttempt } from "./run-phase-helpers";
+import { captureWorkspaceSnapshot, logGateRunResults as logGateRunResultsPhase, resolveEffectiveDoneWhen, runUiVerifyForTask as runUiVerifyForTaskPhase, summarizeWorkspaceDelta, toGateCommands, toGatesAttempt, toUiAttempt } from "./run-phase-helpers";
 import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
 
 type ToolContext = {
@@ -2287,6 +2287,7 @@ export const createTools = (ctx: PluginContext) => {
 
 
             try {
+              const buildSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("before-build-prompt");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
@@ -2342,6 +2343,16 @@ export const createTools = (ctx: PluginContext) => {
                 await blockForHeartbeatFailure("after-build-idle");
                 await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
                 break;
+              }
+
+              const buildSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
+              const buildDelta = summarizeWorkspaceDelta(buildSnapshotBefore, buildSnapshotAfter);
+              if (buildDelta.changed === 0) {
+                await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.REPAIR_NO_PROGRESS, "No workspace changes after build prompt", {
+                  taskId: task.id,
+                  phase: "build",
+                  changed: buildDelta.changed,
+                }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_NO_PROGRESS });
               }
 
               const taskRepairStartedAt = Date.now();
@@ -2611,7 +2622,6 @@ export const createTools = (ctx: PluginContext) => {
           let judge: PrdJudgeAttempt | null = null;
           let semanticRepairAttempts = 0;
           let semanticNoProgressStreak = 0;
-          let lastSemanticReason: string | null = null;
 
           while (true) {
             const verifierPrompt = await buildPrompt(
@@ -2678,14 +2688,6 @@ export const createTools = (ctx: PluginContext) => {
 
             semanticRepairAttempts += 1;
             const actionableReason = firstActionableJudgeReason(judge) ?? "Verifier failed to confirm acceptance.";
-            const normalizedReason = normalizeIssueLine(actionableReason);
-            if (lastSemanticReason && lastSemanticReason === normalizedReason) {
-              semanticNoProgressStreak += 1;
-            } else {
-              semanticNoProgressStreak = 0;
-            }
-            lastSemanticReason = normalizedReason;
-
             const strictChecklist = semanticNoProgressStreak > 0
               ? "Repeated finding detected with no clear progress. Make explicit file edits that directly satisfy acceptance criteria; avoid generic refinements."
               : "";
@@ -2718,6 +2720,7 @@ export const createTools = (ctx: PluginContext) => {
             }, { runId, taskId: task.id });
             await showToast(ctx, `Run: verifier requested targeted repair on ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS})`, "info");
 
+            const semanticSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
             await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - semantic repair ${task.id}`);
             await ctx.client.session.promptAsync({
               path: { id: ws.sessionId },
@@ -2744,6 +2747,32 @@ export const createTools = (ctx: PluginContext) => {
               ]);
               blockedByVerifierFailure = true;
               break;
+            }
+
+            const semanticSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
+            const semanticDelta = summarizeWorkspaceDelta(semanticSnapshotBefore, semanticSnapshotAfter);
+            if (semanticDelta.changed === 0) {
+              semanticNoProgressStreak += 1;
+              await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.REPAIR_NO_PROGRESS, "No workspace changes after semantic repair attempt", {
+                taskId: task.id,
+                phase: "semantic-repair",
+                semanticRepairAttempt: semanticRepairAttempts,
+                noProgressStreak: semanticNoProgressStreak,
+              }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_NO_PROGRESS });
+              if (semanticNoProgressStreak >= 2 || semanticRepairAttempts >= LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS) {
+                await failEarly([
+                  formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
+                  `No source file changes detected after semantic repair attempt ${semanticRepairAttempts}.`,
+                  `Primary blocker remains: ${actionableReason}`,
+                ], [
+                  "Inspect the work session output and ensure concrete file edits are applied.",
+                  "Apply explicit edits for required acceptance artifacts, then rerun /mario-devx:run 1.",
+                ]);
+                blockedByVerifierFailure = true;
+                break;
+              }
+            } else {
+              semanticNoProgressStreak = 0;
             }
 
             latestGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
