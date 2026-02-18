@@ -63,7 +63,6 @@ import {
   type PrdJson,
   type PrdTask,
   type PrdTaskAttempt,
-  type PrdTaskStatus,
   type PrdUiAttempt,
 } from "./prd";
 import {
@@ -1781,7 +1780,7 @@ export const createTools = (ctx: PluginContext) => {
                 taskId: task.id,
                 dependencyTaskIds: dependencyBlockers.pending.map((x) => x.id),
                 missingDependencies: dependencyBlockers.missing,
-              }, { runId, taskId: task.id, reasonCode: "PREREQ_PENDING" });
+              }, { runId, taskId: task.id, reasonCode: "PREREQ_TASK_PENDING" });
               await showToast(ctx, blockerTask
                 ? `Run blocked: ${task.id} requires ${blockerTask.id}`
                 : `Run blocked: ${task.id} has missing dependency ${missingDep}`,

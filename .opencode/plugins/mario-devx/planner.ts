@@ -58,9 +58,6 @@ export const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Pr
   const hasCargoToml = !!(await readTextIfExists(path.join(repoRoot, "Cargo.toml")));
 
   if (prd.language === "typescript" || prd.platform === "web") {
-    if (!hasPackageJson && !hasAppPackageJson) {
-      return ["test -f package.json || test -f app/package.json"];
-    }
     return ["test -f package.json || test -f app/package.json"];
   }
   if (prd.language === "python") {
@@ -70,15 +67,9 @@ export const inferBootstrapDoneWhen = async (repoRoot: string, prd: PrdJson): Pr
     return [hasPyproject ? "test -f pyproject.toml" : "test -f requirements.txt"];
   }
   if (prd.language === "go") {
-    if (!hasGoMod) {
-      return ["test -f go.mod"];
-    }
     return ["test -f go.mod"];
   }
   if (prd.language === "rust") {
-    if (!hasCargoToml) {
-      return ["test -f Cargo.toml"];
-    }
     return ["test -f Cargo.toml"];
   }
 

@@ -256,7 +256,7 @@ export const logPrdComplete = async (
   taskCount: number
 ): Promise<void> => {
   await structuredLog(ctx, "info", "PRD wizard completed", {
-    event: "prd-complete",
+    event: "prd.complete",
     taskCount,
   }, repoRoot, {
     event: "prd.complete",
@@ -273,7 +273,7 @@ export const logReplanComplete = async (
   tasksGenerated: number
 ): Promise<void> => {
   await structuredLog(ctx, "info", "Replanning completed", {
-    event: "replan-complete",
+    event: "replan.complete",
     itemsReplan,
     tasksGenerated,
   }, repoRoot, {
