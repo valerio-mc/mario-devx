@@ -2375,6 +2375,9 @@ export const createTools = (ctx: PluginContext) => {
               const taskRepairStartedAt = Date.now();
               let repairAttempts = 0;
               let noProgressStreak = 0;
+              let noChangeStreak = buildDelta.changed === 0 ? 1 : 0;
+              let stoppedForNoChanges = false;
+              let lastNoChangeGate: string | null = null;
               let lastGateFailureSig: string | null = null;
               let deterministicScaffoldTried = false;
               const usesNodePackageScripts = gateCommands.some((g) => {
@@ -2480,6 +2483,8 @@ export const createTools = (ctx: PluginContext) => {
                   "Do not ask questions. Apply edits and stop when done.",
                 ].join("\n");
 
+                const repairSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
+
                 await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - repair ${task.id}`);
                 await ctx.client.session.promptAsync({
                   path: { id: ws.sessionId },
@@ -2511,6 +2516,26 @@ export const createTools = (ctx: PluginContext) => {
                     }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_STATUS_UNKNOWN });
                   }
                   break;
+                }
+
+                const repairSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
+                const repairDelta = summarizeWorkspaceDelta(repairSnapshotBefore, repairSnapshotAfter);
+                if (repairDelta.changed === 0) {
+                  noChangeStreak += 1;
+                  lastNoChangeGate = failedGate;
+                  await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.REPAIR_NO_PROGRESS, "No workspace changes after repair attempt", {
+                    taskId: task.id,
+                    phase: "repair",
+                    repairAttempt: repairAttempts + 1,
+                    noChangeStreak,
+                    failedGate,
+                  }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_NO_PROGRESS });
+                  if (noChangeStreak >= 2) {
+                    stoppedForNoChanges = true;
+                    break;
+                  }
+                } else {
+                  noChangeStreak = 0;
                 }
 
                 repairAttempts += 1;
@@ -2569,6 +2594,18 @@ export const createTools = (ctx: PluginContext) => {
               runId,
             });
           };
+
+          if (!latestGateResult.ok && stoppedForNoChanges) {
+            await failEarly([
+              formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
+              `Repair loop produced no source-file changes across consecutive attempts (last failing gate: ${lastNoChangeGate ?? "unknown"}).`,
+            ], [
+              "Inspect the work session output and ensure concrete file edits are applied.",
+              "Apply explicit edits for the failing gate and acceptance artifacts, then rerun /mario-devx:run 1.",
+            ]);
+            await showToast(ctx, `Run stopped: no progress detected on ${task.id}`, "warning");
+            break;
+          }
 
           if (!latestGateResult.ok) {
             const failed = latestGateResult.failed
