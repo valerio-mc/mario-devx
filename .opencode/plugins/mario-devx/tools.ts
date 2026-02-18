@@ -647,48 +647,6 @@ const formatQualityGateSelectionQuestion = (state: QualityGateSelectionState): s
   ].join("\n");
 };
 
-const fallbackQualityGatePresets = (prd: PrdJson): QualityGateSelectionState => {
-  const language = prd.language;
-  if (language === "python") {
-    return {
-      question: "Pick a Python quality-gate preset.",
-      options: [
-        { label: "Python Fast", commands: ["ruff check .", "pytest -q"] },
-        { label: "Python Typed", commands: ["ruff check .", "mypy .", "pytest -q"] },
-        { label: "Python Unit", commands: ["pytest -q", "python -m pip check"] },
-      ],
-    };
-  }
-  if (language === "go") {
-    return {
-      question: "Pick a Go quality-gate preset.",
-      options: [
-        { label: "Go Test", commands: ["go test ./..."] },
-        { label: "Go Vet+Test", commands: ["go vet ./...", "go test ./..."] },
-        { label: "Go Fmt+Test", commands: ["test -z \"$(gofmt -l .)\"", "go test ./..."] },
-      ],
-    };
-  }
-  if (language === "rust") {
-    return {
-      question: "Pick a Rust quality-gate preset.",
-      options: [
-        { label: "Rust Check", commands: ["cargo check"] },
-        { label: "Rust Test", commands: ["cargo test"] },
-        { label: "Rust Strict", commands: ["cargo clippy -- -D warnings", "cargo test"] },
-      ],
-    };
-  }
-  return {
-    question: "Pick a web/TypeScript quality-gate preset.",
-    options: [
-      { label: "TS Fast", commands: ["pnpm lint", "pnpm typecheck"] },
-      { label: "TS Standard", commands: ["pnpm lint", "pnpm typecheck", "pnpm build"] },
-      { label: "TS Strict", commands: ["pnpm lint", "pnpm typecheck", "pnpm test", "pnpm build"] },
-    ],
-  };
-};
-
 const qualityGatePresetPrompt = (prd: PrdJson): string => {
   return [
     "You are mario-devx's quality gate assistant.",
@@ -707,6 +665,20 @@ const qualityGatePresetPrompt = (prd: PrdJson): string => {
       framework: prd.framework,
       qualityGates: prd.qualityGates,
     }, null, 2),
+  ].join("\n");
+};
+
+const qualityGatePresetRepairPrompt = (invalidResponse: string): string => {
+  return [
+    "Your previous quality-gate preset response was invalid.",
+    "Return ONLY valid JSON with this exact shape:",
+    '{"question":"...","options":[{"label":"...","commands":["..."]},{"label":"...","commands":["..."]},{"label":"...","commands":["..."]}]}',
+    "Rules:",
+    "- exactly 3 options",
+    "- each option must have 2-4 deterministic commands",
+    "- no markdown, no prose",
+    "Previous invalid response:",
+    invalidResponse,
   ].join("\n");
 };
 
@@ -1549,14 +1521,30 @@ export const createTools = (ctx: PluginContext) => {
               },
             });
             const presetText = await resolvePromptText(ctx, ws.sessionId, presetResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
-            const parsedSelection = parseQualityGatePresetResponse(presetText);
-            const selection = parsedSelection ?? fallbackQualityGatePresets(prd);
-            prd = writeQualityGateSelectionState(prd, selection);
-            finalQuestion = formatQualityGateSelectionQuestion(selection);
-            await logToolEvent(ctx, repoRoot, "info", "new.quality-gates.suggested", "Suggested quality gate presets", {
-              options: selection.options.map((o) => o.label),
-              usedFallback: parsedSelection === null,
-            });
+            let selection = parseQualityGatePresetResponse(presetText);
+            if (!selection) {
+              const repairResponse = await ctx.client.session.prompt({
+                path: { id: ws.sessionId },
+                body: {
+                  parts: [{ type: "text", text: qualityGatePresetRepairPrompt(presetText) }],
+                },
+              });
+              const repairText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+              selection = parseQualityGatePresetResponse(repairText);
+            }
+            if (selection) {
+              prd = writeQualityGateSelectionState(prd, selection);
+              finalQuestion = formatQualityGateSelectionQuestion(selection);
+              await logToolEvent(ctx, repoRoot, "info", "new.quality-gates.suggested", "Suggested quality gate presets", {
+                options: selection.options.map((o) => o.label),
+                llmGenerated: true,
+              });
+            } else {
+              finalQuestion = "List at least 2 runnable quality-gate commands for this project (one per line).";
+              await logToolEvent(ctx, repoRoot, "warn", "new.quality-gates.suggest-failed", "Failed to generate quality gate presets", {
+                llmGenerated: false,
+              });
+            }
           }
           done = false;
         }
