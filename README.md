@@ -188,6 +188,8 @@ Execution order is dependency-driven at runtime: mario-devx picks the next runna
 - `open` / `in_progress` tasks run build/repair first, then gates/UI/verifier.
 - `blocked` tasks run reconcile first (quick gates/UI/verifier check) and only fall back to build/repair when needed.
 - If verifier fails after gates/UI pass, mario-devx performs bounded verifier-driven semantic repair attempts in the same run before blocking.
+- Repair loops are also capped by a combined total repair budget per task to prevent runaway retries.
+- Before verifier, mario-devx checks machine-detectable acceptance artifacts (for example required nav routes/labels) and blocks early when they are missing.
 
 Scaffold nuance:
 - For web/TypeScript ideas in non-empty repos, the default scaffold may be created in `app/` (not root) to avoid clobbering existing files.
@@ -347,7 +349,9 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **Run blocked before coding starts** | Check `.mario/prd.json` for empty `tasks`/`qualityGates` or dependency errors (`TASK_GRAPH_DEP_MISSING`, `TASK_GRAPH_CYCLE`), fix, then rerun `/mario-devx:run 1`. |
 | **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If browser runtime is missing: `CI=1 npm_config_yes=true npx --yes playwright install chromium`. |
 | **Verifier transport/JSON failure** | Retry `/mario-devx:run 1`. If it repeats, inspect `.mario/state/mario-devx.log` for `run.verify.transport.error` and review `tasks[].lastAttempt.judge.rawText`. |
+| **`ReasonCode: WORK_SESSION_STATUS_UNKNOWN`** | OpenCode did not return a stable status for the work session before timeout. Inspect `/sessions`, then rerun `/mario-devx:run 1`; if repeated, restart OpenCode. |
 | **`ReasonCode: WORK_SESSION_NO_PROGRESS`** | Work session reached idle without source edits. Check `/sessions` output for the work session response, then rerun `/mario-devx:run 1`. |
+| **`ReasonCode: ACCEPTANCE_ARTIFACTS_MISSING`** | Deterministic acceptance artifacts are missing (for example required routes/nav labels). Implement the listed missing files/artifacts from `tasks[].lastAttempt.judge.reason`, then rerun `/mario-devx:run 1`. |
 | **`ReasonCode: REPEATED_UI_FINDINGS`** | Bounded semantic repairs were attempted but acceptance is still unmet. Use `tasks[].lastAttempt.judge.reason/nextActions` in `.mario/prd.json` to verify missing artifacts, then rerun `/mario-devx:run 1`. |
 | **Run appears locked after interruption** | Rerun `/mario-devx:run 1` once (stale lock/state auto-recovery). If still blocked, run `/mario-devx:doctor`. |
 | **Health/diagnostics bundle** | Run `/mario-devx:doctor` and attach these files when reporting issues: `.mario/state/mario-devx.log`, `.mario/state/state.json`, `.mario/prd.json`. |
