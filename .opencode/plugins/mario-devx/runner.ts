@@ -3,6 +3,28 @@ import type { RunState } from "./types";
 
 const nowIso = (): string => new Date().toISOString();
 
+type SessionStatusType = "idle" | "unknown" | "active";
+
+const getSessionStatusType = (statuses: unknown, sessionId: string): SessionStatusType => {
+  const fromRecord = statuses as Record<string, { type?: unknown } | undefined>;
+  const direct = fromRecord?.[sessionId];
+  if (direct && typeof direct.type === "string") {
+    return direct.type === "idle" ? "idle" : "active";
+  }
+
+  if (Array.isArray(statuses)) {
+    const match = (statuses as Array<Record<string, unknown>>).find((entry) => {
+      const id = entry.id ?? entry.sessionId ?? entry.sessionID;
+      return typeof id === "string" && id === sessionId;
+    });
+    if (match && typeof match.type === "string") {
+      return match.type === "idle" ? "idle" : "active";
+    }
+  }
+
+  return "unknown";
+};
+
 export const waitForSessionIdle = async (
   ctx: any,
   sessionId: string,
@@ -11,8 +33,8 @@ export const waitForSessionIdle = async (
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const statuses = await ctx.client.session.status();
-    const status = (statuses as Record<string, { type?: string }>)[sessionId];
-    if (!status || status.type === "idle") {
+    const statusType = getSessionStatusType(statuses, sessionId);
+    if (statusType === "idle") {
       return true;
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -30,8 +52,8 @@ export const waitForSessionIdleStable = async (
   let idleStreak = 0;
   while (Date.now() - start < timeoutMs) {
     const statuses = await ctx.client.session.status();
-    const status = (statuses as Record<string, { type?: string }>)[sessionId];
-    if (!status || status.type === "idle") {
+    const statusType = getSessionStatusType(statuses, sessionId);
+    if (statusType === "idle") {
       idleStreak += 1;
       if (idleStreak >= Math.max(1, consecutiveIdleChecks)) {
         return true;
