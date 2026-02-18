@@ -5,6 +5,13 @@ const nowIso = (): string => new Date().toISOString();
 
 type SessionStatusType = "idle" | "unknown" | "active";
 
+export type SessionIdleWaitResult = {
+  ok: boolean;
+  reason: "idle" | "timeout-active" | "timeout-unknown";
+  unknownChecks: number;
+  activeChecks: number;
+};
+
 const getSessionStatusType = (statuses: unknown, sessionId: string): SessionStatusType => {
   const fromRecord = statuses as Record<string, { type?: unknown } | undefined>;
   const direct = fromRecord?.[sessionId];
@@ -48,22 +55,44 @@ export const waitForSessionIdleStable = async (
   timeoutMs: number,
   consecutiveIdleChecks = 2,
 ): Promise<boolean> => {
+  const result = await waitForSessionIdleStableDetailed(ctx, sessionId, timeoutMs, consecutiveIdleChecks);
+  return result.ok;
+};
+
+export const waitForSessionIdleStableDetailed = async (
+  ctx: any,
+  sessionId: string,
+  timeoutMs: number,
+  consecutiveIdleChecks = 2,
+): Promise<SessionIdleWaitResult> => {
   const start = Date.now();
   let idleStreak = 0;
+  let unknownChecks = 0;
+  let activeChecks = 0;
   while (Date.now() - start < timeoutMs) {
     const statuses = await ctx.client.session.status();
     const statusType = getSessionStatusType(statuses, sessionId);
     if (statusType === "idle") {
       idleStreak += 1;
       if (idleStreak >= Math.max(1, consecutiveIdleChecks)) {
-        return true;
+        return { ok: true, reason: "idle", unknownChecks, activeChecks };
       }
     } else {
       idleStreak = 0;
+      if (statusType === "unknown") {
+        unknownChecks += 1;
+      } else {
+        activeChecks += 1;
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  return false;
+  return {
+    ok: false,
+    reason: activeChecks > 0 ? "timeout-active" : "timeout-unknown",
+    unknownChecks,
+    activeChecks,
+  };
 };
 
 const getBaselineText = (repoRoot: string): string => {

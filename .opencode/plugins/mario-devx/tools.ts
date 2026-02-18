@@ -45,6 +45,7 @@ import {
   setWorkSessionTitle,
   updateRunState,
   waitForSessionIdleStable,
+  waitForSessionIdleStableDetailed,
 } from "./runner";
 import { runDoctor } from "./doctor";
 import {
@@ -2307,8 +2308,24 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-              const idle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
-              if (!idle) {
+              const idle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+              if (!idle.ok) {
+                if (idle.reason === "timeout-unknown") {
+                  await failEarly([
+                    formatReasonCode(RUN_REASON.WORK_SESSION_STATUS_UNKNOWN),
+                    "Work session status remained unknown while waiting for build to finish.",
+                  ], [
+                    "Check OpenCode session health via /sessions and rerun /mario-devx:run 1.",
+                    "If this repeats, restart OpenCode and rerun the command.",
+                  ]);
+                  await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_WORK_STATUS_UNKNOWN, `Run blocked: unknown work session status for ${task.id}`, {
+                    taskId: task.id,
+                    unknownChecks: idle.unknownChecks,
+                    activeChecks: idle.activeChecks,
+                  }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_STATUS_UNKNOWN });
+                  await showToast(ctx, `Run stopped: unknown work session status on ${task.id}`, "warning");
+                  break;
+                }
                 const gates: PrdGatesAttempt = { ok: false, commands: [] };
                 const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
                 const judge: PrdJudgeAttempt = {
@@ -2478,8 +2495,21 @@ export const createTools = (ctx: PluginContext) => {
                   break;
                 }
 
-                const repairIdle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
-                if (!repairIdle) {
+                const repairIdle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
+                if (!repairIdle.ok) {
+                  if (repairIdle.reason === "timeout-unknown") {
+                    await failEarly([
+                      formatReasonCode(RUN_REASON.WORK_SESSION_STATUS_UNKNOWN),
+                      "Work session status became unknown while waiting for repair turn to finish.",
+                    ], [
+                      "Check OpenCode session health via /sessions and rerun /mario-devx:run 1.",
+                    ]);
+                    await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_WORK_STATUS_UNKNOWN, `Run blocked: unknown work session status during repair for ${task.id}`, {
+                      taskId: task.id,
+                      unknownChecks: repairIdle.unknownChecks,
+                      activeChecks: repairIdle.activeChecks,
+                    }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_STATUS_UNKNOWN });
+                  }
                   break;
                 }
 
@@ -2737,8 +2767,23 @@ export const createTools = (ctx: PluginContext) => {
               break;
             }
 
-            const semanticIdle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
-            if (!semanticIdle) {
+            const semanticIdle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
+            if (!semanticIdle.ok) {
+              if (semanticIdle.reason === "timeout-unknown") {
+                await failEarly([
+                  formatReasonCode(RUN_REASON.WORK_SESSION_STATUS_UNKNOWN),
+                  "Work session status became unknown while waiting for semantic repair to finish.",
+                ], [
+                  "Check OpenCode session health via /sessions and rerun /mario-devx:run 1.",
+                ]);
+                await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_WORK_STATUS_UNKNOWN, `Run blocked: unknown work session status during semantic repair for ${task.id}`, {
+                  taskId: task.id,
+                  unknownChecks: semanticIdle.unknownChecks,
+                  activeChecks: semanticIdle.activeChecks,
+                }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_STATUS_UNKNOWN });
+                blockedByVerifierFailure = true;
+                break;
+              }
               await failEarly([
                 `Semantic repair timed out waiting for idle (${Math.round(TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS / 1000)}s).`,
               ], [
