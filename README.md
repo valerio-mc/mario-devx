@@ -111,6 +111,8 @@ The PRD wizard is **fully LLM-driven**. Instead of following a rigid script, the
 - frontend UI conceptualization (design system, visual direction, UX requirements, optional style references)
 - README policy for human-readable docs
 
+If quality gates are still missing near interview completion, mario-devx now asks you to pick one of three LLM-suggested quality-gate presets (you can still type custom commands).
+
 **Style references:** You can mention URLs and/or screenshot paths anywhere in your answers. Mario DevX automatically extracts and merges them into your PRD.
 
 For frontend PRDs, the wizard requires explicit style-reference acknowledgement before completion:
@@ -122,7 +124,7 @@ Example:
 
 **Task generation:** Once the PRD is complete, the LLM generates 5-15 tailored implementation tasks based on your specific requirements (not a rigid template). Simple ideas get fewer tasks; complex ideas get appropriate decomposition.
 
-**No fixed options:** Unlike traditional wizards, there are no multiple-choice questions. Just describe what you want in natural language, and the LLM will understand.
+**Mostly natural language:** The wizard is free-form, but it may show explicit options for certain high-impact choices (for example quality-gate presets).
 
 5) **Run the loop**
 

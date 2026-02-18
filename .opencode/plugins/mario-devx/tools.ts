@@ -222,10 +222,21 @@ type CompileInterviewEnvelope = {
   next_question?: string;
 };
 
+type QualityGatePreset = {
+  label: string;
+  commands: string[];
+};
+
+type QualityGateSelectionState = {
+  question: string;
+  options: QualityGatePreset[];
+};
+
 const INTERVIEW_QUESTION_PREFIX = "q-";
 const INTERVIEW_ANSWER_PREFIX = "a-";
 const STYLE_REFS_ACK_KEY = "__style_refs_ack";
 const ADD_INTERVIEW_STATE_KEY = "__add_feature_interview";
+const QUALITY_GATES_STATE_KEY = "__quality_gates_selection";
 const STYLE_REFS_REQUIRED_QUESTION = "Share at least one style reference URL/image path, or reply 'none' to proceed without references.";
 
 type AddInterviewState = {
@@ -255,6 +266,45 @@ const writeAddInterviewState = (prd: PrdJson, state: AddInterviewState | null): 
     delete answers[ADD_INTERVIEW_STATE_KEY];
   } else {
     answers[ADD_INTERVIEW_STATE_KEY] = JSON.stringify(state);
+  }
+  return {
+    ...prd,
+    wizard: {
+      ...prd.wizard,
+      answers,
+    },
+  };
+};
+
+const parseQualityGateSelectionState = (raw: string | undefined): QualityGateSelectionState | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as QualityGateSelectionState;
+    if (!parsed || typeof parsed.question !== "string" || !Array.isArray(parsed.options) || parsed.options.length === 0) {
+      return null;
+    }
+    const options = parsed.options
+      .map((opt) => ({
+        label: String(opt.label ?? "").trim(),
+        commands: normalizeTextArray(Array.isArray(opt.commands) ? opt.commands : []).slice(0, 6),
+      }))
+      .filter((opt) => opt.label.length > 0 && opt.commands.length > 0);
+    if (options.length === 0) return null;
+    return {
+      question: parsed.question.trim() || "Which quality gate preset should we use?",
+      options: options.slice(0, 3),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeQualityGateSelectionState = (prd: PrdJson, state: QualityGateSelectionState | null): PrdJson => {
+  const answers = { ...(prd.wizard.answers ?? {}) };
+  if (!state) {
+    delete answers[QUALITY_GATES_STATE_KEY];
+  } else {
+    answers[QUALITY_GATES_STATE_KEY] = JSON.stringify(state);
   }
   return {
     ...prd,
@@ -586,6 +636,116 @@ const repeatedQuestionRepairPrompt = (previousQuestion: string, latestAnswer: st
     "Latest user answer:",
     latestAnswer,
   ].join("\n");
+};
+
+const formatQualityGateSelectionQuestion = (state: QualityGateSelectionState): string => {
+  const optionLines = state.options.map((opt) => `- ${opt.label}`).join("\n");
+  return [
+    state.question.trim() || "Which quality gate preset should we use?",
+    "OPTIONS:",
+    optionLines,
+  ].join("\n");
+};
+
+const fallbackQualityGatePresets = (prd: PrdJson): QualityGateSelectionState => {
+  const language = prd.language;
+  if (language === "python") {
+    return {
+      question: "Pick a Python quality-gate preset.",
+      options: [
+        { label: "Python Fast", commands: ["ruff check .", "pytest -q"] },
+        { label: "Python Typed", commands: ["ruff check .", "mypy .", "pytest -q"] },
+        { label: "Python Unit", commands: ["pytest -q", "python -m pip check"] },
+      ],
+    };
+  }
+  if (language === "go") {
+    return {
+      question: "Pick a Go quality-gate preset.",
+      options: [
+        { label: "Go Test", commands: ["go test ./..."] },
+        { label: "Go Vet+Test", commands: ["go vet ./...", "go test ./..."] },
+        { label: "Go Fmt+Test", commands: ["test -z \"$(gofmt -l .)\"", "go test ./..."] },
+      ],
+    };
+  }
+  if (language === "rust") {
+    return {
+      question: "Pick a Rust quality-gate preset.",
+      options: [
+        { label: "Rust Check", commands: ["cargo check"] },
+        { label: "Rust Test", commands: ["cargo test"] },
+        { label: "Rust Strict", commands: ["cargo clippy -- -D warnings", "cargo test"] },
+      ],
+    };
+  }
+  return {
+    question: "Pick a web/TypeScript quality-gate preset.",
+    options: [
+      { label: "TS Fast", commands: ["pnpm lint", "pnpm typecheck"] },
+      { label: "TS Standard", commands: ["pnpm lint", "pnpm typecheck", "pnpm build"] },
+      { label: "TS Strict", commands: ["pnpm lint", "pnpm typecheck", "pnpm test", "pnpm build"] },
+    ],
+  };
+};
+
+const qualityGatePresetPrompt = (prd: PrdJson): string => {
+  return [
+    "You are mario-devx's quality gate assistant.",
+    "Generate exactly 3 candidate deterministic quality-gate presets for this project.",
+    "Prefer commands that are realistic for the provided language/framework and likely to pass once implementation is complete.",
+    "Each preset should include 2-4 commands.",
+    "Return ONLY JSON with this shape:",
+    '{"question":"...","options":[{"label":"...","commands":["..."]},{"label":"...","commands":["..."]},{"label":"...","commands":["..."]}]}',
+    "No markdown. No prose.",
+    "PRD context:",
+    JSON.stringify({
+      idea: prd.idea,
+      platform: prd.platform,
+      frontend: prd.frontend,
+      language: prd.language,
+      framework: prd.framework,
+      qualityGates: prd.qualityGates,
+    }, null, 2),
+  ].join("\n");
+};
+
+const parseQualityGatePresetResponse = (text: string): QualityGateSelectionState | null => {
+  const jsonText = extractJsonObject(text);
+  if (!jsonText) return null;
+  try {
+    const parsed = JSON.parse(jsonText) as { question?: unknown; options?: Array<{ label?: unknown; commands?: unknown }> };
+    const question = typeof parsed.question === "string" ? parsed.question.trim() : "Which quality gate preset should we use?";
+    const options = Array.isArray(parsed.options)
+      ? parsed.options
+          .map((opt) => ({
+            label: String(opt.label ?? "").trim(),
+            commands: normalizeTextArray(Array.isArray(opt.commands) ? (opt.commands as string[]) : []).slice(0, 6),
+          }))
+          .filter((opt) => opt.label.length > 0 && opt.commands.length >= 2)
+      : [];
+    if (options.length === 0) return null;
+    return {
+      question,
+      options: options.slice(0, 3),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const resolveQualityGatePresetChoice = (answer: string, state: QualityGateSelectionState): QualityGatePreset | null => {
+  const normalized = answer.trim().toLowerCase();
+  if (!normalized) return null;
+  const numeric = normalized.match(/^([1-3])\b/);
+  if (numeric) {
+    const idx = Number.parseInt(numeric[1] ?? "0", 10) - 1;
+    return state.options[idx] ?? null;
+  }
+  const direct = state.options.find((opt) => opt.label.toLowerCase() === normalized);
+  if (direct) return direct;
+  const contains = state.options.find((opt) => normalized.includes(opt.label.toLowerCase()) || opt.label.toLowerCase().includes(normalized));
+  return contains ?? null;
 };
 
 const normalizeQuestionKey = (input: string): string => {
@@ -1200,6 +1360,62 @@ export const createTools = (ctx: PluginContext) => {
           };
         }
 
+        const pendingQualityGateSelection = parseQualityGateSelectionState(prd.wizard.answers?.[QUALITY_GATES_STATE_KEY]);
+        if (pendingQualityGateSelection && hasMeaningfulList(prd.qualityGates, WIZARD_REQUIREMENTS.MIN_QUALITY_GATES)) {
+          prd = writeQualityGateSelectionState(prd, null);
+        }
+        const activeQualityGateSelection = parseQualityGateSelectionState(prd.wizard.answers?.[QUALITY_GATES_STATE_KEY]);
+
+        if (activeQualityGateSelection && hasAnswer) {
+          const chosen = resolveQualityGatePresetChoice(rawInput, activeQualityGateSelection);
+          if (chosen) {
+            prd = writeQualityGateSelectionState(prd, null);
+            prd = applyInterviewUpdates(prd, { qualityGates: chosen.commands });
+            await writePrdJson(repoRoot, prd);
+            await logToolEvent(ctx, repoRoot, "info", "new.quality-gates.selected", "Quality gate preset selected", {
+              label: chosen.label,
+              commandCount: chosen.commands.length,
+            });
+          } else {
+            const customCommands = normalizeTextArray(
+              rawInput
+                .split(/\r?\n|;/)
+                .flatMap((line) => line.split(","))
+                .map((x) => x.trim())
+                .filter(Boolean),
+            );
+            if (customCommands.length >= WIZARD_REQUIREMENTS.MIN_QUALITY_GATES) {
+              prd = writeQualityGateSelectionState(prd, null);
+              prd = applyInterviewUpdates(prd, { qualityGates: customCommands });
+              await writePrdJson(repoRoot, prd);
+              await logToolEvent(ctx, repoRoot, "info", "new.quality-gates.custom", "Custom quality gates captured from user answer", {
+                commandCount: customCommands.length,
+              });
+            }
+          }
+        }
+
+        const refreshedQualityGateSelection = parseQualityGateSelectionState(prd.wizard.answers?.[QUALITY_GATES_STATE_KEY]);
+        if (refreshedQualityGateSelection && !hasMeaningfulList(prd.qualityGates, WIZARD_REQUIREMENTS.MIN_QUALITY_GATES)) {
+          const selectionQuestion = formatQualityGateSelectionQuestion(refreshedQualityGateSelection);
+          prd = {
+            ...prd,
+            wizard: {
+              ...prd.wizard,
+              answers: {
+                ...prd.wizard.answers,
+                [LAST_QUESTION_KEY]: selectionQuestion,
+              },
+            },
+          };
+          await writePrdJson(repoRoot, prd);
+          return [
+            "PRD interview",
+            selectionQuestion,
+            "Pick one option or type your own quality gate commands.",
+          ].join("\n");
+        }
+
         const cachedQuestion = prd.wizard.answers?.[LAST_QUESTION_KEY];
         if (
           hasAnswer
@@ -1321,6 +1537,28 @@ export const createTools = (ctx: PluginContext) => {
         ) {
           done = false;
           finalQuestion = STYLE_REFS_REQUIRED_QUESTION;
+        }
+
+        if (!done && !hasMeaningfulList(prd.qualityGates, WIZARD_REQUIREMENTS.MIN_QUALITY_GATES)) {
+          const existingSelection = parseQualityGateSelectionState(prd.wizard.answers?.[QUALITY_GATES_STATE_KEY]);
+          if (!existingSelection) {
+            const presetResponse = await ctx.client.session.prompt({
+              path: { id: ws.sessionId },
+              body: {
+                parts: [{ type: "text", text: qualityGatePresetPrompt(prd) }],
+              },
+            });
+            const presetText = await resolvePromptText(ctx, ws.sessionId, presetResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+            const parsedSelection = parseQualityGatePresetResponse(presetText);
+            const selection = parsedSelection ?? fallbackQualityGatePresets(prd);
+            prd = writeQualityGateSelectionState(prd, selection);
+            finalQuestion = formatQualityGateSelectionQuestion(selection);
+            await logToolEvent(ctx, repoRoot, "info", "new.quality-gates.suggested", "Suggested quality gate presets", {
+              options: selection.options.map((o) => o.label),
+              usedFallback: parsedSelection === null,
+            });
+          }
+          done = false;
         }
 
         if (!done) {
