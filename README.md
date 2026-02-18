@@ -343,19 +343,14 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 
 | Issue | Solution |
 |-------|----------|
-| **Wizard won't progress** | The PRD wizard is LLM-driven. Just answer naturally - it will ask follow-ups until complete. Check `.mario/prd.json` to see current state. |
-| **Quality gates fail instantly** | Verify `.mario/prd.json` has runnable commands under `qualityGates` (e.g., `npm test`, `npm run lint`). |
-| **First task keeps failing** | Check `tasks[0].lastAttempt.judge.nextActions` in `.mario/prd.json` for specific scaffold commands to run. |
-| **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If browser runtime install failed, run non-interactive install: `CI=1 npm_config_yes=true npx --yes playwright install chromium` |
-| **Verifier returns invalid JSON** | The LLM should return JSON in `<VERIFIER_JSON>` tags. If malformed, the task will be marked blocked - check `lastAttempt.judge.rawText` to see what was returned. |
-| **Run stops on verifier transport failure** | Retry `/mario-devx:run 1`. If it repeats, inspect `.mario/state/mario-devx.log` for `run.verify.transport.error` and `ReasonCode` details. |
-| **Run stops with `ReasonCode: WORK_SESSION_NO_PROGRESS`** | The work session reached idle but no source-file changes were detected during repair. Inspect `/sessions` output for the work session response, then rerun `/mario-devx:run 1` so mario-devx retries with stricter targeted repair guidance. |
-| **Run stops with `ReasonCode: REPEATED_UI_FINDINGS`** | mario-devx already attempted bounded semantic repairs and findings still repeated. Inspect `tasks[].lastAttempt.judge.reason` and `nextActions` in `.mario/prd.json`; ensure acceptance criteria are explicitly implemented (not just gates passing), then rerun `/mario-devx:run 1`. |
-| **AGENTS.md parse warnings** | Lines must be `KEY=VALUE` format. Comments start with `#`. No spaces around `=`. |
-| **Run says another run is active after crash/CTRL+C** | Rerun `/mario-devx:run 1` once: mario-devx auto-recovers stale `DOING` state and stale lock PID entries. If it still persists, run `/mario-devx:doctor` and follow suggested fixes. |
-| **Run stops with heartbeat error** | Check disk space and permissions on `.mario/state/run.lock`. Prefer rerunning `/mario-devx:run 1` first; remove lock manually only if doctor indicates it is stale. |
-| **Run blocks with task graph errors** | If you see `ReasonCode: TASK_GRAPH_DEP_MISSING` or `ReasonCode: TASK_GRAPH_CYCLE`, fix `tasks[].dependsOn` in `.mario/prd.json` (missing IDs or dependency loops), then rerun `/mario-devx:run 1`. |
-| **General health check** | Run `/mario-devx:doctor` to diagnose common issues. |
+| **Wizard won't complete** | Continue answering prompts naturally. If stuck, inspect `.mario/prd.json` for `wizard.status`, missing `qualityGates`, or unresolved style-reference acknowledgement. |
+| **Run blocked before coding starts** | Check `.mario/prd.json` for empty `tasks`/`qualityGates` or dependency errors (`TASK_GRAPH_DEP_MISSING`, `TASK_GRAPH_CYCLE`), fix, then rerun `/mario-devx:run 1`. |
+| **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If browser runtime is missing: `CI=1 npm_config_yes=true npx --yes playwright install chromium`. |
+| **Verifier transport/JSON failure** | Retry `/mario-devx:run 1`. If it repeats, inspect `.mario/state/mario-devx.log` for `run.verify.transport.error` and review `tasks[].lastAttempt.judge.rawText`. |
+| **`ReasonCode: WORK_SESSION_NO_PROGRESS`** | Work session reached idle without source edits. Check `/sessions` output for the work session response, then rerun `/mario-devx:run 1`. |
+| **`ReasonCode: REPEATED_UI_FINDINGS`** | Bounded semantic repairs were attempted but acceptance is still unmet. Use `tasks[].lastAttempt.judge.reason/nextActions` in `.mario/prd.json` to verify missing artifacts, then rerun `/mario-devx:run 1`. |
+| **Run appears locked after interruption** | Rerun `/mario-devx:run 1` once (stale lock/state auto-recovery). If still blocked, run `/mario-devx:doctor`. |
+| **Health/diagnostics bundle** | Run `/mario-devx:doctor` and attach these files when reporting issues: `.mario/state/mario-devx.log`, `.mario/state/state.json`, `.mario/prd.json`. |
 
 ## Acknowledgements
 
