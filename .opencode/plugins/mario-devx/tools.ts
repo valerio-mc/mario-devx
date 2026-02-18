@@ -1,4 +1,3 @@
-import { tool } from "@opencode-ai/plugin";
 import path from "path";
 import { buildPrompt } from "./prompt";
 import { ensureMario, bumpIteration, readRunState, writeRunState } from "./state";
@@ -79,6 +78,7 @@ import { createStatusTool } from "./tool-status";
 import { createDoctorTool } from "./tool-doctor";
 import { createBacklogTools } from "./tool-backlog";
 import { createNewTool } from "./tool-new";
+import { createRunTool } from "./tool-run";
 import type { PluginContext, ToolContext } from "./tool-common";
 
 const nowIso = (): string => new Date().toISOString();
@@ -1273,12 +1273,8 @@ export const createTools = (ctx: PluginContext) => {
   return {
     ...newTool,
 
-    mario_devx_run: tool({
-      description: "Run next tasks (build + verify, stops on failure)",
-      args: {
-        max_items: tool.schema.string().optional().describe("Maximum number of tasks to attempt (default: 1)"),
-      },
-      async execute(args, context: ToolContext) {
+    ...createRunTool({
+      executeRun: async (args, context: ToolContext) => {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
         if (!notInWork.ok) {
           return notInWork.message;
