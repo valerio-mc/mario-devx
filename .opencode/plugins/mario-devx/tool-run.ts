@@ -150,9 +150,11 @@ export const createRunTool = (opts: {
         }, { runId });
 
         const previousRun = await readRunState(repoRoot);
+        const sameControlSession = context.sessionID
+          ? previousRun.lastRunControlSessionId === context.sessionID
+          : !previousRun.lastRunControlSessionId;
         if (
-          ((context.sessionID && previousRun.lastRunControlSessionId === context.sessionID)
-            || (!context.sessionID && !!previousRun.lastRunControlSessionId))
+          sameControlSession
           && previousRun.lastRunAt
           && previousRun.lastRunResult
           && Number.isFinite(Date.parse(previousRun.lastRunAt))
@@ -456,6 +458,39 @@ export const createRunTool = (opts: {
 
             await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
+            const blockForHeartbeatFailure = async (phase: string): Promise<void> => {
+              const gates: PrdGatesAttempt = { ok: false, commands: [] };
+              const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+              const judge: PrdJudgeAttempt = {
+                status: "FAIL",
+                exitSignal: false,
+                reason: [`Failed to update run.lock heartbeat during ${phase} (${runLockPath(repoRoot)}).`],
+                nextActions: ["Check disk space/permissions for .mario/state/run.lock, then rerun /mario-devx:run 1."],
+              };
+              prd = await persistBlockedTaskAttempt({
+                ctx,
+                repoRoot,
+                prd,
+                task,
+                attemptAt,
+                iteration: state.iteration,
+                gates,
+                ui,
+                judge,
+                runId,
+              });
+              await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_HEARTBEAT, `Run blocked: lock heartbeat failed during ${phase}`, {
+                taskId: task.id,
+                phase,
+                lockPath: runLockPath(repoRoot),
+              }, { runId, taskId: task.id, reasonCode: RUN_REASON.HEARTBEAT_FAILED });
+            };
+
+            if (!(await heartbeatRunLock(repoRoot))) {
+              await blockForHeartbeatFailure("pre-work-session-reset");
+              break;
+            }
+
             const ws = await resetWorkSession(ctx, repoRoot, context.agent);
             await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
             await updateRunState(repoRoot, {
@@ -475,6 +510,11 @@ export const createRunTool = (opts: {
                 parts: [{ type: "text", text: buildModePrompt }],
               },
             });
+
+            if (!(await heartbeatRunLock(repoRoot))) {
+              await blockForHeartbeatFailure("after-build-prompt");
+              break;
+            }
 
             const idle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
             if (!idle.ok) {
@@ -581,6 +621,11 @@ export const createRunTool = (opts: {
                 },
               });
 
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure("during-auto-repair");
+                break;
+              }
+
               const repairIdle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
               if (!repairIdle.ok) break;
 
@@ -636,6 +681,28 @@ export const createRunTool = (opts: {
               break;
             }
 
+            if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk || !browserOk)) {
+              await failEarly(
+                [
+                  "UI verification is required but agent-browser prerequisites are missing.",
+                  ...(autoInstallAttempted.length > 0 ? [`Auto-install attempted: ${autoInstallAttempted.join("; ")}`] : []),
+                  `Repo: ${agentBrowserRepo}`,
+                ],
+                [
+                  "Install prerequisites, then rerun /mario-devx:run 1.",
+                  "Or set UI_VERIFY_REQUIRED=0 in .mario/AGENTS.md to make UI verification best-effort.",
+                ],
+              );
+              break;
+            }
+
+            if (uiVerifyEnabled && isWebApp && uiVerifyRequired && latestUiResult && !latestUiResult.ok) {
+              await failEarly([
+                "UI verification failed.",
+              ]);
+              break;
+            }
+
             const artifactCheck = await checkAcceptanceArtifacts(repoRoot, task.acceptance ?? []);
             if (artifactCheck.missingFiles.length > 0 || artifactCheck.missingLabels.length > 0) {
               await failEarly([
@@ -675,6 +742,12 @@ export const createRunTool = (opts: {
                 ...(context.agent ? { agent: context.agent } : {}),
               });
 
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure("after-judge");
+                blockedByVerifierFailure = true;
+                break;
+              }
+
               if ("transportFailure" in verifierOutcome) {
                 await failEarly(verifierOutcome.transportFailure.reason, verifierOutcome.transportFailure.nextActions);
                 blockedByVerifierFailure = true;
@@ -704,6 +777,12 @@ export const createRunTool = (opts: {
                   parts: [{ type: "text", text: semanticRepairPrompt }],
                 },
               });
+
+              if (!(await heartbeatRunLock(repoRoot))) {
+                await blockForHeartbeatFailure("during-semantic-repair");
+                blockedByVerifierFailure = true;
+                break;
+              }
 
               const semanticIdle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
               if (!semanticIdle.ok) {
