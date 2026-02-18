@@ -1,4 +1,5 @@
 import type { PrdJson, PrdTask, PrdTaskAttempt, PrdTaskStatus } from "./prd";
+import { RUN_REASON } from "./run-contracts";
 
 export const firstScaffoldHintFromNotes = (notes: string[] | undefined): string | null => {
   if (!notes || notes.length === 0) return null;
@@ -106,7 +107,7 @@ export const getTaskDependencyBlockers = (prd: PrdJson, task: PrdTask): { pendin
 };
 
 export type TaskGraphIssue = {
-  reasonCode: "TASK_GRAPH_DEP_MISSING" | "TASK_GRAPH_CYCLE";
+  reasonCode: typeof RUN_REASON.TASK_GRAPH_DEP_MISSING | typeof RUN_REASON.TASK_GRAPH_CYCLE;
   taskId: string;
   message: string;
   nextActions: string[];
@@ -122,7 +123,7 @@ export const validateTaskGraph = (prd: PrdJson): TaskGraphIssue | null => {
     for (const depId of task.dependsOn ?? []) {
       if (!allTasksById.has(depId)) {
         return {
-          reasonCode: "TASK_GRAPH_DEP_MISSING",
+          reasonCode: RUN_REASON.TASK_GRAPH_DEP_MISSING,
           taskId: task.id,
           message: `Task ${task.id} depends on missing task ${depId}.`,
           nextActions: [
@@ -167,7 +168,7 @@ export const validateTaskGraph = (prd: PrdJson): TaskGraphIssue | null => {
     if (cycle) {
       const chain = cycle.join(" -> ");
       return {
-        reasonCode: "TASK_GRAPH_CYCLE",
+        reasonCode: RUN_REASON.TASK_GRAPH_CYCLE,
         taskId: cycle[0] ?? task.id,
         message: `Task dependency cycle detected: ${chain}.`,
         nextActions: [
