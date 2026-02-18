@@ -26,6 +26,7 @@ export const RUN_REASON = {
   SEMANTIC_REPAIR_UI_REGRESSION: "SEMANTIC_REPAIR_UI_REGRESSION",
   WORK_SESSION_NO_PROGRESS: "WORK_SESSION_NO_PROGRESS",
   WORK_SESSION_STATUS_UNKNOWN: "WORK_SESSION_STATUS_UNKNOWN",
+  ACCEPTANCE_ARTIFACTS_MISSING: "ACCEPTANCE_ARTIFACTS_MISSING",
 } as const;
 
 export type RunReasonCode = (typeof RUN_REASON)[keyof typeof RUN_REASON];
@@ -66,6 +67,7 @@ export const RUN_EVENT = {
   SCAFFOLD_DEFAULT_FAILED: "run.scaffold.default.failed",
   REPAIR_NO_PROGRESS: "run.repair.no-progress",
   BLOCKED_WORK_STATUS_UNKNOWN: "run.blocked.work-status-unknown",
+  BLOCKED_ACCEPTANCE_ARTIFACTS: "run.blocked.acceptance-artifacts",
   FATAL_EXCEPTION: "run.fatal.exception",
 } as const;
 

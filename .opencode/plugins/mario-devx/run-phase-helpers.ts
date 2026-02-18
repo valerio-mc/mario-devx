@@ -1,4 +1,4 @@
-import { readdir, stat } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import { runUiVerification } from "./ui-verify";
 import type { GateRunItem } from "./gates";
@@ -221,5 +221,69 @@ export const summarizeWorkspaceDelta = (before: WorkspaceSnapshot, after: Worksp
     deleted,
     changed: added + modified + deleted,
     sample,
+  };
+};
+
+type AcceptanceArtifactCheck = {
+  missingFiles: string[];
+  missingLabels: string[];
+};
+
+const extractNavigationLabels = (acceptance: string[]): string[] => {
+  const labels: string[] = [];
+  for (const line of acceptance) {
+    if (!/nav|navigation/i.test(line)) continue;
+    const quoted = line.match(/"([^"]+)"/g) ?? [];
+    for (const chunk of quoted) {
+      const cleaned = chunk.replace(/"/g, "");
+      const parts = cleaned.split(",").map((x) => x.trim()).filter(Boolean);
+      for (const part of parts) {
+        if (part.length > 0) labels.push(part);
+      }
+    }
+  }
+  return Array.from(new Set(labels));
+};
+
+const slugifyLabel = (label: string): string => {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+};
+
+const readTextOrEmpty = async (filePath: string): Promise<string> => {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return "";
+  }
+};
+
+export const checkAcceptanceArtifacts = async (repoRoot: string, acceptance: string[]): Promise<AcceptanceArtifactCheck> => {
+  const labels = extractNavigationLabels(acceptance);
+  if (labels.length === 0) {
+    return { missingFiles: [], missingLabels: [] };
+  }
+
+  const missingFiles: string[] = [];
+  for (const label of labels) {
+    const slug = slugifyLabel(label);
+    if (!slug) continue;
+    const rel = `src/app/${slug}/page.tsx`;
+    const abs = path.join(repoRoot, rel);
+    try {
+      const s = await stat(abs);
+      if (!s.isFile()) missingFiles.push(rel);
+    } catch {
+      missingFiles.push(rel);
+    }
+  }
+
+  const layoutText = await readTextOrEmpty(path.join(repoRoot, "src/app/layout.tsx"));
+  const homeText = await readTextOrEmpty(path.join(repoRoot, "src/app/page.tsx"));
+  const combined = `${layoutText}\n${homeText}`;
+  const missingLabels = labels.filter((label) => !new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(combined));
+
+  return {
+    missingFiles: Array.from(new Set(missingFiles)),
+    missingLabels: Array.from(new Set(missingLabels)),
   };
 };

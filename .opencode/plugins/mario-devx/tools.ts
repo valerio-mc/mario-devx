@@ -75,7 +75,7 @@ import { runShellCommand } from "./shell";
 import { ensureVerifierSession, resetVerifierSessionToBaseline, runVerifierTurn } from "./verifier-session";
 import { buildVerifierContextText, buildVerifierTransportFailureJudge, enforceJudgeOutputQuality } from "./run-verifier";
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
-import { captureWorkspaceSnapshot, logGateRunResults as logGateRunResultsPhase, resolveEffectiveDoneWhen, runUiVerifyForTask as runUiVerifyForTaskPhase, summarizeWorkspaceDelta, toGateCommands, toGatesAttempt, toUiAttempt } from "./run-phase-helpers";
+import { captureWorkspaceSnapshot, checkAcceptanceArtifacts, logGateRunResults as logGateRunResultsPhase, resolveEffectiveDoneWhen, runUiVerifyForTask as runUiVerifyForTaskPhase, summarizeWorkspaceDelta, toGateCommands, toGatesAttempt, toUiAttempt } from "./run-phase-helpers";
 import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
 
 type ToolContext = {
@@ -2676,6 +2676,34 @@ export const createTools = (ctx: PluginContext) => {
               "UI verification failed.",
             ]);
             await showToast(ctx, `Run stopped: UI verification failed on ${task.id}`, "warning");
+            break;
+          }
+
+          const artifactCheck = await checkAcceptanceArtifacts(repoRoot, task.acceptance ?? []);
+          if (artifactCheck.missingFiles.length > 0 || artifactCheck.missingLabels.length > 0) {
+            await failEarly([
+              formatReasonCode(RUN_REASON.ACCEPTANCE_ARTIFACTS_MISSING),
+              ...(artifactCheck.missingFiles.length > 0
+                ? [`Missing expected files: ${artifactCheck.missingFiles.join(", ")}.`]
+                : []),
+              ...(artifactCheck.missingLabels.length > 0
+                ? [`Missing expected navigation labels in app shell: ${artifactCheck.missingLabels.join(", ")}.`]
+                : []),
+            ], [
+              ...(artifactCheck.missingFiles.length > 0
+                ? [`Create required files: ${artifactCheck.missingFiles.join(", ")}.`]
+                : []),
+              ...(artifactCheck.missingLabels.length > 0
+                ? ["Add required navigation labels to `src/app/layout.tsx` or `src/app/page.tsx`."]
+                : []),
+              "Then rerun /mario-devx:run 1.",
+            ]);
+            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.BLOCKED_ACCEPTANCE_ARTIFACTS, `Run blocked: missing acceptance artifacts for ${task.id}`, {
+              taskId: task.id,
+              missingFiles: artifactCheck.missingFiles,
+              missingLabels: artifactCheck.missingLabels,
+            }, { runId, taskId: task.id, reasonCode: RUN_REASON.ACCEPTANCE_ARTIFACTS_MISSING });
+            await showToast(ctx, `Run stopped: missing acceptance artifacts on ${task.id}`, "warning");
             break;
           }
 
