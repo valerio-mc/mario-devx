@@ -1,7 +1,8 @@
 import path from "path";
 import { tool } from "@opencode-ai/plugin";
 
-import { ensureMario, writePrdJson } from "./state";
+import { ensureMario } from "./state";
+import { writePrdJson } from "./prd";
 import { ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
 import { WIZARD_REQUIREMENTS, TIMEOUTS } from "./config";
 import { LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";

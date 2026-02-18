@@ -2,9 +2,9 @@ import { tool } from "@opencode-ai/plugin";
 
 import { compactIdea } from "./interview";
 import { decomposeFeatureRequestToTasks, makeTask, nextTaskOrdinal, normalizeTaskId } from "./planner";
-import type { PrdJson, PrdTask } from "./prd";
+import { writePrdJson, type PrdJson, type PrdTask } from "./prd";
 import { ensureNotInWorkSession, ensureWorkSession, extractTextFromPromptResponse } from "./runner";
-import { ensureMario, readRunState, writePrdJson } from "./state";
+import { ensureMario, readRunState } from "./state";
 import { logError, logInfo } from "./errors";
 import { logReplanComplete, redactForLog } from "./logging";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
