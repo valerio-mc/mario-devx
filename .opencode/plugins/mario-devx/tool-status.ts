@@ -4,26 +4,13 @@ import { ensureMario, readRunState } from "./state";
 import { ensureWorkSession } from "./runner";
 import type { PrdJson } from "./prd";
 import { getNextPrdTask } from "./planner";
-
-type ToolContext = {
-  sessionID?: string;
-  agent?: string;
-};
-
-type PluginContext = Parameters<import("@opencode-ai/plugin").Plugin>[0];
+import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
 
 export const createStatusTool = (opts: {
   ctx: PluginContext;
   repoRoot: string;
   ensurePrd: (repoRoot: string) => Promise<PrdJson>;
-  logToolEvent: (
-    ctx: PluginContext,
-    repoRoot: string,
-    level: "info" | "warn" | "error",
-    event: string,
-    message: string,
-    extra?: Record<string, unknown>,
-  ) => Promise<void>;
+  logToolEvent: ToolEventLogger;
   notifyControlSession: (ctx: PluginContext, controlSessionId: string | undefined, message: string) => Promise<void>;
 }) => {
   const { ctx, repoRoot, ensurePrd, logToolEvent, notifyControlSession } = opts;

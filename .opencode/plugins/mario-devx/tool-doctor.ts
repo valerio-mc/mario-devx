@@ -2,20 +2,12 @@ import { tool } from "@opencode-ai/plugin";
 
 import { ensureMario } from "./state";
 import { runDoctor } from "./doctor";
-
-type PluginContext = Parameters<import("@opencode-ai/plugin").Plugin>[0];
+import type { PluginContext, ToolEventLogger } from "./tool-common";
 
 export const createDoctorTool = (opts: {
   ctx: PluginContext;
   repoRoot: string;
-  logToolEvent: (
-    ctx: PluginContext,
-    repoRoot: string,
-    level: "info" | "warn" | "error",
-    event: string,
-    message: string,
-    extra?: Record<string, unknown>,
-  ) => Promise<void>;
+  logToolEvent: ToolEventLogger;
   redactForLog: (value: string) => string;
 }) => {
   const { ctx, repoRoot, logToolEvent, redactForLog } = opts;

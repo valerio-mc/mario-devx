@@ -7,13 +7,7 @@ import { ensureNotInWorkSession, ensureWorkSession, extractTextFromPromptRespons
 import { ensureMario, readRunState, writePrdJson } from "./state";
 import { logError, logInfo } from "./errors";
 import { logReplanComplete, redactForLog } from "./logging";
-
-type ToolContext = {
-  sessionID?: string;
-  agent?: string;
-};
-
-type PluginContext = Parameters<import("@opencode-ai/plugin").Plugin>[0];
+import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
 
 type AddInterviewState = {
   originalRequest: string;
@@ -68,14 +62,7 @@ export const createBacklogTools = (opts: {
   ctx: PluginContext;
   repoRoot: string;
   ensurePrd: (repoRoot: string) => Promise<PrdJson>;
-  logToolEvent: (
-    ctx: PluginContext,
-    repoRoot: string,
-    level: "info" | "warn" | "error",
-    event: string,
-    message: string,
-    extra?: Record<string, unknown>,
-  ) => Promise<void>;
+  logToolEvent: ToolEventLogger;
 }) => {
   const { ctx, repoRoot, ensurePrd, logToolEvent } = opts;
 

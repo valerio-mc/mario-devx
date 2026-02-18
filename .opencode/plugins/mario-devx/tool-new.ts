@@ -5,13 +5,7 @@ import { ensureMario, writePrdJson } from "./state";
 import { ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
 import { WIZARD_REQUIREMENTS, TIMEOUTS } from "./config";
 import { LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";
-
-type ToolContext = {
-  sessionID?: string;
-  agent?: string;
-};
-
-type PluginContext = Parameters<import("@opencode-ai/plugin").Plugin>[0];
+import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
 
 type PrdLike = any;
 
@@ -19,14 +13,7 @@ export const createNewTool = (opts: {
   ctx: PluginContext;
   repoRoot: string;
   ensurePrd: (repoRoot: string) => Promise<PrdLike>;
-  logToolEvent: (
-    ctx: PluginContext,
-    repoRoot: string,
-    level: "info" | "warn" | "error",
-    event: string,
-    message: string,
-    extra?: Record<string, unknown>,
-  ) => Promise<void>;
+  logToolEvent: ToolEventLogger;
   hasNonEmpty: (value: string | null | undefined) => boolean;
   extractStyleReferencesFromText: (text: string) => string[];
   mergeStyleReferences: (existing: string[] | undefined, next: string[]) => string[];

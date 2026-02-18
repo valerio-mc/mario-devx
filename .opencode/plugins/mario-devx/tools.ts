@@ -1,4 +1,3 @@
-import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import path from "path";
 import { buildPrompt } from "./prompt";
@@ -80,13 +79,7 @@ import { createStatusTool } from "./tool-status";
 import { createDoctorTool } from "./tool-doctor";
 import { createBacklogTools } from "./tool-backlog";
 import { createNewTool } from "./tool-new";
-
-type ToolContext = {
-  sessionID?: string;
-  agent?: string;
-};
-
-type PluginContext = Parameters<Plugin>[0];
+import type { PluginContext, ToolContext } from "./tool-common";
 
 const nowIso = (): string => new Date().toISOString();
 
