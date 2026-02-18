@@ -379,7 +379,6 @@ export const createRunTool = (opts: {
           const runStartIteration = (await readRunState(repoRoot)).iteration;
           let attempted = 0;
           let completed = 0;
-          const runNotes: string[] = [];
 
           const runLog = async (
             level: "info" | "warn" | "error",
@@ -874,7 +873,7 @@ export const createRunTool = (opts: {
             completed,
             maxItems,
             tasks: prd.tasks ?? [],
-            runNotes,
+            runNotes: [],
             uiVerifyRequired,
           });
 

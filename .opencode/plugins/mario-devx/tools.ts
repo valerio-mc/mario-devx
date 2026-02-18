@@ -4,22 +4,18 @@ import {
   compactIdea,
   extractStyleReferencesFromText,
   hasNonEmpty,
-  isPrdComplete,
   mergeStyleReferences,
   normalizeTextArray,
 } from "./interview";
 import {
   makeTask,
-  nextTaskOrdinal,
   normalizeTaskId,
   setPrdTaskLastAttempt,
   setPrdTaskStatus,
-  validateTaskGraph,
 } from "./planner";
 import {
   ensureWorkSession,
   extractTextFromPromptResponse,
-  resolvePromptText,
   updateRunState,
 } from "./runner";
 import {
@@ -38,7 +34,7 @@ import {
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo } from "./errors";
-import { logEvent, logPrdComplete, logReplanComplete, redactForLog } from "./logging";
+import { logEvent, logPrdComplete, redactForLog } from "./logging";
 import { type RunLogMeta } from "./run-types";
 import { runShellCommand } from "./shell";
 import { ensureVerifierSession, resetVerifierSessionToBaseline, runVerifierTurn } from "./verifier-session";
