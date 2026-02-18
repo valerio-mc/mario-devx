@@ -77,6 +77,7 @@ import { buildVerifierContextText, buildVerifierTransportFailureJudge, enforceJu
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
 import { captureWorkspaceSnapshot, checkAcceptanceArtifacts, logGateRunResults as logGateRunResultsPhase, resolveEffectiveDoneWhen, runUiVerifyForTask as runUiVerifyForTaskPhase, summarizeWorkspaceDelta, toGateCommands, toGatesAttempt, toUiAttempt } from "./run-phase-helpers";
 import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
+import { buildGateRepairPrompt, buildIterationTaskPlan, buildSemanticRepairPrompt } from "./run-prompts";
 
 type ToolContext = {
   sessionID?: string;
@@ -2200,34 +2201,12 @@ export const createTools = (ctx: PluginContext) => {
             }, { runId, taskId: task.id });
           }
 
-          const iterationPlan = [
-            `# Iteration Task (${task.id})`,
-            "",
-            `Title: ${task.title}`,
-            "",
-            `Status: ${task.status}`,
-            task.scope.length > 0 ? `Scope: ${task.scope.join(", ")}` : "",
-            task.acceptance && task.acceptance.length > 0 ? `Acceptance:\n${task.acceptance.map((a) => `- ${a}`).join("\n")}` : "Acceptance: (none)",
-            effectiveDoneWhen.length > 0 ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}` : "Done when: (none)",
-            task.notes && task.notes.length > 0 ? `Notes:\n${task.notes.map((n) => `- ${n}`).join("\n")}` : "",
-            prd.frontend
-              ? [
-                  "UI context:",
-                  `- Design system: ${prd.ui.designSystem ?? "unspecified"}`,
-                  `- Visual direction: ${prd.ui.visualDirection || "unspecified"}`,
-                  `- UX requirements: ${(prd.ui.uxRequirements ?? []).join("; ") || "unspecified"}`,
-                  `- Style references: ${(prd.ui.styleReferences ?? []).join(", ") || "none"}`,
-                ].join("\n")
-              : "",
-            prd.docs.readmeRequired
-              ? `README policy: required sections -> ${(prd.docs.readmeSections ?? []).join(", ")}`
-              : "README policy: optional",
-            carryForwardIssues.length > 0
-              ? `Previous verifier findings to fix now:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
-              : "",
-          ]
-            .filter((x) => x)
-            .join("\n");
+          const iterationPlan = buildIterationTaskPlan({
+            task,
+            prd,
+            effectiveDoneWhen,
+            carryForwardIssues,
+          });
           const buildModePrompt = await buildPrompt(repoRoot, "build", iterationPlan);
 
           await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
@@ -2455,24 +2434,14 @@ export const createTools = (ctx: PluginContext) => {
                   }
                 }
 
-                const repairPrompt = [
-                  `Task ${task.id} failed deterministic gate: ${failedGate}.`,
-                  carryForwardIssues.length > 0
-                    ? `Carry-forward findings from previous verifier attempt:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
-                    : "",
-                  gateResult.failed?.command && isScaffoldMissingGateCommand(gateResult.failed.command)
-                    ? "If project scaffold is missing, scaffold the app first before feature edits."
-                    : "",
-                  missingScript
-                    ? `Detected missing npm script '${missingScript}'. Add it to package.json and required config/files so it passes.`
-                    : "",
-                  scaffoldHint ? `Optional scaffold default: ${scaffoldHint}` : "",
-                  carryForwardIssues.length > 0
-                    ? "Prioritize fixing the carry-forward findings before adding unrelated changes."
-                    : "",
-                  "Fix the repository so all deterministic gates pass.",
-                  "Do not ask questions. Apply edits and stop when done.",
-                ].join("\n");
+                const repairPrompt = buildGateRepairPrompt({
+                  taskId: task.id,
+                  failedGate,
+                  carryForwardIssues,
+                  missingScript,
+                  scaffoldHint,
+                  scaffoldGateFailure: Boolean(gateResult.failed?.command && isScaffoldMissingGateCommand(gateResult.failed.command)),
+                });
 
                 const repairSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
 
@@ -2779,25 +2748,14 @@ export const createTools = (ctx: PluginContext) => {
             const strictChecklist = semanticNoProgressStreak > 0
               ? "Repeated finding detected with no clear progress. Make explicit file edits that directly satisfy acceptance criteria; avoid generic refinements."
               : "";
-            const semanticRepairPrompt = [
-              `Verifier failed for ${task.id}. Apply a focused semantic repair and stop when acceptance is clearly satisfied.`,
-              task.acceptance && task.acceptance.length > 0
-                ? `Acceptance checklist:\n${task.acceptance.map((a) => `- ${a}`).join("\n")}`
-                : "Acceptance checklist: (none)",
-              `Primary failing reason: ${actionableReason}`,
-              judge.reason && judge.reason.length > 0
-                ? `Verifier reasons:\n${judge.reason.map((r) => `- ${r}`).join("\n")}`
-                : "",
-              judge.nextActions && judge.nextActions.length > 0
-                ? `Verifier next actions:\n${judge.nextActions.map((a) => `- ${a}`).join("\n")}`
-                : "",
-              carryForwardIssues.length > 0
-                ? `Carry-forward findings:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
-                : "",
+            const semanticRepairPrompt = buildSemanticRepairPrompt({
+              taskId: task.id,
+              acceptance: task.acceptance ?? [],
+              actionableReason,
+              judge,
+              carryForwardIssues,
               strictChecklist,
-              "After edits, ensure deterministic gates pass, then verifier will run again.",
-              "Do not ask questions. Make concrete file changes now.",
-            ].filter(Boolean).join("\n\n");
+            });
 
             await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.REPAIR_SEMANTIC_START, "Starting verifier-driven semantic repair", {
               taskId: task.id,
