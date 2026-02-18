@@ -1,7 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import path from "path";
-import { readTextIfExists, writeText } from "./fs";
 import { buildPrompt } from "./prompt";
 import { ensureMario, bumpIteration, readRunState, writeRunState } from "./state";
 
@@ -14,12 +13,6 @@ import {
   resolveNodeWorkspaceRoot,
   runGateCommands,
 } from "./gates";
-import {
-  hasAgentsKey,
-  parseAgentsEnv,
-  runUiVerification,
-  upsertAgentsKey,
-} from "./ui-verify";
 import {
   LAST_QUESTION_KEY,
   compactIdea,
@@ -80,6 +73,9 @@ import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { runShellCommand } from "./shell";
 import { ensureVerifierSession, resetVerifierSessionToBaseline, runVerifierTurn } from "./verifier-session";
 import { buildVerifierContextText, buildVerifierTransportFailureJudge, enforceJudgeOutputQuality } from "./run-verifier";
+import { RUN_EVENT, RUN_REASON } from "./run-contracts";
+import { logGateRunResults as logGateRunResultsPhase, resolveEffectiveDoneWhen, runUiVerifyForTask as runUiVerifyForTaskPhase, toGateCommands, toGatesAttempt, toUiAttempt } from "./run-phase-helpers";
+import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
 
 type ToolContext = {
   sessionID?: string;
@@ -521,7 +517,7 @@ const applyRepeatedFailureBackpressure = (
   const overlap = curr.filter((c) => prev.includes(c));
   if (overlap.length === 0) return judge;
   const reason = [
-    formatReasonCode("REPEATED_UI_FINDINGS"),
+    formatReasonCode(RUN_REASON.REPEATED_UI_FINDINGS),
     ...judge.reason,
   ];
   const nextActions = Array.from(new Set([
@@ -1131,7 +1127,7 @@ const promptAndResolveWithRetry = async (opts: {
         verifierSessionId: verifierSession.sessionId,
         attempt,
       }, { runId, taskId });
-      await logRunEvent(ctx, repoRoot, "info", "run.verify.prompt.sent", "Verifier prompt sent", {
+      await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.VERIFY_PROMPT_SENT, "Verifier prompt sent", {
         attempt,
         maxAttempts,
         verifierSessionId: verifierSession.sessionId,
@@ -1146,7 +1142,7 @@ const promptAndResolveWithRetry = async (opts: {
       if (!verifierText.trim()) {
         throw new Error("Empty verifier response text");
       }
-      await logRunEvent(ctx, repoRoot, "info", "run.verify.response.received", "Verifier response received", {
+      await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.VERIFY_RESPONSE_RECEIVED, "Verifier response received", {
         attempt,
         hasText: true,
       }, { runId, taskId });
@@ -1157,13 +1153,13 @@ const promptAndResolveWithRetry = async (opts: {
       await logRunEvent(ctx, repoRoot, "error", "verifier.session.reset.fail", "Verifier session turn failed", {
         attempt,
         error: message,
-      }, { runId, taskId, reasonCode: "VERIFIER_TRANSPORT_ERROR" });
-      await logRunEvent(ctx, repoRoot, "error", "run.verify.transport.error", "Verifier transport/parse error", {
+      }, { runId, taskId, reasonCode: RUN_REASON.VERIFIER_TRANSPORT_ERROR });
+      await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.VERIFY_TRANSPORT_ERROR, "Verifier transport/parse error", {
         attempt,
         maxAttempts,
         error: message,
         stack: error instanceof Error ? error.stack ?? "" : "",
-      }, { runId, taskId, reasonCode: "VERIFIER_TRANSPORT_ERROR" });
+      }, { runId, taskId, reasonCode: RUN_REASON.VERIFIER_TRANSPORT_ERROR });
       if (!isLikelyJsonEofError(error) || attempt === maxAttempts) {
         break;
       }
@@ -1235,10 +1231,10 @@ const persistBlockedTaskAttempt = async (opts: {
     phase: "run",
     currentPI: task.id,
   });
-  await logRunEvent(ctx, repoRoot, "error", "run.blocked.fail-early", `Run blocked on ${task.id}`, {
+  await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_FAIL_EARLY, `Run blocked on ${task.id}`, {
     taskId: task.id,
     reason: judge.reason?.[0] ?? "Unknown failure",
-  }, { runId, taskId: task.id, reasonCode: "TASK_FAIL_EARLY" });
+  }, { runId, taskId: task.id, reasonCode: RUN_REASON.TASK_FAIL_EARLY });
   return nextPrd;
 };
 
@@ -1639,7 +1635,7 @@ export const createTools = (ctx: PluginContext) => {
 
         await ensureMario(repoRoot, false);
         const runId = createRunId();
-        await logRunEvent(ctx, repoRoot, "info", "run.preflight.start", "Run preflight started", {
+        await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.PRECHECK_START, "Run preflight started", {
           controlSessionId: context.sessionID ?? null,
         }, { runId });
 
@@ -1652,25 +1648,25 @@ export const createTools = (ctx: PluginContext) => {
           && Number.isFinite(Date.parse(previousRun.lastRunAt))
           && (Date.now() - Date.parse(previousRun.lastRunAt)) <= TIMEOUTS.RUN_DUPLICATE_WINDOW_MS
         ) {
-          await logRunEvent(ctx, repoRoot, "info", "run.duplicate-window", "Returning cached run result in duplicate window", {
+          await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.PRECHECK_DUPLICATE_WINDOW, "Returning cached run result in duplicate window", {
             cachedAt: previousRun.lastRunAt,
             duplicateWindowMs: TIMEOUTS.RUN_DUPLICATE_WINDOW_MS,
-          }, { runId, reasonCode: "DUPLICATE_WINDOW" });
+          }, { runId, reasonCode: RUN_REASON.DUPLICATE_WINDOW });
           return previousRun.lastRunResult;
         }
 
         const lock = await acquireRunLock(repoRoot, context.sessionID, async (event) => {
           if (event.type === "stale-pid-removed") {
-            await logRunEvent(ctx, repoRoot, "warn", "run.lock.stale-pid", "Removed stale run lock owned by dead process", {
+            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_STALE_PID, "Removed stale run lock owned by dead process", {
               lockPath: event.lockPath,
               stalePid: event.stalePid,
-            }, { runId, reasonCode: "STALE_LOCK_REMOVED" });
+            }, { runId, reasonCode: RUN_REASON.STALE_LOCK_REMOVED });
           }
         });
         if (!lock.ok) {
-          await logRunEvent(ctx, repoRoot, "warn", "run.lock.acquire-failed", "Run lock acquire failed", {
+          await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_ACQUIRE_FAILED, "Run lock acquire failed", {
             lockMessage: lock.message,
-          }, { runId, reasonCode: "RUN_LOCK_HELD" });
+          }, { runId, reasonCode: RUN_REASON.RUN_LOCK_HELD });
           return lock.message;
         }
 
@@ -1683,10 +1679,10 @@ export const createTools = (ctx: PluginContext) => {
               ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
               updatedAt: nowIso(),
             });
-            await logRunEvent(ctx, repoRoot, "error", "run.blocked.heartbeat", "Run blocked: preflight heartbeat failed", {
+            await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_HEARTBEAT, "Run blocked: preflight heartbeat failed", {
               phase: "preflight",
               lockPath: runLockPath(repoRoot),
-            }, { runId, reasonCode: "HEARTBEAT_FAILED" });
+            }, { runId, reasonCode: RUN_REASON.HEARTBEAT_FAILED });
             return `Failed to update run.lock heartbeat during run preflight (${runLockPath(repoRoot)}). Check disk space/permissions, then rerun /mario-devx:run 1.`;
           }
           const currentRun = await readRunState(repoRoot);
@@ -1697,37 +1693,29 @@ export const createTools = (ctx: PluginContext) => {
               updatedAt: nowIso(),
             };
             await writeRunState(repoRoot, recoveredState);
-            await logRunEvent(ctx, repoRoot, "warn", "run.state.stale-doing-recovered", "Recovered stale in-progress run state", {
+            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.STATE_STALE_DOING_RECOVERED, "Recovered stale in-progress run state", {
               previousPhase: currentRun.phase,
               previousCurrentPI: currentRun.currentPI ?? null,
               previousStartedAt: currentRun.startedAt ?? null,
               previousControlSessionId: currentRun.controlSessionId ?? null,
-            }, { runId, reasonCode: "STALE_DOING_RECOVERED" });
+            }, { runId, reasonCode: RUN_REASON.STALE_DOING_RECOVERED });
             await showToast(ctx, "Run: recovered stale in-progress state from interrupted session", "warning");
           }
 
           let prd = await ensurePrd(repoRoot);
           const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
           const workspaceAbs = workspaceRoot === "." ? repoRoot : path.join(repoRoot, workspaceRoot);
-          if (prd.wizard.status !== "completed") {
-            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.prd-incomplete", "Run blocked because PRD wizard is incomplete", {
-              wizardStatus: prd.wizard.status,
-              wizardStep: prd.wizard.step,
-              wizardTotalSteps: prd.wizard.totalSteps,
-            }, { runId, reasonCode: "PRD_INCOMPLETE" });
-            return "PRD wizard is not complete. Run /mario-devx:new to finish it.";
-          }
-          if (!Array.isArray(prd.tasks) || prd.tasks.length === 0) {
-            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.no-tasks", "Run blocked because no tasks were found", {
-              tasksCount: Array.isArray(prd.tasks) ? prd.tasks.length : 0,
-            }, { runId, reasonCode: "NO_TASKS" });
-            return "No tasks found in .mario/prd.json. Run /mario-devx:new to seed tasks.";
-          }
-          if (!Array.isArray(prd.qualityGates) || prd.qualityGates.length === 0) {
-            await logRunEvent(ctx, repoRoot, "warn", "run.blocked.no-quality-gates", "Run blocked because quality gates are empty", {
-              qualityGatesCount: Array.isArray(prd.qualityGates) ? prd.qualityGates.length : 0,
-            }, { runId, reasonCode: "NO_QUALITY_GATES" });
-            return "No quality gates configured in .mario/prd.json (qualityGates is empty). Add at least one command, then rerun /mario-devx:run 1.";
+          const prerequisites = validateRunPrerequisites(prd);
+          if (!prerequisites.ok) {
+            const event = prerequisites.reasonCode === RUN_REASON.PRD_INCOMPLETE
+              ? RUN_EVENT.BLOCKED_PRD_INCOMPLETE
+              : prerequisites.reasonCode === RUN_REASON.NO_TASKS
+                ? RUN_EVENT.BLOCKED_NO_TASKS
+                : RUN_EVENT.BLOCKED_NO_QUALITY_GATES;
+            await logRunEvent(ctx, repoRoot, "warn", event, "Run blocked during preflight validation", {
+              ...(prerequisites.extra ?? {}),
+            }, { runId, ...(prerequisites.reasonCode ? { reasonCode: prerequisites.reasonCode } : {}) });
+            return prerequisites.message ?? "Run blocked during preflight validation.";
           }
 
         const inProgress = (prd.tasks ?? []).filter((t) => t.status === "in_progress");
@@ -1773,9 +1761,9 @@ export const createTools = (ctx: PluginContext) => {
             ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
             updatedAt: nowIso(),
           });
-          await logRunEvent(ctx, repoRoot, "error", "run.blocked.invalid-task-state", "Run blocked: invalid in_progress task state", {
+          await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_INVALID_TASK_STATE, "Run blocked: invalid in_progress task state", {
             inProgressTaskIds: inProgress.map((t) => t.id),
-          }, { runId, reasonCode: "INVALID_TASK_STATE" });
+          }, { runId, reasonCode: RUN_REASON.INVALID_TASK_STATE });
           return judge.reason.concat(["", "See tasks[].lastAttempt.judge.nextActions in .mario/prd.json."]).join("\n");
         }
 
@@ -1809,7 +1797,7 @@ export const createTools = (ctx: PluginContext) => {
               runId,
             });
           }
-          await logRunEvent(ctx, repoRoot, "error", "run.blocked.task-graph", "Run blocked: invalid task dependency graph", {
+          await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_TASK_GRAPH, "Run blocked: invalid task dependency graph", {
             reasonCode: taskGraphIssue.reasonCode,
             taskId: taskGraphIssue.taskId,
             message: taskGraphIssue.message,
@@ -1821,38 +1809,16 @@ export const createTools = (ctx: PluginContext) => {
           ].join("\n");
         }
 
-          if (prd.frontend === true) {
-            const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
-            const raw = (await readTextIfExists(agentsPath)) ?? "";
-            const parsed = parseAgentsEnv(raw);
-            const env = parsed.env;
-            const uiRequired = prd.uiVerificationRequired === true;
-            if (parsed.warnings.length > 0) {
-              await showToast(ctx, `Run warning: AGENTS.md parse warnings (${parsed.warnings.length})`, "warning");
-            }
-            if (env.UI_VERIFY !== "1") {
-              let next = raw;
-              next = upsertAgentsKey(next, "UI_VERIFY", "1");
-              next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
-              const defaultUiCmd = workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev";
-              if (!hasAgentsKey(next, "UI_VERIFY_CMD") || !env.UI_VERIFY_CMD || (workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev")) {
-                next = upsertAgentsKey(next, "UI_VERIFY_CMD", defaultUiCmd);
-              }
-              if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
-              if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
-              await writeText(agentsPath, next);
-            } else if ((env.UI_VERIFY_REQUIRED === "1") !== uiRequired) {
-              let next = upsertAgentsKey(raw, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
-              if ((workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev") || !hasAgentsKey(raw, "UI_VERIFY_CMD")) {
-                next = upsertAgentsKey(next, "UI_VERIFY_CMD", workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
-              }
-              await writeText(agentsPath, next);
-            }
+          const frontendSync = await syncFrontendAgentsConfig({
+            repoRoot,
+            workspaceRoot,
+            prd,
+          });
+          if (frontendSync.parseWarnings > 0) {
+            await showToast(ctx, `Run warning: AGENTS.md parse warnings (${frontendSync.parseWarnings})`, "warning");
           }
 
-        const rawMax = (args.max_items ?? "").trim();
-        const parsed = rawMax.length === 0 ? 1 : Number.parseInt(rawMax, 10);
-        const maxItems = Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 1;
+        const maxItems = parseMaxItems(args.max_items);
 
         const uiSetup = await resolveUiRunSetup({
           ctx,
@@ -1899,7 +1865,7 @@ export const createTools = (ctx: PluginContext) => {
               notes: [] as string[],
             };
         if (uiVerifyEnabled && isWebApp) {
-          await logRunEvent(ctx, repoRoot, "info", "run.ui.capabilities", "Discovered agent-browser capabilities", {
+          await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.UI_CAPABILITIES, "Discovered agent-browser capabilities", {
             available: agentBrowserCaps.available,
             version: agentBrowserCaps.version,
             openUsage: agentBrowserCaps.openUsage,
@@ -1920,56 +1886,41 @@ export const createTools = (ctx: PluginContext) => {
             workspaceAbs,
             ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
           };
+          const runLog = async (
+            level: "info" | "warn" | "error",
+            event: string,
+            message: string,
+            extra?: Record<string, unknown>,
+            meta?: RunLogMeta,
+          ): Promise<void> => {
+            await logRunEvent(ctx, repoRoot, level, event, message, extra, meta);
+          };
           const logGateRunResults = async (
             phase: RunPhaseName,
             taskId: string,
             gateResults: GateRunItem[],
           ): Promise<void> => {
-            for (const gate of gateResults) {
-              await logRunEvent(
-                ctx,
-                repoRoot,
-                gate.ok ? "info" : "warn",
-                gate.ok ? "run.gate.pass" : "run.gate.fail",
-                `${phase} gate ${gate.ok ? "PASS" : "FAIL"}: ${gate.command}`,
-                {
-                  phase,
-                  taskId,
-                  command: gate.command,
-                  exitCode: gate.exitCode,
-                  durationMs: gate.durationMs,
-                  ...(gate.ok ? {} : {
-                    stdout: gate.stdout ?? "",
-                    stderr: gate.stderr ?? "",
-                  }),
-                },
-                { runId, taskId },
-              );
-            }
-          };
-          const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string } | null> => {
-            if (!shouldRunUiVerify) {
-              return null;
-            }
-            return runUiVerification({
-              ctx,
-              devCmd: uiVerifyCmd,
-              url: uiVerifyUrl,
-              waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
-              log: async (entry) => {
-                await logRunEvent(
-                  ctx,
-                  repoRoot,
-                  entry.level,
-                  entry.event,
-                  entry.message,
-                  entry.extra,
-                  { runId, taskId, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
-                );
-              },
+            await logGateRunResultsPhase({
+              phase,
+              taskId,
+              gateResults,
+              runCtx,
+              logRunEvent: runLog,
             });
           };
-          await logRunEvent(ctx, repoRoot, "info", "run.started", "Run started", {
+          const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string } | null> => {
+            return runUiVerifyForTaskPhase({
+              shouldRunUiVerify,
+              taskId,
+              ctx,
+              uiVerifyCmd,
+              uiVerifyUrl,
+              waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
+              runCtx,
+              logRunEvent: runLog,
+            });
+          };
+          await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.STARTED, "Run started", {
             maxItems,
             uiVerifyEnabled,
             uiVerifyRequired,
@@ -2002,7 +1953,7 @@ export const createTools = (ctx: PluginContext) => {
                 status: "FAIL",
                 exitSignal: false,
                 reason: [
-                  formatReasonCode("PREREQ_TASK_PENDING"),
+                  formatReasonCode(RUN_REASON.PREREQ_TASK_PENDING),
                   detail,
                 ],
                 nextActions: [
@@ -2024,11 +1975,11 @@ export const createTools = (ctx: PluginContext) => {
                 runId,
               });
               runNotes.push(`Blocked before execution: unresolved dependency for ${task.id}.`);
-              await logRunEvent(ctx, repoRoot, "warn", "run.blocked.prerequisite", `Run blocked: unresolved dependency for ${task.id}`, {
+              await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.BLOCKED_PREREQ, `Run blocked: unresolved dependency for ${task.id}`, {
                 taskId: task.id,
                 dependencyTaskIds: dependencyBlockers.pending.map((x) => x.id),
                 missingDependencies: dependencyBlockers.missing,
-              }, { runId, taskId: task.id, reasonCode: "PREREQ_TASK_PENDING" });
+              }, { runId, taskId: task.id, reasonCode: RUN_REASON.PREREQ_TASK_PENDING });
               await showToast(ctx, blockerTask
                 ? `Run blocked: ${task.id} requires ${blockerTask.id}`
                 : `Run blocked: ${task.id} has missing dependency ${missingDep}`,
@@ -2036,18 +1987,8 @@ export const createTools = (ctx: PluginContext) => {
               break;
             }
 
-            const taskPolicyGates = prd.verificationPolicy?.taskGates?.[task.id] ?? [];
-            const effectiveDoneWhen = task.doneWhen.length > 0
-              ? task.doneWhen
-              : taskPolicyGates.length > 0
-                ? taskPolicyGates
-                : (prd.verificationPolicy?.globalGates?.length
-                  ? prd.verificationPolicy.globalGates
-                  : (prd.qualityGates ?? []));
-            const gateCommands = effectiveDoneWhen.map((command, idx) => ({
-              name: `gate-${idx + 1}`,
-              command,
-            }));
+            const effectiveDoneWhen = resolveEffectiveDoneWhen(prd, task);
+            const gateCommands = toGateCommands(effectiveDoneWhen);
             attempted += 1;
             logInfo("task", `Starting ${task.id}: ${task.title}`);
 
@@ -2109,14 +2050,14 @@ export const createTools = (ctx: PluginContext) => {
                     phase: "run",
                     currentPI: task.id,
                   });
-                  await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-prereq", `Run blocked: UI prerequisites missing for ${task.id}`, {
+                  await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_UI_PREREQ, `Run blocked: UI prerequisites missing for ${task.id}`, {
                     taskId: task.id,
                     uiVerifyRequired,
                     cliOk,
                     skillOk,
                     browserOk,
                     autoInstallAttempted,
-                  }, { runId, taskId: task.id, reasonCode: "UI_PREREQ_MISSING" });
+                  }, { runId, taskId: task.id, reasonCode: RUN_REASON.UI_PREREQ_MISSING });
                   await showToast(ctx, `Run stopped: UI prerequisites missing on ${task.id}`, "warning");
                   break;
                 }
@@ -2143,15 +2084,15 @@ export const createTools = (ctx: PluginContext) => {
                     phase: "run",
                     currentPI: task.id,
                   });
-                  await logRunEvent(ctx, repoRoot, "error", "run.blocked.ui-reconcile", `Run blocked: UI verification failed during reconcile for ${task.id}`, {
+                  await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_UI_RECONCILE, `Run blocked: UI verification failed during reconcile for ${task.id}`, {
                     taskId: task.id,
                     uiNote: uiResult?.note ?? null,
-                  }, { runId, taskId: task.id, reasonCode: "UI_VERIFY_FAILED" });
+                  }, { runId, taskId: task.id, reasonCode: RUN_REASON.UI_VERIFY_FAILED });
                   await showToast(ctx, `Run stopped: UI verification failed on ${task.id}`, "warning");
                   break;
                 }
 
-                await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass (reconcile)", {
+                await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.VERIFY_START, "Starting verifier pass (reconcile)", {
                   taskId: task.id,
                 }, { runId, taskId: task.id });
                 const verifierPrompt = await buildPrompt(
@@ -2183,7 +2124,7 @@ export const createTools = (ctx: PluginContext) => {
                   const judge = {
                     ...verifierOutcome.transportFailure,
                     reason: [
-                      formatReasonCode("VERIFIER_TRANSPORT_EOF"),
+                      formatReasonCode(RUN_REASON.VERIFIER_TRANSPORT_EOF),
                       `Verifier transport failed during reconcile: ${verifierOutcome.errorMessage}`,
                     ],
                   };
@@ -2199,10 +2140,10 @@ export const createTools = (ctx: PluginContext) => {
                     judge,
                     runId,
                   });
-                  await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed during reconcile for ${task.id}`, {
+                  await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_VERIFY_TRANSPORT, `Run blocked: verifier transport failed during reconcile for ${task.id}`, {
                     taskId: task.id,
                     error: verifierOutcome.errorMessage,
-                  }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
+                  }, { runId, taskId: task.id, reasonCode: RUN_REASON.VERIFIER_TRANSPORT_EOF });
                   await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
                   break;
                 }
@@ -2229,7 +2170,7 @@ export const createTools = (ctx: PluginContext) => {
                 if (isPass) {
                   completed += 1;
                   runNotes.push(`Reconciled ${task.id}: deterministic gates already passing; verifier PASS.`);
-                  await logRunEvent(ctx, repoRoot, "info", "run.reconcile.pass", `Run reconciled ${task.id}`, {
+                  await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.RECONCILE_PASS, `Run reconciled ${task.id}`, {
                     taskId: task.id,
                   }, { runId, taskId: task.id });
                   await showToast(ctx, `Run: reconciled ${task.id} (already passing)`, "success");
@@ -2238,14 +2179,14 @@ export const createTools = (ctx: PluginContext) => {
 
                 logWarning("task", `${task.id} blocked during reconcile: ${judge.reason?.[0] ?? "No reason provided"}`);
                 runNotes.push(`Reconcile failed for ${task.id}; falling back to build/repair.`);
-                await logRunEvent(ctx, repoRoot, "warn", "run.reconcile.verifier-fail", `Verifier failed during reconcile; falling back to build/repair for ${task.id}`, {
+                await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.RECONCILE_VERIFIER_FAIL, `Verifier failed during reconcile; falling back to build/repair for ${task.id}`, {
                   taskId: task.id,
                   reason: judge.reason?.[0] ?? "No reason provided",
-                }, { runId, taskId: task.id, reasonCode: "VERIFIER_FAILED" });
+                }, { runId, taskId: task.id, reasonCode: RUN_REASON.VERIFIER_FAILED });
                 await showToast(ctx, `Run: reconcile failed for ${task.id}; attempting build/repair`, "info");
               }
             } else {
-              await logRunEvent(ctx, repoRoot, "info", "run.reconcile.skipped", "Skipping reconcile pass for non-blocked task", {
+              await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.RECONCILE_SKIPPED, "Skipping reconcile pass for non-blocked task", {
                 taskId: task.id,
                 taskStatus: task.status,
               }, { runId, taskId: task.id });
@@ -2258,7 +2199,7 @@ export const createTools = (ctx: PluginContext) => {
           const attemptAt = nowIso();
           const carryForwardIssues = collectCarryForwardIssues(task);
           if (carryForwardIssues.length > 0) {
-            await logRunEvent(ctx, repoRoot, "info", "run.remediation.feedback_applied", "Applied carry-forward verifier findings", {
+            await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.FEEDBACK_APPLIED, "Applied carry-forward verifier findings", {
               taskId: task.id,
               findings: carryForwardIssues,
             }, { runId, taskId: task.id });
@@ -2320,11 +2261,11 @@ export const createTools = (ctx: PluginContext) => {
                 phase: "run",
                 currentPI: task.id,
               });
-              await logRunEvent(ctx, repoRoot, "error", "run.blocked.heartbeat", `Run blocked: lock heartbeat failed during ${phase}`, {
+              await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_HEARTBEAT, `Run blocked: lock heartbeat failed during ${phase}`, {
                 taskId: task.id,
                 phase,
                 lockPath: runLockPath(repoRoot),
-              }, { runId, taskId: task.id, reasonCode: "HEARTBEAT_FAILED" });
+              }, { runId, taskId: task.id, reasonCode: RUN_REASON.HEARTBEAT_FAILED });
             };
 
             if (!(await heartbeatRunLock(repoRoot))) {
@@ -2390,9 +2331,9 @@ export const createTools = (ctx: PluginContext) => {
                   phase: "run",
                   currentPI: task.id,
                 });
-                await logRunEvent(ctx, repoRoot, "error", "run.blocked.build-timeout", `Run blocked: build timed out for ${task.id}`, {
+                await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_BUILD_TIMEOUT, `Run blocked: build timed out for ${task.id}`, {
                   taskId: task.id,
-                }, { runId, taskId: task.id, reasonCode: "BUILD_TIMEOUT" });
+                }, { runId, taskId: task.id, reasonCode: RUN_REASON.BUILD_TIMEOUT });
                 await showToast(ctx, `Run stopped: build timed out on ${task.id}`, "warning");
                 break;
               }
@@ -2421,9 +2362,9 @@ export const createTools = (ctx: PluginContext) => {
                   await showToast(ctx, `Run: installing dependencies in ${workspaceRoot === "." ? "repo root" : workspaceRoot}`, "info");
                   const installCmd = workspaceRoot === "." ? "npm install" : `npm --prefix ${workspaceRoot} install`;
                   await runShellWithFailureLog(ctx, repoRoot, installCmd, {
-                    event: "run.bootstrap.install.failed",
+                    event: RUN_EVENT.BOOTSTRAP_INSTALL_FAILED,
                     message: `Dependency install failed while bootstrapping ${task.id}`,
-                    reasonCode: "BOOTSTRAP_INSTALL_FAILED",
+                    reasonCode: RUN_REASON.BOOTSTRAP_INSTALL_FAILED,
                     runId,
                     taskId: task.id,
                     extra: { workspaceRoot },
@@ -2470,9 +2411,9 @@ export const createTools = (ctx: PluginContext) => {
                   await showToast(ctx, `Run: trying default scaffold for ${task.id}`, "info");
                   await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - scaffold ${task.id}`);
                   const scaffoldRun = await runShellWithFailureLog(ctx, repoRoot, scaffoldHint, {
-                    event: "run.scaffold.default.failed",
+                    event: RUN_EVENT.SCAFFOLD_DEFAULT_FAILED,
                     message: `Default scaffold command failed for ${task.id}`,
-                    reasonCode: "SCAFFOLD_COMMAND_FAILED",
+                    reasonCode: RUN_REASON.SCAFFOLD_COMMAND_FAILED,
                     runId,
                     taskId: task.id,
                   });
@@ -2556,34 +2497,16 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-          const toGatesAttempt = (result: Awaited<ReturnType<typeof runGateCommands>>): PrdGatesAttempt => ({
-            ok: result.ok,
-            commands: result.results.map((r) => ({
-              command: r.command,
-              ok: r.ok,
-              exitCode: r.exitCode,
-              durationMs: r.durationMs,
-            })),
-          });
-
-          const toUiAttempt = (result: Awaited<ReturnType<typeof runGateCommands>>, uiResult: { ok: boolean; note?: string } | null): PrdUiAttempt => {
-            return uiResult
-              ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
-              : {
-                  ran: false,
-                  ok: null,
-                  note: !result.ok
-                    ? "UI verification not run because deterministic gates failed."
-                    : uiVerifyEnabled && isWebApp && (!cliOk || !skillOk || !browserOk)
-                      ? "UI verification skipped (prerequisites missing)."
-                      : uiVerifyEnabled && isWebApp
-                        ? "UI verification not run."
-                        : "UI verification not configured.",
-                };
-          };
-
           let gates: PrdGatesAttempt = toGatesAttempt(latestGateResult);
-          let ui: PrdUiAttempt = toUiAttempt(latestGateResult, latestUiResult);
+          let ui: PrdUiAttempt = toUiAttempt({
+            gateOk: latestGateResult.ok,
+            uiResult: latestUiResult,
+            uiVerifyEnabled,
+            isWebApp,
+            cliOk,
+            skillOk,
+            browserOk,
+          });
 
           const failEarly = async (reasonLines: string[], nextActions?: string[]): Promise<void> => {
             const judge: PrdJudgeAttempt = {
@@ -2620,10 +2543,10 @@ export const createTools = (ctx: PluginContext) => {
               reasonCodes.push(formatReasonCode(`MISSING_SCRIPT_${missingScript.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()}`));
             }
             if (task.id === "T-0002" && latestGateResult.failed?.command) {
-              reasonCodes.push(formatReasonCode("QUALITY_BOOTSTRAP_INCOMPLETE"));
+              reasonCodes.push(formatReasonCode(RUN_REASON.QUALITY_BOOTSTRAP_INCOMPLETE));
             }
             if (latestGateResult.failed?.exitCode === 127) {
-              reasonCodes.push(formatReasonCode("COMMAND_NOT_FOUND"));
+              reasonCodes.push(formatReasonCode(RUN_REASON.COMMAND_NOT_FOUND));
             }
             const nextActions = [
               ...(missingScript
@@ -2709,7 +2632,7 @@ export const createTools = (ctx: PluginContext) => {
             );
 
             await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
-            await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass", {
+            await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.VERIFY_START, "Starting verifier pass", {
               taskId: task.id,
               semanticRepairAttempts,
             }, { runId, taskId: task.id });
@@ -2727,10 +2650,10 @@ export const createTools = (ctx: PluginContext) => {
             if ("transportFailure" in verifierOutcome) {
               const transportJudge = verifierOutcome.transportFailure;
               await failEarly(transportJudge.reason, transportJudge.nextActions);
-              await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed for ${task.id}`, {
+              await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_VERIFY_TRANSPORT, `Run blocked: verifier transport failed for ${task.id}`, {
                 taskId: task.id,
                 error: verifierOutcome.errorMessage,
-              }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
+              }, { runId, taskId: task.id, reasonCode: RUN_REASON.VERIFIER_TRANSPORT_EOF });
               await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
               blockedByVerifierFailure = true;
               break;
@@ -2786,7 +2709,7 @@ export const createTools = (ctx: PluginContext) => {
               "Do not ask questions. Make concrete file changes now.",
             ].filter(Boolean).join("\n\n");
 
-            await logRunEvent(ctx, repoRoot, "info", "run.repair.semantic.start", "Starting verifier-driven semantic repair", {
+            await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.REPAIR_SEMANTIC_START, "Starting verifier-driven semantic repair", {
               taskId: task.id,
               semanticRepairAttempt: semanticRepairAttempts,
               maxSemanticRepairAttempts: LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS,
@@ -2828,14 +2751,22 @@ export const createTools = (ctx: PluginContext) => {
             latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
 
             gates = toGatesAttempt(latestGateResult);
-            ui = toUiAttempt(latestGateResult, latestUiResult);
+            ui = toUiAttempt({
+              gateOk: latestGateResult.ok,
+              uiResult: latestUiResult,
+              uiVerifyEnabled,
+              isWebApp,
+              cliOk,
+              skillOk,
+              browserOk,
+            });
 
             if (!latestGateResult.ok) {
               const failed = latestGateResult.failed
                 ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})`
                 : "(unknown command)";
               await failEarly([
-                formatReasonCode("SEMANTIC_REPAIR_GATE_REGRESSION"),
+                formatReasonCode(RUN_REASON.SEMANTIC_REPAIR_GATE_REGRESSION),
                 `Deterministic gate failed after semantic repair: ${failed}.`,
               ], [
                 `Fix deterministic gate '${failed}'.`,
@@ -2847,7 +2778,7 @@ export const createTools = (ctx: PluginContext) => {
 
             if (uiVerifyEnabled && isWebApp && uiVerifyRequired && latestUiResult && !latestUiResult.ok) {
               await failEarly([
-                formatReasonCode("SEMANTIC_REPAIR_UI_REGRESSION"),
+                formatReasonCode(RUN_REASON.SEMANTIC_REPAIR_UI_REGRESSION),
                 "UI verification failed after semantic repair.",
               ], [
                 "Fix UI verification failures introduced by semantic repair.",
@@ -2934,7 +2865,7 @@ export const createTools = (ctx: PluginContext) => {
             lastRunAt: nowIso(),
             lastRunResult: result,
           });
-          await logRunEvent(ctx, repoRoot, finalRunStatus === "DONE" ? "info" : "warn", "run.finished", "Run finished", {
+          await logRunEvent(ctx, repoRoot, finalRunStatus === "DONE" ? "info" : "warn", RUN_EVENT.FINISHED, "Run finished", {
             attempted,
             completed,
             status: finalRunStatus,
@@ -2945,10 +2876,10 @@ export const createTools = (ctx: PluginContext) => {
           return result;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          await logRunEvent(ctx, repoRoot, "error", "run.fatal.exception", "Run crashed with unhandled exception", {
+          await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.FATAL_EXCEPTION, "Run crashed with unhandled exception", {
             error: errorMessage,
             stack: error instanceof Error ? error.stack ?? "" : "",
-          }, { runId, reasonCode: "RUN_FATAL_EXCEPTION" });
+          }, { runId, reasonCode: RUN_REASON.RUN_FATAL_EXCEPTION });
           const current = await readRunState(repoRoot);
           await writeRunState(repoRoot, {
             ...current,
