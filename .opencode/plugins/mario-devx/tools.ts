@@ -2374,6 +2374,8 @@ export const createTools = (ctx: PluginContext) => {
 
               const taskRepairStartedAt = Date.now();
               let repairAttempts = 0;
+              let totalRepairAttempts = 0;
+              const maxTotalRepairAttempts = LIMITS.MAX_TOTAL_REPAIR_ATTEMPTS;
               let noProgressStreak = 0;
               let noChangeStreak = buildDelta.changed === 0 ? 1 : 0;
               let stoppedForNoChanges = false;
@@ -2421,7 +2423,7 @@ export const createTools = (ctx: PluginContext) => {
                 }
                 lastGateFailureSig = currentSig;
 
-                if (repairAttempts > 0 && (elapsedMs >= TIMEOUTS.MAX_TASK_REPAIR_MS || noProgressStreak >= LIMITS.MAX_NO_PROGRESS_STREAK)) {
+                if (repairAttempts > 0 && (elapsedMs >= TIMEOUTS.MAX_TASK_REPAIR_MS || noProgressStreak >= LIMITS.MAX_NO_PROGRESS_STREAK || totalRepairAttempts >= maxTotalRepairAttempts)) {
                   break;
                 }
 
@@ -2449,6 +2451,7 @@ export const createTools = (ctx: PluginContext) => {
                     taskId: task.id,
                   });
                   repairAttempts += 1;
+                  totalRepairAttempts += 1;
                   if (!(await heartbeatRunLock(repoRoot))) {
                     await blockForHeartbeatFailure("during-deterministic-scaffold");
                     await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
@@ -2539,6 +2542,7 @@ export const createTools = (ctx: PluginContext) => {
                 }
 
                 repairAttempts += 1;
+                totalRepairAttempts += 1;
                 gateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
                 await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
               }
@@ -2647,7 +2651,7 @@ export const createTools = (ctx: PluginContext) => {
             await failEarly([
               ...reasonCodes,
               `Deterministic gate failed: ${failed}.`,
-              `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s across ${repairAttempts} attempt(s) (no-progress or time budget reached).`,
+              `Auto-repair stopped after ${Math.round(elapsedMs / 1000)}s across ${repairAttempts} attempt(s) (total repair turns: ${totalRepairAttempts}/${maxTotalRepairAttempts}; no-progress or time budget reached).`,
             ], nextActions);
             await showToast(ctx, `Run stopped: gates failed on ${task.id}`, "warning");
             break;
@@ -2777,11 +2781,12 @@ export const createTools = (ctx: PluginContext) => {
               break;
             }
 
-            if (semanticRepairAttempts >= LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS) {
+            if (semanticRepairAttempts >= LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS || totalRepairAttempts >= maxTotalRepairAttempts) {
               break;
             }
 
             semanticRepairAttempts += 1;
+            totalRepairAttempts += 1;
             const actionableReason = firstActionableJudgeReason(judge) ?? "Verifier failed to confirm acceptance.";
             const strictChecklist = semanticNoProgressStreak > 0
               ? "Repeated finding detected with no clear progress. Make explicit file edits that directly satisfy acceptance criteria; avoid generic refinements."
@@ -2810,10 +2815,12 @@ export const createTools = (ctx: PluginContext) => {
               taskId: task.id,
               semanticRepairAttempt: semanticRepairAttempts,
               maxSemanticRepairAttempts: LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS,
+              totalRepairAttempts,
+              maxTotalRepairAttempts,
               primaryReason: actionableReason,
               noProgressStreak: semanticNoProgressStreak,
             }, { runId, taskId: task.id });
-            await showToast(ctx, `Run: verifier requested targeted repair on ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS})`, "info");
+            await showToast(ctx, `Run: verifier requested targeted repair on ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS}, total ${totalRepairAttempts}/${maxTotalRepairAttempts})`, "info");
 
             const semanticSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
             await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - semantic repair ${task.id}`);

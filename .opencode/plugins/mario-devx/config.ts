@@ -36,6 +36,9 @@ export const LIMITS = {
 
   // Maximum verifier-driven semantic repair attempts per task/run
   MAX_VERIFIER_REPAIR_ATTEMPTS: 2,
+
+  // Maximum combined repair turns (gate-repair + semantic-repair) per task/run
+  MAX_TOTAL_REPAIR_ATTEMPTS: 5,
   
   // Maximum tasks to generate from a single feature
   MAX_FEATURE_TASKS: 5,
