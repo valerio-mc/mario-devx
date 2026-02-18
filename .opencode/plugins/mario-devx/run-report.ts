@@ -37,9 +37,10 @@ export const buildRunSummary = (opts: BuildRunSummaryOptions): RunSummary => {
     };
     if (attempt?.judge.status === "FAIL") {
       const reasonCode = reasons.find((line) => /^ReasonCode:\s*[A-Z0-9_]+/i.test(line));
-      if (reasonCode) return reasonCode;
-      const actionable = reasons.find((line) => !isPassEvidenceLine(line));
+      const actionable = reasons.find((line) => !/^ReasonCode:\s*[A-Z0-9_]+/i.test(line) && !isPassEvidenceLine(line));
+      if (actionable && reasonCode) return `${actionable} (${reasonCode})`;
       if (actionable) return actionable;
+      if (reasonCode) return reasonCode;
     }
     return reasons[0];
   };

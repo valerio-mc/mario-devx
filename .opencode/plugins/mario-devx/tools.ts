@@ -415,16 +415,47 @@ const normalizeIssueLine = (line: string): string => {
   return line.replace(/^ReasonCode:\s*[A-Z0-9_]+\s*/i, "").trim().toLowerCase();
 };
 
+const isPassEvidenceLine = (line: string): boolean => {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed) return false;
+  if (/^ui verification:\s*pass\b/i.test(trimmed)) return true;
+  return /^[\w./:\-\s]+:\s*PASS\b/i.test(trimmed);
+};
+
+const isMetaCarryForwardLine = (line: string): boolean => {
+  const text = String(line ?? "").trim();
+  if (!text) return true;
+  if (/^ReasonCode:\s*[A-Z0-9_]+/i.test(text)) return true;
+  if (/^rubric:/i.test(text)) return true;
+  if (isPassEvidenceLine(text)) return true;
+  if (/Task evidence indicates/i.test(text)) return true;
+  if (/\.mario\/prd\.json/i.test(text) && /status|lastAttempt|ReasonCode|blocked/i.test(text)) return true;
+  return false;
+};
+
+const firstActionableJudgeReason = (judge: PrdJudgeAttempt | undefined): string | null => {
+  if (!judge) return null;
+  const reasons = (judge.reason ?? []).map((x) => String(x).trim()).filter(Boolean);
+  if (reasons.length === 0) return null;
+  const actionable = reasons.find((line) => {
+    if (/^ReasonCode:\s*[A-Z0-9_]+/i.test(line)) return false;
+    return !isPassEvidenceLine(line);
+  });
+  return actionable ?? reasons[0] ?? null;
+};
+
 const collectCarryForwardIssues = (task: PrdTask): string[] => {
   const attempt = task.lastAttempt;
   if (!attempt || task.status !== "blocked") return [];
   const reasons = (attempt.judge.reason ?? [])
     .map((r) => String(r).trim())
     .filter(Boolean)
+    .filter((r) => !isMetaCarryForwardLine(r))
     .filter((r) => !isSystemReasonCode(r));
   const actions = (attempt.judge.nextActions ?? [])
     .map((a) => String(a).trim())
     .filter(Boolean)
+    .filter((a) => !isMetaCarryForwardLine(a))
     .filter((a) => !/retry \/mario-devx:run 1/i.test(a));
   const uiNotes = attempt.ui?.note ? [String(attempt.ui.note).trim()] : [];
   return Array.from(new Set([...reasons, ...actions, ...uiNotes])).slice(0, 10);
@@ -2011,6 +2042,7 @@ export const createTools = (ctx: PluginContext) => {
             "",
             `Status: ${task.status}`,
             task.scope.length > 0 ? `Scope: ${task.scope.join(", ")}` : "",
+            task.acceptance && task.acceptance.length > 0 ? `Acceptance:\n${task.acceptance.map((a) => `- ${a}`).join("\n")}` : "Acceptance: (none)",
             effectiveDoneWhen.length > 0 ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}` : "Done when: (none)",
             task.notes && task.notes.length > 0 ? `Notes:\n${task.notes.map((n) => `- ${n}`).join("\n")}` : "",
             prd.frontend
@@ -2286,7 +2318,8 @@ export const createTools = (ctx: PluginContext) => {
                 }
               }
 
-              const uiResult = gateResult.ok && shouldRunUiVerify
+              let latestGateResult = gateResult;
+              let latestUiResult = latestGateResult.ok && shouldRunUiVerify
                 ? await runUiVerification({
                     ctx,
                     devCmd: uiVerifyCmd,
@@ -2312,28 +2345,34 @@ export const createTools = (ctx: PluginContext) => {
                 break;
               }
 
-          const gates: PrdGatesAttempt = {
-            ok: gateResult.ok,
-            commands: gateResult.results.map((r) => ({
+          const toGatesAttempt = (result: Awaited<ReturnType<typeof runGateCommands>>): PrdGatesAttempt => ({
+            ok: result.ok,
+            commands: result.results.map((r) => ({
               command: r.command,
               ok: r.ok,
               exitCode: r.exitCode,
               durationMs: r.durationMs,
             })),
+          });
+
+          const toUiAttempt = (result: Awaited<ReturnType<typeof runGateCommands>>, uiResult: { ok: boolean; note?: string } | null): PrdUiAttempt => {
+            return uiResult
+              ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
+              : {
+                  ran: false,
+                  ok: null,
+                  note: !result.ok
+                    ? "UI verification not run because deterministic gates failed."
+                    : uiVerifyEnabled && isWebApp && (!cliOk || !skillOk || !browserOk)
+                      ? "UI verification skipped (prerequisites missing)."
+                      : uiVerifyEnabled && isWebApp
+                        ? "UI verification not run."
+                        : "UI verification not configured.",
+                };
           };
-          const ui: PrdUiAttempt = uiResult
-            ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
-            : {
-                ran: false,
-                ok: null,
-                note: !gateResult.ok
-                  ? "UI verification not run because deterministic gates failed."
-                  : uiVerifyEnabled && isWebApp && (!cliOk || !skillOk || !browserOk)
-                    ? "UI verification skipped (prerequisites missing)."
-                    : uiVerifyEnabled && isWebApp
-                      ? "UI verification not run."
-                      : "UI verification not configured.",
-              };
+
+          let gates: PrdGatesAttempt = toGatesAttempt(latestGateResult);
+          let ui: PrdUiAttempt = toUiAttempt(latestGateResult, latestUiResult);
 
           const failEarly = async (reasonLines: string[], nextActions?: string[]): Promise<void> => {
             const judge: PrdJudgeAttempt = {
@@ -2356,23 +2395,23 @@ export const createTools = (ctx: PluginContext) => {
             });
           };
 
-          if (!gateResult.ok) {
-            const failed = gateResult.failed
-              ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})`
+          if (!latestGateResult.ok) {
+            const failed = latestGateResult.failed
+              ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})`
               : "(unknown command)";
             const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
-            const missingScript = gateResult.failed
-              ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command)
+            const missingScript = latestGateResult.failed
+              ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, latestGateResult.failed.command)
               : null;
             const elapsedMs = Date.now() - taskRepairStartedAt;
             const reasonCodes: string[] = [];
             if (missingScript) {
               reasonCodes.push(formatReasonCode(`MISSING_SCRIPT_${missingScript.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()}`));
             }
-            if (task.id === "T-0002" && gateResult.failed?.command) {
+            if (task.id === "T-0002" && latestGateResult.failed?.command) {
               reasonCodes.push(formatReasonCode("QUALITY_BOOTSTRAP_INCOMPLETE"));
             }
-            if (gateResult.failed?.exitCode === 127) {
+            if (latestGateResult.failed?.exitCode === 127) {
               reasonCodes.push(formatReasonCode("COMMAND_NOT_FOUND"));
             }
             const nextActions = [
@@ -2420,7 +2459,7 @@ export const createTools = (ctx: PluginContext) => {
             break;
           }
 
-          if (uiVerifyEnabled && isWebApp && uiVerifyRequired && uiResult && !uiResult.ok) {
+          if (uiVerifyEnabled && isWebApp && uiVerifyRequired && latestUiResult && !latestUiResult.ok) {
             await failEarly([
               "UI verification failed.",
             ]);
@@ -2430,56 +2469,206 @@ export const createTools = (ctx: PluginContext) => {
 
           await showToast(
             ctx,
-            `Gates: PASS${uiResult ? `; UI: ${uiResult.ok ? "PASS" : "FAIL"}` : ""}. Running verifier...`,
+            `Gates: PASS${latestUiResult ? `; UI: ${latestUiResult.ok ? "PASS" : "FAIL"}` : ""}. Running verifier...`,
             "info",
           );
 
-          const verifierPrompt = await buildPrompt(
-            repoRoot,
-            "verify",
-            buildVerifierContextText({
-              task,
-              doneWhen: effectiveDoneWhen,
-              gates: gateResult.results,
-              uiResult,
-              ...(uiResult?.note ? { uiNote: uiResult.note } : {}),
-              visualDirection: prd.ui.visualDirection,
-              uxRequirements: prd.ui.uxRequirements,
-              styleReferences: prd.ui.styleReferences,
-              caps: agentBrowserCaps,
-              uiUrl: uiVerifyUrl,
-            }),
-          );
+          let blockedByVerifierFailure = false;
+          let judge: PrdJudgeAttempt | null = null;
+          let semanticRepairAttempts = 0;
+          let semanticNoProgressStreak = 0;
+          let lastSemanticReason: string | null = null;
 
-              await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
-              await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass", {
+          while (true) {
+            const verifierPrompt = await buildPrompt(
+              repoRoot,
+              "verify",
+              buildVerifierContextText({
+                task,
+                doneWhen: effectiveDoneWhen,
+                gates: latestGateResult.results,
+                uiResult: latestUiResult,
+                ...(latestUiResult?.note ? { uiNote: latestUiResult.note } : {}),
+                visualDirection: prd.ui.visualDirection,
+                uxRequirements: prd.ui.uxRequirements,
+                styleReferences: prd.ui.styleReferences,
+                caps: agentBrowserCaps,
+                uiUrl: uiVerifyUrl,
+              }),
+            );
+
+            await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - judge ${task.id}`);
+            await logRunEvent(ctx, repoRoot, "info", "run.verify.start", "Starting verifier pass", {
+              taskId: task.id,
+              semanticRepairAttempts,
+            }, { runId, taskId: task.id });
+
+            const verifierOutcome = await resolveVerifierJudge({
+              ctx,
+              repoRoot,
+              verifierPrompt,
+              runId,
+              taskId: task.id,
+              capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
+              ...(context.agent ? { agent: context.agent } : {}),
+            });
+
+            if ("transportFailure" in verifierOutcome) {
+              const transportJudge = verifierOutcome.transportFailure;
+              await failEarly(transportJudge.reason, transportJudge.nextActions);
+              await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed for ${task.id}`, {
                 taskId: task.id,
-              }, { runId, taskId: task.id });
-              const verifierOutcome = await resolveVerifierJudge({
-                ctx,
-                repoRoot,
-                verifierPrompt,
-                runId,
-                taskId: task.id,
-                capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
+                error: verifierOutcome.errorMessage,
+              }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
+              await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
+              blockedByVerifierFailure = true;
+              break;
+            }
+
+            if (!(await heartbeatRunLock(repoRoot))) {
+              await blockForHeartbeatFailure("after-judge");
+              await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+              blockedByVerifierFailure = true;
+              break;
+            }
+
+            judge = applyRepeatedFailureBackpressure(task.lastAttempt, verifierOutcome.judge);
+            const isPass = judge.status === "PASS" && judge.exitSignal;
+            if (isPass) {
+              break;
+            }
+
+            if (semanticRepairAttempts >= LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS) {
+              break;
+            }
+
+            semanticRepairAttempts += 1;
+            const actionableReason = firstActionableJudgeReason(judge) ?? "Verifier failed to confirm acceptance.";
+            const normalizedReason = normalizeIssueLine(actionableReason);
+            if (lastSemanticReason && lastSemanticReason === normalizedReason) {
+              semanticNoProgressStreak += 1;
+            } else {
+              semanticNoProgressStreak = 0;
+            }
+            lastSemanticReason = normalizedReason;
+
+            const strictChecklist = semanticNoProgressStreak > 0
+              ? "Repeated finding detected with no clear progress. Make explicit file edits that directly satisfy acceptance criteria; avoid generic refinements."
+              : "";
+            const semanticRepairPrompt = [
+              `Verifier failed for ${task.id}. Apply a focused semantic repair and stop when acceptance is clearly satisfied.`,
+              task.acceptance && task.acceptance.length > 0
+                ? `Acceptance checklist:\n${task.acceptance.map((a) => `- ${a}`).join("\n")}`
+                : "Acceptance checklist: (none)",
+              `Primary failing reason: ${actionableReason}`,
+              judge.reason && judge.reason.length > 0
+                ? `Verifier reasons:\n${judge.reason.map((r) => `- ${r}`).join("\n")}`
+                : "",
+              judge.nextActions && judge.nextActions.length > 0
+                ? `Verifier next actions:\n${judge.nextActions.map((a) => `- ${a}`).join("\n")}`
+                : "",
+              carryForwardIssues.length > 0
+                ? `Carry-forward findings:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
+                : "",
+              strictChecklist,
+              "After edits, ensure deterministic gates pass, then verifier will run again.",
+              "Do not ask questions. Make concrete file changes now.",
+            ].filter(Boolean).join("\n\n");
+
+            await logRunEvent(ctx, repoRoot, "info", "run.repair.semantic.start", "Starting verifier-driven semantic repair", {
+              taskId: task.id,
+              semanticRepairAttempt: semanticRepairAttempts,
+              maxSemanticRepairAttempts: LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS,
+              primaryReason: actionableReason,
+              noProgressStreak: semanticNoProgressStreak,
+            }, { runId, taskId: task.id });
+            await showToast(ctx, `Run: verifier requested targeted repair on ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS})`, "info");
+
+            await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - semantic repair ${task.id}`);
+            await ctx.client.session.promptAsync({
+              path: { id: ws.sessionId },
+              body: {
                 ...(context.agent ? { agent: context.agent } : {}),
-              });
-              if ("transportFailure" in verifierOutcome) {
-                const transportJudge = verifierOutcome.transportFailure;
-                await failEarly(transportJudge.reason, transportJudge.nextActions);
-                await logRunEvent(ctx, repoRoot, "error", "run.blocked.verifier-transport", `Run blocked: verifier transport failed for ${task.id}`, {
-                  taskId: task.id,
-                  error: verifierOutcome.errorMessage,
-                }, { runId, taskId: task.id, reasonCode: "VERIFIER_TRANSPORT_EOF" });
-                await showToast(ctx, `Run stopped: verifier transport failed on ${task.id}`, "warning");
-                break;
-              }
-              if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure("after-judge");
-                await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
-                break;
-              }
-          const judge = applyRepeatedFailureBackpressure(task.lastAttempt, verifierOutcome.judge);
+                parts: [{ type: "text", text: semanticRepairPrompt }],
+              },
+            });
+
+            if (!(await heartbeatRunLock(repoRoot))) {
+              await blockForHeartbeatFailure("during-semantic-repair");
+              await showToast(ctx, `Run stopped: lock heartbeat failed on ${task.id}`, "warning");
+              blockedByVerifierFailure = true;
+              break;
+            }
+
+            const semanticIdle = await waitForSessionIdleStable(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
+            if (!semanticIdle) {
+              await failEarly([
+                `Semantic repair timed out waiting for idle (${Math.round(TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS / 1000)}s).`,
+              ], [
+                "Retry /mario-devx:run 1.",
+                "If this repeats, inspect the work session and reduce repair scope to concrete acceptance items.",
+              ]);
+              blockedByVerifierFailure = true;
+              break;
+            }
+
+            latestGateResult = await runGateCommands(gateCommands, ctx.$, runCtx.workspaceAbs);
+            await logGateRunResults(RUN_PHASE.REPAIR, task.id, latestGateResult.results);
+            latestUiResult = latestGateResult.ok && shouldRunUiVerify
+              ? await runUiVerification({
+                  ctx,
+                  devCmd: uiVerifyCmd,
+                  url: uiVerifyUrl,
+                  waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
+                  log: async (entry) => {
+                    await logRunEvent(
+                      ctx,
+                      repoRoot,
+                      entry.level,
+                      entry.event,
+                      entry.message,
+                      entry.extra,
+                      { runId, taskId: task.id, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
+                    );
+                  },
+                })
+              : null;
+
+            gates = toGatesAttempt(latestGateResult);
+            ui = toUiAttempt(latestGateResult, latestUiResult);
+
+            if (!latestGateResult.ok) {
+              const failed = latestGateResult.failed
+                ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})`
+                : "(unknown command)";
+              await failEarly([
+                formatReasonCode("SEMANTIC_REPAIR_GATE_REGRESSION"),
+                `Deterministic gate failed after semantic repair: ${failed}.`,
+              ], [
+                `Fix deterministic gate '${failed}'.`,
+                "Then rerun /mario-devx:run 1.",
+              ]);
+              blockedByVerifierFailure = true;
+              break;
+            }
+
+            if (uiVerifyEnabled && isWebApp && uiVerifyRequired && latestUiResult && !latestUiResult.ok) {
+              await failEarly([
+                formatReasonCode("SEMANTIC_REPAIR_UI_REGRESSION"),
+                "UI verification failed after semantic repair.",
+              ], [
+                "Fix UI verification failures introduced by semantic repair.",
+                "Then rerun /mario-devx:run 1.",
+              ]);
+              blockedByVerifierFailure = true;
+              break;
+            }
+          }
+
+          if (blockedByVerifierFailure || !judge) {
+            break;
+          }
+
           const lastAttempt: PrdTaskAttempt = {
             at: attemptAt,
             iteration: state.iteration,
@@ -2499,17 +2688,18 @@ export const createTools = (ctx: PluginContext) => {
            prd = setPrdTaskLastAttempt(prd, task.id, lastAttempt);
            await writePrdJson(repoRoot, prd);
 
-           if (isPass) {
-             completed += 1;
-             logInfo("task", `${task.id} completed (${completed}/${maxItems})`);
-             await logTaskComplete(ctx, repoRoot, task.id, completed, maxItems);
-             await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
-           } else {
-             logWarning("task", `${task.id} blocked: ${judge.reason?.[0] ?? "No reason provided"}`);
-             await logTaskBlocked(ctx, repoRoot, task.id, judge.reason?.[0] ?? "No reason provided");
-             await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
-             break;
-           }
+            if (isPass) {
+              completed += 1;
+              logInfo("task", `${task.id} completed (${completed}/${maxItems})`);
+              await logTaskComplete(ctx, repoRoot, task.id, completed, maxItems);
+              await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
+            } else {
+              const blockedReason = firstActionableJudgeReason(judge) ?? judge.reason?.[0] ?? "No reason provided";
+              logWarning("task", `${task.id} blocked: ${blockedReason}`);
+              await logTaskBlocked(ctx, repoRoot, task.id, blockedReason);
+              await showToast(ctx, `Run stopped: verifier failed on ${task.id}`, "warning");
+              break;
+            }
             } finally {
               const runStateNow = await readRunState(repoRoot);
               const taskStatusNow = (prd.tasks ?? []).find((t) => t.id === task.id)?.status;

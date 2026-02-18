@@ -42,6 +42,8 @@ Additional rules:
 - Otherwise set `status: "FAIL"`.
 - Each reason bullet must cite either a repo file path or a specific gate result.
 - If `status` is `FAIL`, place failing findings first in `reason`; do not start with PASS evidence bullets.
+- Prioritize unmet acceptance and concrete UI/behavior defects over control-plane bookkeeping observations.
+- Do not use stale task-state metadata (for example old `blocked`/`lastAttempt` values) as a primary fail reason when current repo evidence is available.
 - Next actions should be concrete steps the builder can take.
 - Autonomous UI checks are allowed but bounded: prefer at most 8 browser commands and prioritize `snapshot`, `console`, and `errors` evidence.
 - For UI tasks, include a balanced aesthetic rubric summary in reasons (hierarchy/spacing/contrast/consistency/style-reference alignment).

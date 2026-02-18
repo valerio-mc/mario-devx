@@ -33,6 +33,9 @@ export const TIMEOUTS = {
 export const LIMITS = {
   // Maximum consecutive repair attempts with no progress
   MAX_NO_PROGRESS_STREAK: 3,
+
+  // Maximum verifier-driven semantic repair attempts per task/run
+  MAX_VERIFIER_REPAIR_ATTEMPTS: 2,
   
   // Maximum tasks to generate from a single feature
   MAX_FEATURE_TASKS: 5,

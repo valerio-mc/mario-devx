@@ -185,6 +185,7 @@ Task order is scaffold-first by design:
 Execution order is dependency-driven at runtime: mario-devx picks the next runnable task whose `dependsOn` chain is satisfied.
 - `open` / `in_progress` tasks run build/repair first, then gates/UI/verifier.
 - `blocked` tasks run reconcile first (quick gates/UI/verifier check) and only fall back to build/repair when needed.
+- If verifier fails after gates/UI pass, mario-devx performs bounded verifier-driven semantic repair attempts in the same run before blocking.
 
 Scaffold nuance:
 - For web/TypeScript ideas in non-empty repos, the default scaffold may be created in `app/` (not root) to avoid clobbering existing files.
@@ -346,6 +347,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **UI verification won't run** | Ensure `.mario/AGENTS.md` has `UI_VERIFY=1`. If browser runtime install failed, run non-interactive install: `CI=1 npm_config_yes=true npx --yes playwright install chromium` |
 | **Verifier returns invalid JSON** | The LLM should return JSON in `<VERIFIER_JSON>` tags. If malformed, the task will be marked blocked - check `lastAttempt.judge.rawText` to see what was returned. |
 | **Run stops on verifier transport failure** | Retry `/mario-devx:run 1`. If it repeats, inspect `.mario/state/mario-devx.log` for `run.verify.transport.error` and `ReasonCode` details. |
+| **Run stops with `ReasonCode: REPEATED_UI_FINDINGS`** | mario-devx already attempted bounded semantic repairs and findings still repeated. Inspect `tasks[].lastAttempt.judge.reason` and `nextActions` in `.mario/prd.json`; ensure acceptance criteria are explicitly implemented (not just gates passing), then rerun `/mario-devx:run 1`. |
 | **AGENTS.md parse warnings** | Lines must be `KEY=VALUE` format. Comments start with `#`. No spaces around `=`. |
 | **Run says another run is active after crash/CTRL+C** | Rerun `/mario-devx:run 1` once: mario-devx auto-recovers stale `DOING` state and stale lock PID entries. If it still persists, run `/mario-devx:doctor` and follow suggested fixes. |
 | **Run stops with heartbeat error** | Check disk space and permissions on `.mario/state/run.lock`. Prefer rerunning `/mario-devx:run 1` first; remove lock manually only if doctor indicates it is stale. |
