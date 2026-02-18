@@ -458,10 +458,6 @@ const isSystemReasonCode = (line: string): boolean => {
     || code.startsWith("MISSING_SCRIPT_");
 };
 
-const normalizeIssueLine = (line: string): string => {
-  return line.replace(/^ReasonCode:\s*[A-Z0-9_]+\s*/i, "").trim().toLowerCase();
-};
-
 const isPassEvidenceLine = (line: string): boolean => {
   const trimmed = String(line ?? "").trim();
   if (!trimmed) return false;
