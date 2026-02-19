@@ -521,15 +521,19 @@ export const createRunTool = (opts: {
             const blockForPromptDispatchFailure = async (
               phase: "build" | "repair" | "semantic-repair",
               errorMessage: string,
+              reasonCode: typeof RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT | typeof RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR,
             ): Promise<void> => {
+              const isTimeout = reasonCode === RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT;
               const gates: PrdGatesAttempt = { ok: false, commands: [] };
               const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
               const judge: PrdJudgeAttempt = {
                 status: "FAIL",
                 exitSignal: false,
                 reason: [
-                  formatReasonCode(RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT),
-                  `Work-session prompt dispatch timed out during ${phase} (${TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS}ms).`,
+                  formatReasonCode(reasonCode),
+                  isTimeout
+                    ? `Work-session prompt dispatch timed out during ${phase} (${TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS}ms).`
+                    : `Work-session prompt dispatch failed during ${phase} (transport parse failure).`,
                   errorMessage,
                 ],
                 nextActions: [
@@ -549,37 +553,69 @@ export const createRunTool = (opts: {
                 judge,
                 runId,
               });
-              await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_WORK_PROMPT_TIMEOUT, "Run blocked: work-session prompt dispatch timed out", {
+              await logRunEvent(
+                ctx,
+                repoRoot,
+                "error",
+                isTimeout ? RUN_EVENT.BLOCKED_WORK_PROMPT_TIMEOUT : RUN_EVENT.BLOCKED_WORK_PROMPT_TRANSPORT,
+                isTimeout ? "Run blocked: work-session prompt dispatch timed out" : "Run blocked: work-session prompt transport failed",
+                {
                 taskId: task.id,
                 phase,
                 timeoutMs: TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS,
                 error: errorMessage,
-              }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT });
+                },
+                { runId, taskId: task.id, reasonCode },
+              );
             };
 
             const promptWorkSessionWithTimeout = async (
               phase: "build" | "repair" | "semantic-repair",
               text: string,
             ): Promise<boolean> => {
+              const maxTransportAttempts = 3;
+              const isTransportParseError = (message: string): boolean => {
+                const m = message.toLowerCase();
+                return m.includes("unexpected eof") || (m.includes("json parse") && m.includes("eof")) || m.includes("empty response");
+              };
               try {
-                await Promise.race([
-                  ctx.client.session.prompt({
-                    path: { id: ws.sessionId },
-                    body: {
-                      ...(context.agent ? { agent: context.agent } : {}),
-                      parts: [{ type: "text", text }],
-                    },
-                  }),
-                  new Promise<never>((_, reject) => {
-                    setTimeout(() => {
-                      reject(new Error(`promptAsync timeout (${phase})`));
-                    }, TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS);
-                  }),
-                ]);
-                return true;
+                for (let attempt = 1; attempt <= maxTransportAttempts; attempt += 1) {
+                  try {
+                    await Promise.race([
+                      ctx.client.session.prompt({
+                        path: { id: ws.sessionId },
+                        body: {
+                          ...(context.agent ? { agent: context.agent } : {}),
+                          parts: [{ type: "text", text }],
+                        },
+                      }),
+                      new Promise<never>((_, reject) => {
+                        setTimeout(() => {
+                          reject(new Error(`prompt dispatch timeout (${phase})`));
+                        }, TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS);
+                      }),
+                    ]);
+                    return true;
+                  } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    const timedOut = errorMessage.toLowerCase().includes("timeout");
+                    const isTransport = isTransportParseError(errorMessage);
+                    if (isTransport && attempt < maxTransportAttempts) {
+                      await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
+                      continue;
+                    }
+                    await blockForPromptDispatchFailure(
+                      phase,
+                      errorMessage,
+                      timedOut ? RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT : RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR,
+                    );
+                    return false;
+                  }
+                }
+                return false;
               } catch (error) {
                 const errorMessage = error instanceof Error ? error.message : String(error);
-                await blockForPromptDispatchFailure(phase, errorMessage);
+                await blockForPromptDispatchFailure(phase, errorMessage, RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR);
                 return false;
               }
             };
