@@ -1,6 +1,7 @@
 import { ensureMario, readRunState, writeRunState } from "./state";
 import { TIMEOUTS } from "./config";
 import type { RunState } from "./types";
+import { unwrapSdkData } from "./opencode-sdk";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -35,12 +36,16 @@ const getSessionStatusType = (statuses: unknown, sessionId: string): SessionStat
 
 const readSessionStatusesWithTimeout = async (ctx: any): Promise<unknown | null> => {
   try {
-    return await Promise.race([
+    const response = await Promise.race([
       ctx.client.session.status(),
       new Promise<null>((resolve) => {
         setTimeout(() => resolve(null), TIMEOUTS.SESSION_STATUS_POLL_TIMEOUT_MS);
       }),
     ]);
+    if (response === null) {
+      return null;
+    }
+    return unwrapSdkData<Record<string, { type?: unknown }> | Array<Record<string, unknown>>>(response);
   } catch {
     return null;
   }
