@@ -153,6 +153,21 @@ Reason: Deterministic gate failed: npm run test (exit 1).
 - You run `/mario-devx:*` in your normal session (control session).
 - mario-devx models execution as two phases: **work phase** and **verify phase**.
 - Each phase uses its own ephemeral OpenCode session scoped to the current run and cleaned up on exit.
+- Optional live stream: set `STREAM_WORK=1` in `.mario/AGENTS.md` to mirror concise work-session progress in the control session.
+
+### Session agent knobs
+
+`.mario/AGENTS.md` supports explicit phase-agent overrides:
+
+```dotenv
+WORK_AGENT='build'
+VERIFY_AGENT='build'
+STREAM_WORK=0
+```
+
+- `WORK_AGENT`: agent used for build/repair prompts in the ephemeral work session.
+- `VERIFY_AGENT`: agent used for verifier prompts in the ephemeral verify session.
+- `STREAM_WORK=1`: forward compact live updates from work session to control session.
 
 ### The loop
 
@@ -223,7 +238,7 @@ In your project:
 ```text
 .mario/
   prd.json                   # requirements + planning + tasks + backlog + verification policy
-  AGENTS.md                  # harness knobs (UI_VERIFY*)
+  AGENTS.md                  # harness knobs (UI_VERIFY*, WORK_AGENT, VERIFY_AGENT, STREAM_WORK)
   state/state.json           # internal state (iteration + run status)
   state/mario-devx.log       # centralized structured run/tool logs (auto-capped/rotated)
 ```
