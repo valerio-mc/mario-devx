@@ -18,13 +18,14 @@ import {
   validateTaskGraph,
 } from "./planner";
 import {
+  deleteSessionBestEffort,
   ensureNotInWorkSession,
   resetWorkSession,
   setWorkSessionTitle,
   updateRunState,
   waitForSessionIdleStableDetailed,
 } from "./runner";
-import { readRunState, writeRunState, bumpIteration, ensureMario } from "./state";
+import { clearWorkSessionState, ensureMario, readRunState, readVerifierSessionState, readWorkSessionState, writeRunState, bumpIteration, writeVerifierSessionState } from "./state";
 import { createRunId, logTaskBlocked, logTaskComplete } from "./logging";
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
 import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
@@ -1083,6 +1084,52 @@ export const createRunTool = (opts: {
           await showToast(ctx, "Run crashed unexpectedly; see mario-devx.log for details", "warning");
           return `Run failed unexpectedly: ${errorMessage}\nCheck .mario/state/mario-devx.log and rerun /mario-devx:run 1.`;
         } finally {
+          try {
+            await logRunEvent(ctx, repoRoot, "info", "run.session.cleanup.start", "Cleaning cached work/verifier sessions", {
+              controlSessionId: context.sessionID ?? null,
+            }, { runId });
+
+            const [workSessionState, verifierSessionState] = await Promise.all([
+              readWorkSessionState(repoRoot),
+              readVerifierSessionState(repoRoot),
+            ]);
+
+            const deleteResults: Record<string, string> = {};
+            const deletedIds = new Set<string>();
+            const sessionsToDelete = [
+              { key: "work", id: workSessionState?.sessionId },
+              { key: "verifier", id: verifierSessionState?.sessionId },
+            ];
+
+            for (const session of sessionsToDelete) {
+              if (!session.id) {
+                deleteResults[session.key] = "none";
+                continue;
+              }
+              if (deletedIds.has(session.id)) {
+                deleteResults[session.key] = "deduped";
+                continue;
+              }
+              const result = await deleteSessionBestEffort(ctx, session.id, context.sessionID);
+              deleteResults[session.key] = result;
+              if (result === "deleted" || result === "not-found") {
+                deletedIds.add(session.id);
+              }
+            }
+
+            await Promise.all([
+              clearWorkSessionState(repoRoot),
+              writeVerifierSessionState(repoRoot, null),
+            ]);
+
+            await logRunEvent(ctx, repoRoot, "info", "run.session.cleanup.ok", "Session cleanup complete", {
+              ...deleteResults,
+            }, { runId });
+          } catch (cleanupError) {
+            await logRunEvent(ctx, repoRoot, "warn", "run.session.cleanup.failed", "Session cleanup failed (best-effort)", {
+              error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+            }, { runId });
+          }
           await releaseRunLock(repoRoot);
         }
       },

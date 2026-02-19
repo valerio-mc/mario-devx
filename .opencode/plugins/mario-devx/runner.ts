@@ -1,4 +1,4 @@
-import { ensureMario, readRunState, readWorkSessionState, writeRunState, writeWorkSessionState } from "./state";
+import { clearWorkSessionState, ensureMario, readRunState, readWorkSessionState, writeRunState, writeWorkSessionState } from "./state";
 import type { RunState } from "./types";
 
 const nowIso = (): string => new Date().toISOString();
@@ -125,6 +125,24 @@ const extractMessageId = (response: unknown): string | null => {
   return candidate.data?.info?.id ?? candidate.info?.id ?? null;
 };
 
+const isSessionNotFoundError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /session not found|notfounderror/i.test(message);
+};
+
+const workSessionHealthy = async (
+  ctx: any,
+  ws: { sessionId: string; baselineMessageId: string },
+): Promise<boolean> => {
+  try {
+    await ctx.client.session.get({ path: { id: ws.sessionId } });
+    await ctx.client.session.message({ path: { id: ws.sessionId, messageID: ws.baselineMessageId } });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const ensureWorkSession = async (
   ctx: any,
   repoRoot: string,
@@ -133,7 +151,10 @@ export const ensureWorkSession = async (
   await ensureMario(repoRoot, false);
   const existing = await readWorkSessionState(repoRoot);
   if (existing?.sessionId && existing?.baselineMessageId) {
-    return { sessionId: existing.sessionId, baselineMessageId: existing.baselineMessageId };
+    if (await workSessionHealthy(ctx, existing)) {
+      return { sessionId: existing.sessionId, baselineMessageId: existing.baselineMessageId };
+    }
+    await clearWorkSessionState(repoRoot);
   }
 
   const created = await ctx.client.session.create();
@@ -176,12 +197,47 @@ export const resetWorkSession = async (
   repoRoot: string,
   agent: string | undefined,
 ): Promise<{ sessionId: string; baselineMessageId: string }> => {
-  const ws = await ensureWorkSession(ctx, repoRoot, agent);
-  await ctx.client.session.revert({
-    path: { id: ws.sessionId },
-    body: { messageID: ws.baselineMessageId },
-  });
-  return ws;
+  let ws = await ensureWorkSession(ctx, repoRoot, agent);
+  try {
+    await ctx.client.session.revert({
+      path: { id: ws.sessionId },
+      body: { messageID: ws.baselineMessageId },
+    });
+    return ws;
+  } catch (error) {
+    if (!isSessionNotFoundError(error)) {
+      throw error;
+    }
+    await clearWorkSessionState(repoRoot);
+    ws = await ensureWorkSession(ctx, repoRoot, agent);
+    await ctx.client.session.revert({
+      path: { id: ws.sessionId },
+      body: { messageID: ws.baselineMessageId },
+    });
+    return ws;
+  }
+};
+
+export const deleteSessionBestEffort = async (
+  ctx: any,
+  sessionId: string | undefined,
+  controlSessionId?: string,
+): Promise<"deleted" | "not-found" | "skipped-control" | "failed" | "none"> => {
+  if (!sessionId) {
+    return "none";
+  }
+  if (controlSessionId && sessionId === controlSessionId) {
+    return "skipped-control";
+  }
+  try {
+    await ctx.client.session.delete({ path: { id: sessionId } });
+    return "deleted";
+  } catch (error) {
+    if (isSessionNotFoundError(error)) {
+      return "not-found";
+    }
+    return "failed";
+  }
 };
 
 export const setWorkSessionTitle = async (

@@ -77,6 +77,13 @@ export const writeWorkSessionState = async (
   await writeState(repoRoot, { ...current, workSession: state });
 };
 
+export const clearWorkSessionState = async (repoRoot: string): Promise<void> => {
+  const current = await readState(repoRoot);
+  const copy: MarioState = { ...current };
+  delete copy.workSession;
+  await writeState(repoRoot, copy);
+};
+
 export const readRunState = async (repoRoot: string): Promise<RunState> => {
   const state = await readState(repoRoot);
   return state.run ?? defaultRunState();
