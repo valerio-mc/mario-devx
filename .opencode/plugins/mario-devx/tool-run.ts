@@ -25,7 +25,7 @@ import {
   updateRunState,
   waitForSessionIdleStableDetailed,
 } from "./runner";
-import { clearSessionCaches, ensureMario, readRunState, readVerifierSessionState, readWorkSessionState, writeRunState, bumpIteration } from "./state";
+import { clearSessionCaches, clearWorkSessionState, ensureMario, readRunState, readVerifierSessionState, readWorkSessionState, writeRunState, bumpIteration } from "./state";
 import { createRunId, logTaskBlocked, logTaskComplete } from "./logging";
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
 import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
@@ -570,6 +570,69 @@ export const createRunTool = (opts: {
               );
             };
 
+            let ws: { sessionId: string; baselineMessageId: string } | null = null;
+
+            const resetWorkSessionWithTimeout = async (): Promise<{ sessionId: string; baselineMessageId: string } | null> => {
+              return Promise.race([
+                resetWorkSession(ctx, repoRoot, context.agent),
+                new Promise<never>((_, reject) => {
+                  setTimeout(() => {
+                    reject(new Error("resetWorkSession timeout"));
+                  }, TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS);
+                }),
+              ]).catch(async (error) => {
+                const gates: PrdGatesAttempt = { ok: false, commands: [] };
+                const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                const isTimeout = /timeout/i.test(errorMessage);
+                const judge: PrdJudgeAttempt = {
+                  status: "FAIL",
+                  exitSignal: false,
+                  reason: [
+                    formatReasonCode(isTimeout ? RUN_REASON.WORK_SESSION_RESET_TIMEOUT : RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR),
+                    isTimeout
+                      ? `Work session reset timed out (${TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS}ms).`
+                      : "Work session reset failed while recovering from transport errors.",
+                    errorMessage,
+                  ],
+                  nextActions: [
+                    "Retry /mario-devx:run 1.",
+                    "If this repeats, restart OpenCode and rerun.",
+                  ],
+                };
+                prd = await persistBlockedTaskAttempt({
+                  ctx,
+                  repoRoot,
+                  prd,
+                  task,
+                  attemptAt,
+                  iteration: state.iteration,
+                  gates,
+                  ui,
+                  judge,
+                  runId,
+                });
+                await logRunEvent(
+                  ctx,
+                  repoRoot,
+                  "error",
+                  RUN_EVENT.BLOCKED_WORK_SESSION_RESET_TIMEOUT,
+                  "Run blocked: work-session reset failed",
+                  {
+                    taskId: task.id,
+                    timeoutMs: TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS,
+                    error: errorMessage,
+                  },
+                  {
+                    runId,
+                    taskId: task.id,
+                    reasonCode: isTimeout ? RUN_REASON.WORK_SESSION_RESET_TIMEOUT : RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR,
+                  },
+                );
+                return null;
+              });
+            };
+
             const promptWorkSessionWithTimeout = async (
               phase: "build" | "repair" | "semantic-repair",
               text: string,
@@ -582,6 +645,16 @@ export const createRunTool = (opts: {
               try {
                 for (let attempt = 1; attempt <= maxTransportAttempts; attempt += 1) {
                   try {
+                    if (!ws) {
+                      await blockForPromptDispatchFailure(phase, "Work session was not initialized before prompt dispatch.", RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR);
+                      return false;
+                    }
+                    await logRunEvent(ctx, repoRoot, "info", "run.work.prompt.send", "Dispatching work prompt", {
+                      taskId: task.id,
+                      phase,
+                      attempt,
+                      workSessionId: ws.sessionId,
+                    }, { runId, taskId: task.id });
                     await Promise.race([
                       ctx.client.session.prompt({
                         path: { id: ws.sessionId },
@@ -596,12 +669,42 @@ export const createRunTool = (opts: {
                         }, TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS);
                       }),
                     ]);
+                    await logRunEvent(ctx, repoRoot, "info", "run.work.prompt.sent", "Work prompt dispatched", {
+                      taskId: task.id,
+                      phase,
+                      attempt,
+                      workSessionId: ws.sessionId,
+                    }, { runId, taskId: task.id });
                     return true;
                   } catch (error) {
                     const errorMessage = error instanceof Error ? error.message : String(error);
                     const timedOut = errorMessage.toLowerCase().includes("timeout");
                     const isTransport = isTransportParseError(errorMessage);
                     if (isTransport && attempt < maxTransportAttempts) {
+                      const previousSessionId = ws?.sessionId ?? null;
+                      await logRunEvent(ctx, repoRoot, "warn", "run.work.prompt.transport-retry", "Transport parse failure, rotating work session and retrying", {
+                        taskId: task.id,
+                        phase,
+                        attempt,
+                        maxTransportAttempts,
+                        previousWorkSessionId: previousSessionId,
+                        error: errorMessage,
+                      }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR });
+                      if (previousSessionId) {
+                        await deleteSessionBestEffort(ctx, previousSessionId, context.sessionID);
+                      }
+                      await clearWorkSessionState(repoRoot);
+                      const rotated = await resetWorkSessionWithTimeout();
+                      if (!rotated) {
+                        return false;
+                      }
+                      ws = rotated;
+                      await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
+                      await updateRunState(repoRoot, {
+                        workSessionId: ws.sessionId,
+                        baselineMessageId: ws.baselineMessageId,
+                        controlSessionId: context.sessionID,
+                      });
                       await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
                       continue;
                     }
@@ -626,49 +729,7 @@ export const createRunTool = (opts: {
               break;
             }
 
-            const ws = await Promise.race([
-              resetWorkSession(ctx, repoRoot, context.agent),
-              new Promise<never>((_, reject) => {
-                setTimeout(() => {
-                  reject(new Error("resetWorkSession timeout"));
-                }, TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS);
-              }),
-            ]).catch(async (error) => {
-              const gates: PrdGatesAttempt = { ok: false, commands: [] };
-              const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              const judge: PrdJudgeAttempt = {
-                status: "FAIL",
-                exitSignal: false,
-                reason: [
-                  formatReasonCode(RUN_REASON.WORK_SESSION_RESET_TIMEOUT),
-                  `Work session reset timed out (${TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS}ms).`,
-                  errorMessage,
-                ],
-                nextActions: [
-                  "Retry /mario-devx:run 1.",
-                  "If this repeats, restart OpenCode and rerun.",
-                ],
-              };
-              prd = await persistBlockedTaskAttempt({
-                ctx,
-                repoRoot,
-                prd,
-                task,
-                attemptAt,
-                iteration: state.iteration,
-                gates,
-                ui,
-                judge,
-                runId,
-              });
-              await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_WORK_SESSION_RESET_TIMEOUT, "Run blocked: work-session reset timed out", {
-                taskId: task.id,
-                timeoutMs: TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS,
-                error: errorMessage,
-              }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_SESSION_RESET_TIMEOUT });
-              return null;
-            });
+            ws = await resetWorkSessionWithTimeout();
             if (!ws) {
               break;
             }
