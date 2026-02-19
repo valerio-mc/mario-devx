@@ -13,6 +13,7 @@ export type RunState = {
   controlSessionId?: string;
   workSessionId?: string;
   baselineMessageId?: string;
+  streamWorkEvents?: boolean;
   startedAt?: string;
   updatedAt: string;
 };

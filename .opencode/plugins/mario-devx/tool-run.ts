@@ -409,6 +409,7 @@ export const createRunTool = (opts: {
             shouldRunUiVerify,
             workAgent: sessionAgents.workAgent,
             verifyAgent: sessionAgents.verifyAgent,
+            streamWorkEvents: sessionAgents.streamWorkEvents,
             uiVerifyWaitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
             agentBrowserVersion: agentBrowserCaps.version,
             agentBrowserOpenUsage: agentBrowserCaps.openUsage,
@@ -746,6 +747,7 @@ export const createRunTool = (opts: {
               controlSessionId: context.sessionID,
               workSessionId: ws.sessionId,
               baselineMessageId: ws.baselineMessageId,
+              streamWorkEvents: sessionAgents.streamWorkEvents,
               startedAt: nowIso(),
             });
 

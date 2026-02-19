@@ -8,6 +8,7 @@ import { RUN_REASON } from "./run-contracts";
 export type SessionAgentConfig = {
   workAgent: string;
   verifyAgent: string;
+  streamWorkEvents: boolean;
   parseWarnings: number;
 };
 
@@ -114,6 +115,7 @@ export const resolveSessionAgents = async (opts: {
   return {
     workAgent: normalizeAgent(env.WORK_AGENT, defaultWorkAgent),
     verifyAgent: normalizeAgent(env.VERIFY_AGENT, defaultVerifyAgent),
+    streamWorkEvents: env.STREAM_WORK === "1",
     parseWarnings: parsed.warnings.length,
   };
 };

@@ -3,6 +3,10 @@ import { createCommands } from "./commands";
 import { createTools } from "./tools";
 import { readRunState } from "./state";
 
+const WORK_STREAM_MIN_INTERVAL_MS = 400;
+const WORK_STREAM_MAX_TEXT = 220;
+const workStreamState = new Map<string, { at: number; text: string }>();
+
 const getIdleSessionId = (event: unknown): string | null => {
   if (!event || typeof event !== "object") {
     return null;
@@ -13,6 +17,53 @@ const getIdleSessionId = (event: unknown): string | null => {
   }
   const props = e.properties as { sessionID?: unknown } | undefined;
   return typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : null;
+};
+
+const clipStreamText = (text: string): string => {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  if (singleLine.length <= WORK_STREAM_MAX_TEXT) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, WORK_STREAM_MAX_TEXT)}...`;
+};
+
+const getWorkStreamSnippet = (event: unknown): { sessionID: string; text: string } | null => {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  const e = event as { type?: unknown; properties?: unknown };
+  if (e.type !== "message.part.updated") {
+    return null;
+  }
+  const props = e.properties as {
+    delta?: unknown;
+    part?: {
+      sessionID?: unknown;
+      type?: unknown;
+      text?: unknown;
+    };
+  } | undefined;
+  const part = props?.part;
+  const sessionID = typeof part?.sessionID === "string" && part.sessionID.length > 0 ? part.sessionID : null;
+  if (!sessionID) {
+    return null;
+  }
+
+  if (part.type === "text" || part.type === "reasoning") {
+    const chunk = typeof props?.delta === "string"
+      ? props.delta
+      : (typeof part.text === "string" ? part.text : "");
+    const text = clipStreamText(chunk);
+    return text.length > 0 ? { sessionID, text } : null;
+  }
+
+  if (part.type === "step-start") {
+    return { sessionID, text: "step started" };
+  }
+  if (part.type === "step-finish") {
+    return { sessionID, text: "step finished" };
+  }
+  return null;
 };
 
 const safePluginLog = async (
@@ -50,33 +101,60 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
   return {
     tool: tools,
     event: async ({ event }) => {
-      // Notify control session when the work session becomes idle.
-      const sessionID = getIdleSessionId(event);
-      if (!sessionID) {
+      const run = await readRunState(repoRoot);
+      if (run.status !== "DOING") {
         return;
       }
-
-      const run = await readRunState(repoRoot);
-      if (!run.workSessionId || run.workSessionId !== sessionID) {
+      if (!run.workSessionId) {
         return;
       }
       if (!run.controlSessionId) {
         return;
       }
 
-      if (run.status !== "DOING") {
+      const sendControlNote = async (text: string): Promise<void> => {
+        try {
+          await client.session.prompt({
+            path: { id: run.controlSessionId as string },
+            body: {
+              noReply: true,
+              parts: [{ type: "text", text }],
+            },
+          });
+        } catch {
+          // Best-effort event forwarding.
+        }
+      };
+
+      // Notify control session when the work session becomes idle.
+      const idleSessionID = getIdleSessionId(event);
+      if (idleSessionID && idleSessionID === run.workSessionId) {
+        const summary = `mario-devx: work phase is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
+        await sendControlNote(summary);
         return;
       }
 
-      const summary = `mario-devx: work phase is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
+      if (!run.streamWorkEvents) {
+        return;
+      }
 
-      await client.session.prompt({
-        path: { id: run.controlSessionId },
-        body: {
-          noReply: true,
-          parts: [{ type: "text", text: summary }],
-        },
-      });
+      const stream = getWorkStreamSnippet(event);
+      if (!stream || stream.sessionID !== run.workSessionId) {
+        return;
+      }
+
+      const throttleKey = `${run.controlSessionId}:${run.workSessionId}`;
+      const now = Date.now();
+      const previous = workStreamState.get(throttleKey);
+      if (previous && previous.text === stream.text) {
+        return;
+      }
+      if (previous && now - previous.at < WORK_STREAM_MIN_INTERVAL_MS) {
+        return;
+      }
+      workStreamState.set(throttleKey, { at: now, text: stream.text });
+
+      await sendControlNote(`mario-devx/work: ${stream.text}`);
     },
     config: async (config) => {
       config.command = config.command ?? {};
