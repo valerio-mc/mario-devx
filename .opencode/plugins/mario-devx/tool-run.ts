@@ -563,7 +563,7 @@ export const createRunTool = (opts: {
             ): Promise<boolean> => {
               try {
                 await Promise.race([
-                  ctx.client.session.promptAsync({
+                  ctx.client.session.prompt({
                     path: { id: ws.sessionId },
                     body: {
                       ...(context.agent ? { agent: context.agent } : {}),
