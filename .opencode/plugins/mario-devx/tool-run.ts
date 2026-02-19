@@ -25,7 +25,7 @@ import {
   updateRunState,
   waitForSessionIdleStableDetailed,
 } from "./runner";
-import { clearWorkSessionState, ensureMario, readRunState, readVerifierSessionState, readWorkSessionState, writeRunState, bumpIteration, writeVerifierSessionState } from "./state";
+import { clearSessionCaches, ensureMario, readRunState, readVerifierSessionState, readWorkSessionState, writeRunState, bumpIteration } from "./state";
 import { createRunId, logTaskBlocked, logTaskComplete } from "./logging";
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
 import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
@@ -1117,10 +1117,11 @@ export const createRunTool = (opts: {
               }
             }
 
-            await Promise.all([
-              clearWorkSessionState(repoRoot),
-              writeVerifierSessionState(repoRoot, null),
-            ]);
+            await clearSessionCaches(repoRoot);
+            await updateRunState(repoRoot, {
+              workSessionId: undefined,
+              baselineMessageId: undefined,
+            });
 
             await logRunEvent(ctx, repoRoot, "info", "run.session.cleanup.ok", "Session cleanup complete", {
               ...deleteResults,
