@@ -410,6 +410,7 @@ export const createRunTool = (opts: {
             workAgent: sessionAgents.workAgent,
             verifyAgent: sessionAgents.verifyAgent,
             streamWorkEvents: sessionAgents.streamWorkEvents,
+            streamVerifyEvents: sessionAgents.streamVerifyEvents,
             uiVerifyWaitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
             agentBrowserVersion: agentBrowserCaps.version,
             agentBrowserOpenUsage: agentBrowserCaps.openUsage,
@@ -748,6 +749,7 @@ export const createRunTool = (opts: {
               workSessionId: ws.sessionId,
               baselineMessageId: ws.baselineMessageId,
               streamWorkEvents: sessionAgents.streamWorkEvents,
+              streamVerifyEvents: sessionAgents.streamVerifyEvents,
               startedAt: nowIso(),
             });
 
@@ -1184,6 +1186,7 @@ export const createRunTool = (opts: {
             await clearSessionCaches(repoRoot);
             await updateRunState(repoRoot, {
               workSessionId: undefined,
+              verifierSessionId: undefined,
               baselineMessageId: undefined,
             });
 

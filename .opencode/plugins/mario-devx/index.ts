@@ -105,7 +105,9 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
       if (run.status !== "DOING") {
         return;
       }
-      if (!run.workSessionId) {
+      const workSessionId = run.workSessionId;
+      const verifierSessionId = run.verifierSessionId;
+      if (!workSessionId && !verifierSessionId) {
         return;
       }
       if (!run.controlSessionId) {
@@ -128,22 +130,35 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
 
       // Notify control session when the work session becomes idle.
       const idleSessionID = getIdleSessionId(event);
-      if (idleSessionID && idleSessionID === run.workSessionId) {
+      if (idleSessionID && idleSessionID === workSessionId) {
         const summary = `mario-devx: work phase is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
         await sendControlNote(summary);
         return;
       }
-
-      if (!run.streamWorkEvents) {
+      if (idleSessionID && idleSessionID === verifierSessionId) {
+        const summary = `mario-devx: verify phase is idle (${run.currentPI ?? "(task unknown)"}).`;
+        await sendControlNote(summary);
         return;
       }
 
       const stream = getWorkStreamSnippet(event);
-      if (!stream || stream.sessionID !== run.workSessionId) {
+      if (!stream) {
+        return;
+      }
+      const isWorkEvent = !!workSessionId && stream.sessionID === workSessionId;
+      const isVerifyEvent = !!verifierSessionId && stream.sessionID === verifierSessionId;
+      if (!isWorkEvent && !isVerifyEvent) {
+        return;
+      }
+      if (isWorkEvent && !run.streamWorkEvents) {
+        return;
+      }
+      if (isVerifyEvent && !run.streamVerifyEvents) {
         return;
       }
 
-      const throttleKey = `${run.controlSessionId}:${run.workSessionId}`;
+      const phaseLabel = isVerifyEvent ? "verify" : "work";
+      const throttleKey = `${run.controlSessionId}:${stream.sessionID}`;
       const now = Date.now();
       const previous = workStreamState.get(throttleKey);
       if (previous && previous.text === stream.text) {
@@ -154,7 +169,7 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
       }
       workStreamState.set(throttleKey, { at: now, text: stream.text });
 
-      await sendControlNote(`mario-devx/work: ${stream.text}`);
+      await sendControlNote(`mario-devx/${phaseLabel}: ${stream.text}`);
     },
     config: async (config) => {
       config.command = config.command ?? {};

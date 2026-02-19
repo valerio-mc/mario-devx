@@ -1093,6 +1093,9 @@ const promptAndResolveWithRetry = async (opts: {
         capabilitySummary,
         ...(agent ? { agent } : {}),
       });
+      await updateRunState(repoRoot, {
+        verifierSessionId: verifierPhaseSession.sessionId,
+      });
       await logRunEvent(ctx, repoRoot, "info", "verifier.phase.create.ok", "Verifier phase session created", {
         verifierSessionId: verifierPhaseSession.sessionId,
         baselineFingerprint: verifierPhaseSession.baselineFingerprint,
@@ -1139,6 +1142,9 @@ const promptAndResolveWithRetry = async (opts: {
       if (verifierPhaseSession?.sessionId) {
         await disposeVerifierPhaseSession(ctx, verifierPhaseSession.sessionId).catch(() => "failed");
       }
+      await updateRunState(repoRoot, {
+        verifierSessionId: undefined,
+      });
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Verifier prompt failed"));

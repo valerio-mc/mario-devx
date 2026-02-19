@@ -9,6 +9,7 @@ export type SessionAgentConfig = {
   workAgent: string;
   verifyAgent: string;
   streamWorkEvents: boolean;
+  streamVerifyEvents: boolean;
   parseWarnings: number;
 };
 
@@ -122,6 +123,7 @@ export const resolveSessionAgents = async (opts: {
     workAgent: normalizeAgent(env.WORK_AGENT, defaultWorkAgent),
     verifyAgent: normalizeAgent(env.VERIFY_AGENT, defaultVerifyAgent),
     streamWorkEvents: parseStreamWork(env.STREAM_WORK),
+    streamVerifyEvents: parseStreamWork(env.STREAM_VERIFY),
     parseWarnings: parsed.warnings.length,
   };
 };

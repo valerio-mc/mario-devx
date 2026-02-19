@@ -14,6 +14,7 @@ Notes:
 WORK_AGENT='build'
 VERIFY_AGENT='build'
 STREAM_WORK=1
+STREAM_VERIFY=1
 
 # UI verification (best-effort)
 # Repo: https://github.com/vercel-labs/agent-browser

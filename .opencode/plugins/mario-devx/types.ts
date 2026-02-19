@@ -12,8 +12,10 @@ export type RunState = {
   currentPI?: string;
   controlSessionId?: string;
   workSessionId?: string;
+  verifierSessionId?: string;
   baselineMessageId?: string;
   streamWorkEvents?: boolean;
+  streamVerifyEvents?: boolean;
   startedAt?: string;
   updatedAt: string;
 };
