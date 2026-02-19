@@ -151,7 +151,8 @@ Reason: Deterministic gate failed: npm run test (exit 1).
 ### Sessions
 
 - You run `/mario-devx:*` in your normal session (control session).
-- The build/judge runs in internal work/verifier sessions that are recreated and cleaned up automatically per run.
+- mario-devx models execution as two phases: **work phase** and **verify phase**.
+- Each phase uses its own ephemeral OpenCode session scoped to the current run and cleaned up on exit.
 
 ### The loop
 
@@ -352,7 +353,8 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **`ReasonCode: WORK_SESSION_STATUS_UNKNOWN`** | OpenCode did not return a stable status for the work session before timeout. Inspect `/sessions`, then rerun `/mario-devx:run 1`; if repeated, restart OpenCode. |
 | **`ReasonCode: WORK_SESSION_NO_PROGRESS`** | Work session reached idle without source edits. Check `/sessions` output for the work session response, then rerun `/mario-devx:run 1`. |
 | **`ReasonCode: WORK_PROMPT_TRANSPORT_ERROR`** | OpenCode transport returned truncated/EOF JSON during work prompt dispatch. mario-devx retries automatically; if still blocked, restart OpenCode and rerun `/mario-devx:run 1`. |
-| **`ReasonCode: WORK_SESSION_RESET_TIMEOUT`** | mario-devx could not revert/reset the work session in time. Existing cached sessions are now auto-recreated and cleaned on run exit; rerun `/mario-devx:run 1`. |
+| **`ReasonCode: WORK_SESSION_RESET_TIMEOUT`** | mario-devx could not initialize a fresh work-phase session in time. Rerun `/mario-devx:run 1`; if repeated, restart OpenCode. |
+| **Work phase shows idle but run is still active** | Check `.mario/state/mario-devx.log` for `run.work.prompt.send` then `run.work.prompt.sent`. If no follow-up events within ~2 minutes, rerun `/mario-devx:run 1` and inspect latest `run.blocked.*` reason codes. |
 | **`ReasonCode: ACCEPTANCE_ARTIFACTS_MISSING`** | Deterministic acceptance artifacts are missing (for example required routes/nav labels). Implement the listed missing files/artifacts from `tasks[].lastAttempt.judge.reason`, then rerun `/mario-devx:run 1`. |
 | **`ReasonCode: REPEATED_UI_FINDINGS`** | Bounded semantic repairs were attempted but acceptance is still unmet. Use `tasks[].lastAttempt.judge.reason/nextActions` in `.mario/prd.json` to verify missing artifacts, then rerun `/mario-devx:run 1`. |
 | **Run appears locked after interruption** | Rerun `/mario-devx:run 1` once (stale lock/state auto-recovery). If still blocked, run `/mario-devx:doctor`. |

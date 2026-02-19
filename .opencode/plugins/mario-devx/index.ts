@@ -68,7 +68,7 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
         return;
       }
 
-      const summary = `mario-devx: work session is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
+      const summary = `mario-devx: work phase is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
 
       await client.session.prompt({
         path: { id: run.controlSessionId },

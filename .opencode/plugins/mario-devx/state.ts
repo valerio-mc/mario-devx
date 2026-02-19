@@ -1,7 +1,7 @@
 import path from "path";
 import { ensureDir, readTextIfExists, writeText } from "./fs";
 import { marioStateDir } from "./paths";
-import { RunState, UiVerifyState, VerifierSessionState, WorkSessionState } from "./types";
+import { RunState, UiVerifyState } from "./types";
 import { seedMarioAssets } from "./assets";
 
 const stateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "state.json");
@@ -9,9 +9,7 @@ const stateFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot
 type MarioState = {
   version: 1;
   run?: RunState;
-  workSession?: WorkSessionState;
   uiVerify?: UiVerifyState;
-  verifierSession?: VerifierSessionState;
 };
 
 const defaultRunState = (): RunState => ({
@@ -29,9 +27,7 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
       return {
         version: 1,
         run: parsed.run,
-        workSession: parsed.workSession,
         uiVerify: parsed.uiVerify,
-        verifierSession: parsed.verifierSession,
       };
     } catch {
       // Back up the corrupt state file and reset.
@@ -60,36 +56,12 @@ export const ensureMario = async (repoRoot: string, force = false): Promise<void
   await seedMarioAssets(repoRoot, force);
 };
 
-export const readWorkSessionState = async (repoRoot: string): Promise<WorkSessionState | null> => {
-  const state = await readState(repoRoot);
-  const ws = state.workSession;
-  if (!ws?.sessionId || !ws.baselineMessageId) {
-    return null;
-  }
-  return ws;
-};
-
-export const writeWorkSessionState = async (
-  repoRoot: string,
-  state: WorkSessionState,
-): Promise<void> => {
-  const current = await readState(repoRoot);
-  await writeState(repoRoot, { ...current, workSession: state });
-};
-
-export const clearWorkSessionState = async (repoRoot: string): Promise<void> => {
-  const current = await readState(repoRoot);
-  const copy: MarioState = { ...current };
-  delete copy.workSession;
-  await writeState(repoRoot, copy);
-};
-
 export const clearSessionCaches = async (repoRoot: string): Promise<void> => {
   const current = await readState(repoRoot);
-  const copy: MarioState = { ...current };
+  const copy = { ...current } as Record<string, unknown>;
   delete copy.workSession;
   delete copy.verifierSession;
-  await writeState(repoRoot, copy);
+  await writeState(repoRoot, copy as MarioState);
 };
 
 export const readRunState = async (repoRoot: string): Promise<RunState> => {
@@ -125,27 +97,4 @@ export const writeUiVerifyState = async (repoRoot: string, patch: Partial<UiVeri
     ...patch,
   };
   await writeState(repoRoot, { ...current, uiVerify: next });
-};
-
-export const readVerifierSessionState = async (repoRoot: string): Promise<VerifierSessionState | null> => {
-  const state = await readState(repoRoot);
-  const vs = state.verifierSession;
-  if (!vs?.sessionId || !vs.baselineMessageId || !vs.baselineFingerprint) {
-    return null;
-  }
-  return vs;
-};
-
-export const writeVerifierSessionState = async (
-  repoRoot: string,
-  next: VerifierSessionState | null,
-): Promise<void> => {
-  const current = await readState(repoRoot);
-  if (!next) {
-    const copy: MarioState = { ...current };
-    delete copy.verifierSession;
-    await writeState(repoRoot, copy);
-    return;
-  }
-  await writeState(repoRoot, { ...current, verifierSession: next });
 };
