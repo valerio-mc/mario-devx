@@ -1,7 +1,6 @@
 import { tool } from "@opencode-ai/plugin";
 
 import { ensureMario, readRunState } from "./state";
-import { ensureWorkSession } from "./runner";
 import type { PrdJson } from "./prd";
 import { getNextPrdTask } from "./planner";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
@@ -22,12 +21,12 @@ export const createStatusTool = (opts: {
       async execute(_args, context: ToolContext) {
         await ensureMario(repoRoot, false);
         await logToolEvent(ctx, repoRoot, "info", "status.start", "Status requested");
-        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
         const run = await readRunState(repoRoot);
         const prd = await ensurePrd(repoRoot);
         const nextTask = getNextPrdTask(prd);
         const currentTask = run.currentPI ? (prd.tasks ?? []).find((t) => t.id === run.currentPI) : null;
         const focusTask = currentTask ?? nextTask;
+        const workSessionId = run.workSessionId ?? "(none)";
 
         const next =
           run.status === "DOING"
@@ -45,7 +44,7 @@ export const createStatusTool = (opts: {
         await notifyControlSession(
           ctx,
           context.sessionID,
-          `mario-devx status: work session ${ws.sessionId}.`,
+          `mario-devx status: work session ${workSessionId}.`,
         );
         await logToolEvent(ctx, repoRoot, "info", "status.complete", "Status computed", {
           runStatus: run.status,
@@ -55,7 +54,7 @@ export const createStatusTool = (opts: {
 
         return [
           `Iteration: ${run.iteration}`,
-          `Work session: ${ws.sessionId}`,
+          `Work session: ${workSessionId}`,
           `Run state: ${run.status} (${run.phase})${run.currentPI ? ` ${run.currentPI}` : ""}`,
           `PRD wizard: ${prd.wizard.status}${prd.wizard.status !== "completed" ? ` (${prd.wizard.step}/${prd.wizard.totalSteps})` : ""}`,
           `Backlog open: ${prd.backlog.featureRequests.filter((f) => f.status === "open").length}`,
