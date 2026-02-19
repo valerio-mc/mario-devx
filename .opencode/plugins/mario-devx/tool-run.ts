@@ -656,7 +656,7 @@ export const createRunTool = (opts: {
                       workSessionId: ws.sessionId,
                     }, { runId, taskId: task.id });
                     await Promise.race([
-                      ctx.client.session.prompt({
+                      ctx.client.session.promptAsync({
                         path: { id: ws.sessionId },
                         body: {
                           ...(context.agent ? { agent: context.agent } : {}),
