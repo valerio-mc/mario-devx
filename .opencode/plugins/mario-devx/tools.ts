@@ -37,7 +37,7 @@ import { logError, logInfo } from "./errors";
 import { logEvent, logPrdComplete, redactForLog } from "./logging";
 import { type RunLogMeta } from "./run-types";
 import { runShellCommand } from "./shell";
-import { ensureVerifierSession, resetVerifierSessionToBaseline, runVerifierTurn } from "./verifier-session";
+import { createVerifierPhaseSession, disposeVerifierPhaseSession, runVerifierTurn } from "./verifier-session";
 import { buildVerifierTransportFailureJudge, enforceJudgeOutputQuality } from "./run-verifier";
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
 import { createStatusTool } from "./tool-status";
@@ -1085,35 +1085,27 @@ const promptAndResolveWithRetry = async (opts: {
   const { ctx, repoRoot, promptText, runId, taskId, agent, timeoutMs, capabilitySummary } = opts;
   const maxAttempts = 3;
   let lastError: unknown = null;
-  const verifierSession = await ensureVerifierSession({
-    ctx,
-    repoRoot,
-    capabilitySummary,
-    ...(agent ? { agent } : {}),
-  });
-  await logRunEvent(ctx, repoRoot, "info", "verifier.session.ensure.ok", "Verifier session ensured", {
-    verifierSessionId: verifierSession.sessionId,
-    baselineFingerprint: verifierSession.baselineFingerprint,
-  }, { runId, taskId });
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    let verifierPhaseSession: { sessionId: string; baselineMessageId: string; baselineFingerprint: string } | null = null;
     try {
-      await logRunEvent(ctx, repoRoot, "info", "verifier.session.reset.start", "Resetting verifier session to baseline", {
-        verifierSessionId: verifierSession.sessionId,
-        attempt,
-      }, { runId, taskId });
-      await resetVerifierSessionToBaseline(ctx, repoRoot, verifierSession);
-      await logRunEvent(ctx, repoRoot, "info", "verifier.session.reset.ok", "Verifier session reset complete", {
-        verifierSessionId: verifierSession.sessionId,
+      verifierPhaseSession = await createVerifierPhaseSession({
+        ctx,
+        capabilitySummary,
+        ...(agent ? { agent } : {}),
+      });
+      await logRunEvent(ctx, repoRoot, "info", "verifier.phase.create.ok", "Verifier phase session created", {
+        verifierSessionId: verifierPhaseSession.sessionId,
+        baselineFingerprint: verifierPhaseSession.baselineFingerprint,
         attempt,
       }, { runId, taskId });
       await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.VERIFY_PROMPT_SENT, "Verifier prompt sent", {
         attempt,
         maxAttempts,
-        verifierSessionId: verifierSession.sessionId,
+        verifierSessionId: verifierPhaseSession.sessionId,
       }, { runId, taskId });
       const verifierText = await runVerifierTurn({
         ctx,
-        sessionId: verifierSession.sessionId,
+        sessionId: verifierPhaseSession.sessionId,
         promptText,
         timeoutMs,
         ...(agent ? { agent } : {}),
@@ -1143,6 +1135,10 @@ const promptAndResolveWithRetry = async (opts: {
         break;
       }
       await sleep(500 * attempt);
+    } finally {
+      if (verifierPhaseSession?.sessionId) {
+        await disposeVerifierPhaseSession(ctx, verifierPhaseSession.sessionId).catch(() => "failed");
+      }
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError ?? "Verifier prompt failed"));

@@ -3,8 +3,6 @@ import path from "path";
 import { assetsDir } from "./assets";
 import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
-import { readVerifierSessionState, writeVerifierSessionState } from "./state";
-import type { VerifierSessionState } from "./types";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -45,21 +43,29 @@ export const buildVerifierBaseline = async (capabilitySummary: string): Promise<
   };
 };
 
-const createVerifierSession = async (
-  ctx: any,
-  baselineText: string,
-  baselineFingerprint: string,
-  agent?: string,
-): Promise<VerifierSessionState> => {
+export type VerifierPhaseSession = {
+  sessionId: string;
+  baselineMessageId: string;
+  baselineFingerprint: string;
+  createdAt: string;
+};
+
+export const createVerifierPhaseSession = async (opts: {
+  ctx: any;
+  capabilitySummary: string;
+  agent?: string;
+}): Promise<VerifierPhaseSession> => {
+  const { ctx, capabilitySummary, agent } = opts;
+  const baseline = await buildVerifierBaseline(capabilitySummary);
   const created = await ctx.client.session.create();
   const sessionId = extractSessionId(created);
   if (!sessionId) {
-    throw new Error("Failed to create verifier session");
+    throw new Error("Failed to create verifier phase session");
   }
 
   await ctx.client.session.update({
     path: { id: sessionId },
-    body: { title: "mario-devx (verifier)" },
+    body: { title: "mario-devx (verify phase)" },
   });
 
   const baselineResp = await ctx.client.session.prompt({
@@ -67,71 +73,44 @@ const createVerifierSession = async (
     body: {
       noReply: true,
       ...(agent ? { agent } : {}),
-      parts: [{ type: "text", text: baselineText }],
+      parts: [{ type: "text", text: baseline.text }],
     },
   });
   const baselineMessageId = extractMessageId(baselineResp);
   if (!baselineMessageId) {
-    throw new Error("Failed to create verifier baseline message");
+    throw new Error("Failed to create verifier phase baseline message");
   }
 
-  const now = nowIso();
   return {
     sessionId,
     baselineMessageId,
-    baselineFingerprint,
-    ...(agent ? { agent } : {}),
-    createdAt: now,
-    updatedAt: now,
+    baselineFingerprint: baseline.fingerprint,
+    createdAt: nowIso(),
   };
 };
 
-const verifierSessionHealthy = async (ctx: any, session: VerifierSessionState): Promise<boolean> => {
-  try {
-    await ctx.client.session.get({ path: { id: session.sessionId } });
-    await ctx.client.session.message({ path: { id: session.sessionId, messageID: session.baselineMessageId } });
-    return true;
-  } catch {
-    return false;
-  }
+const isSessionNotFoundError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /session not found|notfounderror/i.test(message);
 };
 
-export const ensureVerifierSession = async (opts: {
-  ctx: any;
-  repoRoot: string;
-  capabilitySummary: string;
-  agent?: string;
-}): Promise<VerifierSessionState> => {
-  const { ctx, repoRoot, capabilitySummary, agent } = opts;
-  const baseline = await buildVerifierBaseline(capabilitySummary);
-  const existing = await readVerifierSessionState(repoRoot);
-  if (
-    existing
-    && existing.baselineFingerprint === baseline.fingerprint
-    && (existing.agent ?? "") === (agent ?? "")
-    && await verifierSessionHealthy(ctx, existing)
-  ) {
-    const now = nowIso();
-    const refreshed: VerifierSessionState = { ...existing, updatedAt: now, lastHealthCheckAt: now };
-    await writeVerifierSessionState(repoRoot, refreshed);
-    return refreshed;
-  }
-
-  const created = await createVerifierSession(ctx, baseline.text, baseline.fingerprint, agent);
-  await writeVerifierSessionState(repoRoot, created);
-  return created;
-};
-
-export const resetVerifierSessionToBaseline = async (
+export const disposeVerifierPhaseSession = async (
   ctx: any,
-  repoRoot: string,
-  session: VerifierSessionState,
-): Promise<void> => {
-  await ctx.client.session.revert({
-    path: { id: session.sessionId },
-    body: { messageID: session.baselineMessageId },
-  });
-  await writeVerifierSessionState(repoRoot, { ...session, updatedAt: nowIso() });
+  sessionId: string,
+  controlSessionId?: string,
+): Promise<"deleted" | "not-found" | "skipped-control" | "failed"> => {
+  if (controlSessionId && sessionId === controlSessionId) {
+    return "skipped-control";
+  }
+  try {
+    await ctx.client.session.delete({ path: { id: sessionId } });
+    return "deleted";
+  } catch (error) {
+    if (isSessionNotFoundError(error)) {
+      return "not-found";
+    }
+    return "failed";
+  }
 };
 
 export const runVerifierTurn = async (opts: {
