@@ -3,6 +3,7 @@ import path from "path";
 import { assetsDir } from "./assets";
 import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
+import { unwrapSdkData } from "./opencode-sdk";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -121,12 +122,79 @@ export const runVerifierTurn = async (opts: {
   agent?: string;
 }): Promise<string> => {
   const { ctx, sessionId, promptText, timeoutMs, agent } = opts;
-  const response = await ctx.client.session.prompt({
-    path: { id: sessionId },
-    body: {
-      ...(agent ? { agent } : {}),
-      parts: [{ type: "text", text: promptText }],
-    },
-  });
-  return resolvePromptText(ctx, sessionId, response, timeoutMs);
+  const body = {
+    ...(agent ? { agent } : {}),
+    parts: [{ type: "text", text: promptText }],
+  };
+
+  const isLikelyTransportParseError = (error: unknown): boolean => {
+    const message = error instanceof Error ? error.message : String(error ?? "");
+    return /unexpected eof|unexpected end of json input|json parse error|empty response/i.test(message);
+  };
+
+  const readMessages = async (): Promise<Array<{ info?: { role?: string; id?: string }; parts?: Array<{ text?: string }> }>> => {
+    try {
+      const byId = await ctx.client.session.messages({ path: { id: sessionId } });
+      const unwrapped = unwrapSdkData<Array<{ info?: { role?: string; id?: string }; parts?: Array<{ text?: string }> }>>(byId);
+      return Array.isArray(unwrapped) ? unwrapped : [];
+    } catch {
+      try {
+        const bySessionID = await ctx.client.session.messages({ path: { sessionID: sessionId } });
+        const unwrapped = unwrapSdkData<Array<{ info?: { role?: string; id?: string }; parts?: Array<{ text?: string }> }>>(bySessionID);
+        return Array.isArray(unwrapped) ? unwrapped : [];
+      } catch {
+        return [];
+      }
+    }
+  };
+
+  const textFromParts = (parts: Array<{ text?: string }> | undefined): string => {
+    const safeParts = Array.isArray(parts) ? parts : [];
+    return safeParts
+      .map((part) => (typeof part?.text === "string" ? part.text : ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  };
+
+  const waitForLatestAssistantText = async (baselineAssistantCount: number): Promise<string> => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const messages = await readMessages();
+      const assistants = messages.filter((entry) => entry.info?.role === "assistant");
+      if (assistants.length > baselineAssistantCount) {
+        const latest = assistants[assistants.length - 1];
+        const text = textFromParts(latest?.parts);
+        if (text.length > 0) {
+          return text;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+    return "";
+  };
+
+  try {
+    const response = await ctx.client.session.prompt({
+      path: { id: sessionId },
+      body,
+    });
+    return resolvePromptText(ctx, sessionId, response, timeoutMs);
+  } catch (error) {
+    if (!isLikelyTransportParseError(error)) {
+      throw error;
+    }
+
+    const baselineMessages = await readMessages();
+    const baselineAssistantCount = baselineMessages.filter((entry) => entry.info?.role === "assistant").length;
+    await ctx.client.session.promptAsync({
+      path: { id: sessionId },
+      body,
+    });
+    const fallbackText = await waitForLatestAssistantText(baselineAssistantCount);
+    if (fallbackText.length > 0) {
+      return fallbackText;
+    }
+    throw error;
+  }
 };
