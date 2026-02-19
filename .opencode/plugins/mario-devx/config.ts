@@ -13,6 +13,9 @@ export const TIMEOUTS = {
   // Maximum time to wait for a session to become idle (20 minutes)
   SESSION_IDLE_TIMEOUT_MS: 20 * 60 * 1000,
 
+  // Maximum time for one session.status() poll RPC
+  SESSION_STATUS_POLL_TIMEOUT_MS: 5 * 1000,
+
   // Idle wait after repair prompts before re-running gates (15 minutes)
   REPAIR_IDLE_TIMEOUT_MS: 15 * 60 * 1000,
 

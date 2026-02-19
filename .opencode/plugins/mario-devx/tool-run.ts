@@ -25,7 +25,7 @@ import {
   updateRunState,
   waitForSessionIdleStableDetailed,
 } from "./runner";
-import { clearSessionCaches, clearWorkSessionState, ensureMario, readRunState, readVerifierSessionState, readWorkSessionState, writeRunState, bumpIteration } from "./state";
+import { clearSessionCaches, ensureMario, readRunState, writeRunState, bumpIteration } from "./state";
 import { createRunId, logTaskBlocked, logTaskComplete } from "./logging";
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
 import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
@@ -693,7 +693,6 @@ export const createRunTool = (opts: {
                       if (previousSessionId) {
                         await deleteSessionBestEffort(ctx, previousSessionId, context.sessionID);
                       }
-                      await clearWorkSessionState(repoRoot);
                       const rotated = await resetWorkSessionWithTimeout();
                       if (!rotated) {
                         return false;
@@ -1146,20 +1145,16 @@ export const createRunTool = (opts: {
           return `Run failed unexpectedly: ${errorMessage}\nCheck .mario/state/mario-devx.log and rerun /mario-devx:run 1.`;
         } finally {
           try {
-            await logRunEvent(ctx, repoRoot, "info", "run.session.cleanup.start", "Cleaning cached work/verifier sessions", {
+            await logRunEvent(ctx, repoRoot, "info", "run.session.cleanup.start", "Cleaning ephemeral phase sessions", {
               controlSessionId: context.sessionID ?? null,
             }, { runId });
 
-            const [workSessionState, verifierSessionState] = await Promise.all([
-              readWorkSessionState(repoRoot),
-              readVerifierSessionState(repoRoot),
-            ]);
+            const runForCleanup = await readRunState(repoRoot);
 
             const deleteResults: Record<string, string> = {};
             const deletedIds = new Set<string>();
             const sessionsToDelete = [
-              { key: "work", id: workSessionState?.sessionId },
-              { key: "verifier", id: verifierSessionState?.sessionId },
+              { key: "work", id: runForCleanup.workSessionId },
             ];
 
             for (const session of sessionsToDelete) {

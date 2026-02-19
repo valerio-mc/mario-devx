@@ -1,4 +1,5 @@
-import { clearWorkSessionState, ensureMario, readRunState, readWorkSessionState, writeRunState, writeWorkSessionState } from "./state";
+import { ensureMario, readRunState, writeRunState } from "./state";
+import { TIMEOUTS } from "./config";
 import type { RunState } from "./types";
 
 const nowIso = (): string => new Date().toISOString();
@@ -32,6 +33,19 @@ const getSessionStatusType = (statuses: unknown, sessionId: string): SessionStat
   return "unknown";
 };
 
+const readSessionStatusesWithTimeout = async (ctx: any): Promise<unknown | null> => {
+  try {
+    return await Promise.race([
+      ctx.client.session.status(),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), TIMEOUTS.SESSION_STATUS_POLL_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return null;
+  }
+};
+
 export const waitForSessionIdle = async (
   ctx: any,
   sessionId: string,
@@ -39,7 +53,11 @@ export const waitForSessionIdle = async (
 ): Promise<boolean> => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const statuses = await ctx.client.session.status();
+    const statuses = await readSessionStatusesWithTimeout(ctx);
+    if (statuses === null) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      continue;
+    }
     const statusType = getSessionStatusType(statuses, sessionId);
     if (statusType === "idle") {
       return true;
@@ -70,7 +88,13 @@ export const waitForSessionIdleStableDetailed = async (
   let unknownChecks = 0;
   let activeChecks = 0;
   while (Date.now() - start < timeoutMs) {
-    const statuses = await ctx.client.session.status();
+    const statuses = await readSessionStatusesWithTimeout(ctx);
+    if (statuses === null) {
+      idleStreak = 0;
+      unknownChecks += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      continue;
+    }
     const statusType = getSessionStatusType(statuses, sessionId);
     if (statusType === "idle") {
       idleStreak += 1;
@@ -130,32 +154,12 @@ const isSessionNotFoundError = (error: unknown): boolean => {
   return /session not found|notfounderror/i.test(message);
 };
 
-const workSessionHealthy = async (
-  ctx: any,
-  ws: { sessionId: string; baselineMessageId: string },
-): Promise<boolean> => {
-  try {
-    await ctx.client.session.get({ path: { id: ws.sessionId } });
-    await ctx.client.session.message({ path: { id: ws.sessionId, messageID: ws.baselineMessageId } });
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 export const ensureWorkSession = async (
   ctx: any,
   repoRoot: string,
   agent: string | undefined,
 ): Promise<{ sessionId: string; baselineMessageId: string }> => {
   await ensureMario(repoRoot, false);
-  const existing = await readWorkSessionState(repoRoot);
-  if (existing?.sessionId && existing?.baselineMessageId) {
-    if (await workSessionHealthy(ctx, existing)) {
-      return { sessionId: existing.sessionId, baselineMessageId: existing.baselineMessageId };
-    }
-    await clearWorkSessionState(repoRoot);
-  }
 
   const created = await ctx.client.session.create();
   const sessionId = extractSessionId(created);
@@ -181,14 +185,6 @@ export const ensureWorkSession = async (
   if (!baselineMessageId) {
     throw new Error("Failed to create baseline message in work session");
   }
-
-  const now = nowIso();
-  await writeWorkSessionState(repoRoot, {
-    sessionId,
-    baselineMessageId,
-    createdAt: now,
-    updatedAt: now,
-  });
   return { sessionId, baselineMessageId };
 };
 
@@ -197,25 +193,7 @@ export const resetWorkSession = async (
   repoRoot: string,
   agent: string | undefined,
 ): Promise<{ sessionId: string; baselineMessageId: string }> => {
-  let ws = await ensureWorkSession(ctx, repoRoot, agent);
-  try {
-    await ctx.client.session.revert({
-      path: { id: ws.sessionId },
-      body: { messageID: ws.baselineMessageId },
-    });
-    return ws;
-  } catch (error) {
-    if (!isSessionNotFoundError(error)) {
-      throw error;
-    }
-    await clearWorkSessionState(repoRoot);
-    ws = await ensureWorkSession(ctx, repoRoot, agent);
-    await ctx.client.session.revert({
-      path: { id: ws.sessionId },
-      body: { messageID: ws.baselineMessageId },
-    });
-    return ws;
-  }
+  return ensureWorkSession(ctx, repoRoot, agent);
 };
 
 export const deleteSessionBestEffort = async (
@@ -259,16 +237,16 @@ export const ensureNotInWorkSession = async (
   repoRoot: string,
   context: { sessionID?: string },
 ): Promise<{ ok: true } | { ok: false; message: string }> => {
-  const ws = await readWorkSessionState(repoRoot);
-  if (!ws?.sessionId) {
+  const run = await readRunState(repoRoot);
+  if (!run.workSessionId || run.status !== "DOING") {
     return { ok: true };
   }
-  if (!context.sessionID || context.sessionID !== ws.sessionId) {
+  if (!context.sessionID || context.sessionID !== run.workSessionId) {
     return { ok: true };
   }
   return {
     ok: false,
-    message: `This command cannot run inside mario-devx work session (${ws.sessionId}). Use your control session.`,
+    message: `This command cannot run inside mario-devx work phase session (${run.workSessionId}). Use your control session.`,
   };
 };
 

@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
-import { readRunState, readWorkSessionState } from "./state";
+import { readRunState } from "./state";
 
 const getIdleSessionId = (event: unknown): string | null => {
   if (!event || typeof event !== "object") {
@@ -56,12 +56,10 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
         return;
       }
 
-      const ws = await readWorkSessionState(repoRoot);
-      if (!ws?.sessionId || ws.sessionId !== sessionID) {
+      const run = await readRunState(repoRoot);
+      if (!run.workSessionId || run.workSessionId !== sessionID) {
         return;
       }
-
-      const run = await readRunState(repoRoot);
       if (!run.controlSessionId) {
         return;
       }
