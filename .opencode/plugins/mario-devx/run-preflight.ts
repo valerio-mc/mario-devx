@@ -5,6 +5,12 @@ import { hasAgentsKey, parseAgentsEnv, upsertAgentsKey } from "./ui-verify";
 import type { RunReasonCode } from "./run-contracts";
 import { RUN_REASON } from "./run-contracts";
 
+export type SessionAgentConfig = {
+  workAgent: string;
+  verifyAgent: string;
+  parseWarnings: number;
+};
+
 export const parseMaxItems = (rawMax: string | undefined): number => {
   const raw = (rawMax ?? "").trim();
   const parsed = raw.length === 0 ? 1 : Number.parseInt(raw, 10);
@@ -85,4 +91,29 @@ export const syncFrontendAgentsConfig = async (opts: {
     await writeText(agentsPath, next);
   }
   return { parseWarnings: parsed.warnings.length };
+};
+
+export const resolveSessionAgents = async (opts: {
+  repoRoot: string;
+  defaultWorkAgent?: string;
+  defaultVerifyAgent?: string;
+}): Promise<SessionAgentConfig> => {
+  const {
+    repoRoot,
+    defaultWorkAgent = "build",
+    defaultVerifyAgent = "build",
+  } = opts;
+  const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
+  const raw = (await readTextIfExists(agentsPath)) ?? "";
+  const parsed = parseAgentsEnv(raw);
+  const env = parsed.env;
+  const normalizeAgent = (value: string | undefined, fallback: string): string => {
+    const trimmed = (value ?? "").trim();
+    return trimmed.length > 0 ? trimmed : fallback;
+  };
+  return {
+    workAgent: normalizeAgent(env.WORK_AGENT, defaultWorkAgent),
+    verifyAgent: normalizeAgent(env.VERIFY_AGENT, defaultVerifyAgent),
+    parseWarnings: parsed.warnings.length,
+  };
 };

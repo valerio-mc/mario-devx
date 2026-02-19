@@ -10,6 +10,10 @@ Notes:
 ## Config
 
 ```dotenv
+# Session agents
+WORK_AGENT='build'
+VERIFY_AGENT='build'
+
 # UI verification (best-effort)
 # Repo: https://github.com/vercel-labs/agent-browser
 UI_VERIFY=0

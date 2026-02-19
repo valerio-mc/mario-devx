@@ -28,7 +28,7 @@ import {
 import { clearSessionCaches, ensureMario, readRunState, writeRunState, bumpIteration } from "./state";
 import { createRunId, logTaskBlocked, logTaskComplete } from "./logging";
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
-import { parseMaxItems, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
+import { parseMaxItems, resolveSessionAgents, syncFrontendAgentsConfig, validateRunPrerequisites } from "./run-preflight";
 import { RUN_PHASE, type RunLogMeta, type RunPhaseName } from "./run-types";
 import { resolveUiRunSetup } from "./run-ui";
 import { buildRunSummary } from "./run-report";
@@ -367,6 +367,10 @@ export const createRunTool = (opts: {
             autoInstallAttempted,
             shouldRunUiVerify,
           } = uiSetup;
+          const sessionAgents = await resolveSessionAgents({ repoRoot });
+          if (sessionAgents.parseWarnings > 0) {
+            await showToast(ctx, `Run warning: AGENTS.md parse warnings (${sessionAgents.parseWarnings})`, "warning");
+          }
           const defaultAgentBrowserCaps = {
             available: false,
             version: null,
@@ -403,6 +407,8 @@ export const createRunTool = (opts: {
             uiVerifyEnabled,
             uiVerifyRequired,
             shouldRunUiVerify,
+            workAgent: sessionAgents.workAgent,
+            verifyAgent: sessionAgents.verifyAgent,
             uiVerifyWaitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
             agentBrowserVersion: agentBrowserCaps.version,
             agentBrowserOpenUsage: agentBrowserCaps.openUsage,
@@ -574,7 +580,7 @@ export const createRunTool = (opts: {
 
             const resetWorkSessionWithTimeout = async (): Promise<{ sessionId: string; baselineMessageId: string } | null> => {
               return Promise.race([
-                resetWorkSession(ctx, repoRoot, context.agent),
+                resetWorkSession(ctx, repoRoot, sessionAgents.workAgent),
                 new Promise<never>((_, reject) => {
                   setTimeout(() => {
                     reject(new Error("resetWorkSession timeout"));
@@ -659,7 +665,7 @@ export const createRunTool = (opts: {
                       ctx.client.session.promptAsync({
                         path: { id: ws.sessionId },
                         body: {
-                          ...(context.agent ? { agent: context.agent } : {}),
+                          ...(sessionAgents.workAgent ? { agent: sessionAgents.workAgent } : {}),
                           parts: [{ type: "text", text }],
                         },
                       }),
@@ -973,7 +979,7 @@ export const createRunTool = (opts: {
                 runId,
                 taskId: task.id,
                 capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
-                ...(context.agent ? { agent: context.agent } : {}),
+                ...(sessionAgents.verifyAgent ? { agent: sessionAgents.verifyAgent } : {}),
               });
 
               if (!(await heartbeatRunLock(repoRoot))) {
