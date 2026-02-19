@@ -13,7 +13,7 @@ Notes:
 # Session agents
 WORK_AGENT='build'
 VERIFY_AGENT='build'
-STREAM_WORK=0
+STREAM_WORK=1
 
 # UI verification (best-effort)
 # Repo: https://github.com/vercel-labs/agent-browser

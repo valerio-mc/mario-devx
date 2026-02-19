@@ -162,12 +162,12 @@ Reason: Deterministic gate failed: npm run test (exit 1).
 ```dotenv
 WORK_AGENT='build'
 VERIFY_AGENT='build'
-STREAM_WORK=0
+STREAM_WORK=1
 ```
 
 - `WORK_AGENT`: agent used for build/repair prompts in the ephemeral work session.
 - `VERIFY_AGENT`: agent used for verifier prompts in the ephemeral verify session.
-- `STREAM_WORK=1`: forward compact live updates from work session to control session.
+- `STREAM_WORK=1` (default): forward compact live updates from work session to control session.
 
 ### The loop
 

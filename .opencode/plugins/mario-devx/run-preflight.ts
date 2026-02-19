@@ -112,10 +112,16 @@ export const resolveSessionAgents = async (opts: {
     const trimmed = (value ?? "").trim();
     return trimmed.length > 0 ? trimmed : fallback;
   };
+  const parseStreamWork = (value: string | undefined): boolean => {
+    const normalized = (value ?? "").trim().toLowerCase();
+    if (normalized.length === 0) return true;
+    if (["0", "false", "off", "no"].includes(normalized)) return false;
+    return true;
+  };
   return {
     workAgent: normalizeAgent(env.WORK_AGENT, defaultWorkAgent),
     verifyAgent: normalizeAgent(env.VERIFY_AGENT, defaultVerifyAgent),
-    streamWorkEvents: env.STREAM_WORK === "1",
+    streamWorkEvents: parseStreamWork(env.STREAM_WORK),
     parseWarnings: parsed.warnings.length,
   };
 };
