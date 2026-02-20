@@ -1014,12 +1014,15 @@ export const createRunTool = (opts: {
             let judge: PrdJudgeAttempt | null = null;
             let semanticRepairAttempts = 0;
             let semanticNoProgressStreak = 0;
+            let verifierPassAttempts = 0;
 
             while (true) {
+              verifierPassAttempts += 1;
               if (!verifyPhaseAnnounced) {
                 verifyPhaseAnnounced = true;
                 await showToast(ctx, `Run: verify phase started for ${task.id}`, "info");
               }
+              await showToast(ctx, `Run: verifier pass ${verifierPassAttempts} started for ${task.id}`, "info");
 
               const verifierPrompt = await buildPrompt(repoRoot, "verify", buildVerifierContextText({
                 task,
@@ -1043,6 +1046,7 @@ export const createRunTool = (opts: {
                 capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
                 ...(sessionAgents.verifyAgent ? { agent: sessionAgents.verifyAgent } : {}),
               });
+              await showToast(ctx, `Run: verifier response received for ${task.id}`, "info");
               if (!verifyIdleAnnounced) {
                 verifyIdleAnnounced = true;
                 await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
@@ -1069,6 +1073,11 @@ export const createRunTool = (opts: {
 
               semanticRepairAttempts += 1;
               totalRepairAttempts += 1;
+              await showToast(
+                ctx,
+                `Run: verifier requested changes; returning to work for ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS})`,
+                "warning",
+              );
               const actionableReason = firstActionableJudgeReason(judge) ?? "Verifier failed to confirm acceptance.";
               const strictChecklist = semanticNoProgressStreak > 0
                 ? "Repeated finding detected with no clear progress. Make explicit file edits that directly satisfy acceptance criteria; avoid generic refinements."
@@ -1081,6 +1090,11 @@ export const createRunTool = (opts: {
                 blockedByVerifierFailure = true;
                 break;
               }
+              await showToast(
+                ctx,
+                `Run: semantic repair dispatched for ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS})`,
+                "info",
+              );
 
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("during-semantic-repair");
@@ -1102,6 +1116,7 @@ export const createRunTool = (opts: {
                 blockedByVerifierFailure = true;
                 break;
               }
+              await showToast(ctx, `Run: semantic repair idle for ${task.id}`, "success");
 
               const semanticSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
               const semanticDelta = summarizeWorkspaceDelta(semanticSnapshotBefore, semanticSnapshotAfter);
