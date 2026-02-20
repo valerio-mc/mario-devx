@@ -153,8 +153,8 @@ Reason: Deterministic gate failed: npm run test (exit 1).
 - You run `/mario-devx:*` in your normal session (control session).
 - mario-devx models execution as two phases: **work phase** and **verify phase**.
 - Each phase uses its own ephemeral OpenCode session scoped to the current run and cleaned up on exit.
-- Optional live stream: set `STREAM_WORK=1` in `.mario/AGENTS.md` to mirror concise work-session progress into the active `/mario-devx:run` tool card (no queued chat cards).
-- Optional verify stream: set `STREAM_VERIFY=1` in `.mario/AGENTS.md` to mirror verifier-session progress into the same tool card.
+- Optional live stream: set `STREAM_WORK=1` in `.mario/AGENTS.md` to stream work-session activity back to the control session as throttled toast updates (no queued chat cards).
+- Optional verify stream: set `STREAM_VERIFY=1` in `.mario/AGENTS.md` to stream verifier-session activity back as the same toast flow.
 
 ### Session agent knobs
 
@@ -169,8 +169,16 @@ STREAM_VERIFY=1
 
 - `WORK_AGENT`: agent used for build/repair prompts in the ephemeral work session.
 - `VERIFY_AGENT`: agent used for verifier prompts in the ephemeral verify session.
-- `STREAM_WORK=1` (default): forward compact work-session deltas into the running tool card metadata.
-- `STREAM_VERIFY=1` (default): forward compact verifier-session deltas into the running tool card metadata.
+- `STREAM_WORK=1` (default): forward compact work-session events into control-session toasts.
+- `STREAM_VERIFY=1` (default): forward compact verifier-session events into control-session toasts.
+
+### Ephemeral session progress streaming
+
+- mario-devx runs build/repair in an ephemeral work session and verification in an ephemeral verifier session.
+- During `/mario-devx:run`, the control session receives streamed toast updates sourced from those ephemeral sessions.
+- Streaming includes text deltas plus tool lifecycle events (tool start/end, patch updates) with throttling to avoid spam.
+- Toast flush cadence is approximately every 3-4 seconds per phase, with forced flush when a phase reaches `session.idle`.
+- Inner loops are surfaced explicitly (for example verifier pass started/received, semantic repair dispatched/idle, verifier requested changes and returned to work).
 
 ### The loop
 
