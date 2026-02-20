@@ -1,11 +1,8 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
+import { flushControlProgress, ingestControlProgressEvent, pushControlProgressLine } from "./progress-stream";
 import { readRunState } from "./state";
-
-const WORK_STREAM_MIN_INTERVAL_MS = 400;
-const WORK_STREAM_MAX_TEXT = 220;
-const workStreamState = new Map<string, { at: number; text: string }>();
 
 const getIdleSessionId = (event: unknown): string | null => {
   if (!event || typeof event !== "object") {
@@ -17,53 +14,6 @@ const getIdleSessionId = (event: unknown): string | null => {
   }
   const props = e.properties as { sessionID?: unknown } | undefined;
   return typeof props?.sessionID === "string" && props.sessionID.length > 0 ? props.sessionID : null;
-};
-
-const clipStreamText = (text: string): string => {
-  const singleLine = text.replace(/\s+/g, " ").trim();
-  if (singleLine.length <= WORK_STREAM_MAX_TEXT) {
-    return singleLine;
-  }
-  return `${singleLine.slice(0, WORK_STREAM_MAX_TEXT)}...`;
-};
-
-const getWorkStreamSnippet = (event: unknown): { sessionID: string; text: string } | null => {
-  if (!event || typeof event !== "object") {
-    return null;
-  }
-  const e = event as { type?: unknown; properties?: unknown };
-  if (e.type !== "message.part.updated") {
-    return null;
-  }
-  const props = e.properties as {
-    delta?: unknown;
-    part?: {
-      sessionID?: unknown;
-      type?: unknown;
-      text?: unknown;
-    };
-  } | undefined;
-  const part = props?.part;
-  const sessionID = typeof part?.sessionID === "string" && part.sessionID.length > 0 ? part.sessionID : null;
-  if (!sessionID) {
-    return null;
-  }
-
-  if (part.type === "text" || part.type === "reasoning") {
-    const chunk = typeof props?.delta === "string"
-      ? props.delta
-      : (typeof part.text === "string" ? part.text : "");
-    const text = clipStreamText(chunk);
-    return text.length > 0 ? { sessionID, text } : null;
-  }
-
-  if (part.type === "step-start") {
-    return { sessionID, text: "step started" };
-  }
-  if (part.type === "step-finish") {
-    return { sessionID, text: "step finished" };
-  }
-  return null;
 };
 
 const safePluginLog = async (
@@ -114,62 +64,38 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
         return;
       }
 
-      const sendControlNote = async (text: string): Promise<void> => {
-        try {
-          await client.session.prompt({
-            path: { id: run.controlSessionId as string },
-            body: {
-              noReply: true,
-              parts: [{ type: "text", text }],
-            },
-          });
-        } catch {
-          // Best-effort event forwarding.
-        }
-      };
-
       // Notify control session when the work session becomes idle.
       const idleSessionID = getIdleSessionId(event);
       if (idleSessionID && idleSessionID === workSessionId) {
-        const summary = `mario-devx: work phase is idle (${run.phase}${run.currentPI ? ` ${run.currentPI}` : ""}).`;
-        await sendControlNote(summary);
+        pushControlProgressLine(run.controlSessionId, {
+          phase: "work",
+          text: `phase idle (${run.currentPI ?? "task"})`,
+          ...(run.currentPI ? { taskId: run.currentPI } : {}),
+        });
+        flushControlProgress(run.controlSessionId, { force: true });
         return;
       }
       if (idleSessionID && idleSessionID === verifierSessionId) {
-        const summary = `mario-devx: verify phase is idle (${run.currentPI ?? "(task unknown)"}).`;
-        await sendControlNote(summary);
+        pushControlProgressLine(run.controlSessionId, {
+          phase: "verify",
+          text: `phase idle (${run.currentPI ?? "task"})`,
+          ...(run.currentPI ? { taskId: run.currentPI } : {}),
+        });
+        flushControlProgress(run.controlSessionId, { force: true });
         return;
       }
 
-      const stream = getWorkStreamSnippet(event);
-      if (!stream) {
-        return;
-      }
-      const isWorkEvent = !!workSessionId && stream.sessionID === workSessionId;
-      const isVerifyEvent = !!verifierSessionId && stream.sessionID === verifierSessionId;
-      if (!isWorkEvent && !isVerifyEvent) {
-        return;
-      }
-      if (isWorkEvent && !run.streamWorkEvents) {
-        return;
-      }
-      if (isVerifyEvent && !run.streamVerifyEvents) {
-        return;
-      }
-
-      const phaseLabel = isVerifyEvent ? "verify" : "work";
-      const throttleKey = `${run.controlSessionId}:${stream.sessionID}`;
-      const now = Date.now();
-      const previous = workStreamState.get(throttleKey);
-      if (previous && previous.text === stream.text) {
-        return;
-      }
-      if (previous && now - previous.at < WORK_STREAM_MIN_INTERVAL_MS) {
-        return;
-      }
-      workStreamState.set(throttleKey, { at: now, text: stream.text });
-
-      await sendControlNote(`mario-devx/${phaseLabel}: ${stream.text}`);
+      const accepted = ingestControlProgressEvent({
+        controlSessionId: run.controlSessionId,
+        event,
+        ...(workSessionId ? { workSessionId } : {}),
+        ...(verifierSessionId ? { verifierSessionId } : {}),
+        streamWorkEvents: run.streamWorkEvents,
+        streamVerifyEvents: run.streamVerifyEvents,
+        ...(run.currentPI ? { taskId: run.currentPI } : {}),
+      });
+      if (!accepted) return;
+      flushControlProgress(run.controlSessionId);
     },
     config: async (config) => {
       config.command = config.command ?? {};

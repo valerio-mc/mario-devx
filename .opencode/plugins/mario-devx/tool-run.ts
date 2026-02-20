@@ -47,6 +47,7 @@ import {
 } from "./run-phase-helpers";
 import { buildGateRepairPrompt, buildIterationTaskPlan, buildSemanticRepairPrompt } from "./run-prompts";
 import { buildPrompt } from "./prompt";
+import { flushControlProgress, pushControlProgressLine, registerControlProgressReporter } from "./progress-stream";
 import { buildVerifierContextText } from "./run-verifier";
 import { LIMITS, TIMEOUTS } from "./config";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
@@ -146,6 +147,42 @@ export const createRunTool = (opts: {
 
         await ensureMario(repoRoot, false);
         const runId = createRunId();
+        const controlSessionId = context.sessionID;
+        const emitToolMetadata = (snapshot: {
+          phase: "work" | "verify";
+          taskId?: string;
+          lines: string[];
+          updatedAt: string;
+        }): void => {
+          if (typeof context.metadata !== "function") return;
+          context.metadata({
+            title: `mario-devx: ${snapshot.phase}${snapshot.taskId ? ` ${snapshot.taskId}` : ""}`,
+            metadata: {
+              phase: snapshot.phase,
+              taskId: snapshot.taskId ?? null,
+              stream: snapshot.lines.join("\n"),
+              updatedAt: snapshot.updatedAt,
+            },
+          });
+        };
+        const flushInlineProgress = (force = false): void => {
+          if (!controlSessionId) return;
+          flushControlProgress(controlSessionId, { force });
+        };
+        const pushInlineProgress = (phase: "work" | "verify", text: string, taskId?: string): void => {
+          if (!controlSessionId) return;
+          const pushed = pushControlProgressLine(controlSessionId, {
+            phase,
+            text,
+            ...(taskId ? { taskId } : {}),
+          });
+          if (pushed) {
+            flushInlineProgress(true);
+          }
+        };
+        const unregisterProgress = controlSessionId
+          ? registerControlProgressReporter(controlSessionId, emitToolMetadata, 5)
+          : null;
         await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.PRECHECK_START, "Run preflight started", {
           controlSessionId: context.sessionID ?? null,
         }, { runId });
@@ -165,6 +202,7 @@ export const createRunTool = (opts: {
             cachedAt: previousRun.lastRunAt,
             duplicateWindowMs: TIMEOUTS.RUN_DUPLICATE_WINDOW_MS,
           }, { runId, reasonCode: RUN_REASON.DUPLICATE_WINDOW });
+          unregisterProgress?.();
           return previousRun.lastRunResult;
         }
 
@@ -180,6 +218,7 @@ export const createRunTool = (opts: {
           await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_ACQUIRE_FAILED, "Run lock acquire failed", {
             lockMessage: lock.message,
           }, { runId, reasonCode: RUN_REASON.RUN_LOCK_HELD });
+          unregisterProgress?.();
           return lock.message;
         }
 
@@ -496,8 +535,13 @@ export const createRunTool = (opts: {
             const carryForwardIssues = collectCarryForwardIssues(task);
             const iterationPlan = buildIterationTaskPlan({ task, prd, effectiveDoneWhen, carryForwardIssues });
             const buildModePrompt = await buildPrompt(repoRoot, "build", iterationPlan);
+            let workPhaseAnnounced = false;
+            let verifyPhaseAnnounced = false;
+            let workIdleAnnounced = false;
+            let verifyIdleAnnounced = false;
 
             await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
+            pushInlineProgress("work", `task ${task.id} started`, task.id);
 
             const blockForHeartbeatFailure = async (phase: string): Promise<void> => {
               const gates: PrdGatesAttempt = { ok: false, commands: [] };
@@ -753,6 +797,12 @@ export const createRunTool = (opts: {
               startedAt: nowIso(),
             });
 
+            if (!workPhaseAnnounced) {
+              workPhaseAnnounced = true;
+              await showToast(ctx, `Run: work phase started for ${task.id}`, "info");
+              pushInlineProgress("work", "phase started", task.id);
+            }
+
             const buildPromptSent = await promptWorkSessionWithTimeout("build", buildModePrompt);
             if (!buildPromptSent) {
               break;
@@ -775,6 +825,11 @@ export const createRunTool = (opts: {
               };
               prd = await persistBlockedTaskAttempt({ ctx, repoRoot, prd, task, attemptAt, iteration: state.iteration, gates, ui, judge, runId });
               break;
+            }
+            if (!workIdleAnnounced) {
+              workIdleAnnounced = true;
+              await showToast(ctx, `Run: work phase idle for ${task.id}`, "success");
+              pushInlineProgress("work", "phase idle", task.id);
             }
 
             let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
@@ -872,6 +927,11 @@ export const createRunTool = (opts: {
 
               const repairIdle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, TIMEOUTS.REPAIR_IDLE_TIMEOUT_MS);
               if (!repairIdle.ok) break;
+              if (!workIdleAnnounced) {
+                workIdleAnnounced = true;
+                await showToast(ctx, `Run: work phase idle for ${task.id}`, "success");
+                pushInlineProgress("work", "phase idle", task.id);
+              }
 
               const repairSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
               const repairDelta = summarizeWorkspaceDelta(repairSnapshotBefore, repairSnapshotAfter);
@@ -963,6 +1023,12 @@ export const createRunTool = (opts: {
             let semanticNoProgressStreak = 0;
 
             while (true) {
+              if (!verifyPhaseAnnounced) {
+                verifyPhaseAnnounced = true;
+                await showToast(ctx, `Run: verify phase started for ${task.id}`, "info");
+                pushInlineProgress("verify", "phase started", task.id);
+              }
+
               const verifierPrompt = await buildPrompt(repoRoot, "verify", buildVerifierContextText({
                 task,
                 doneWhen: effectiveDoneWhen,
@@ -985,6 +1051,11 @@ export const createRunTool = (opts: {
                 capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
                 ...(sessionAgents.verifyAgent ? { agent: sessionAgents.verifyAgent } : {}),
               });
+              if (!verifyIdleAnnounced) {
+                verifyIdleAnnounced = true;
+                await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
+                pushInlineProgress("verify", "phase idle", task.id);
+              }
 
               if (!(await heartbeatRunLock(repoRoot))) {
                 await blockForHeartbeatFailure("after-judge");
@@ -1198,6 +1269,7 @@ export const createRunTool = (opts: {
               error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
             }, { runId });
           }
+          unregisterProgress?.();
           await releaseRunLock(repoRoot);
         }
       },

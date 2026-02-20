@@ -153,8 +153,8 @@ Reason: Deterministic gate failed: npm run test (exit 1).
 - You run `/mario-devx:*` in your normal session (control session).
 - mario-devx models execution as two phases: **work phase** and **verify phase**.
 - Each phase uses its own ephemeral OpenCode session scoped to the current run and cleaned up on exit.
-- Optional live stream: set `STREAM_WORK=1` in `.mario/AGENTS.md` to mirror concise work-session progress in the control session.
-- Optional verify stream: set `STREAM_VERIFY=1` in `.mario/AGENTS.md` to mirror verifier-session progress in the control session.
+- Optional live stream: set `STREAM_WORK=1` in `.mario/AGENTS.md` to mirror concise work-session progress into the active `/mario-devx:run` tool card (no queued chat cards).
+- Optional verify stream: set `STREAM_VERIFY=1` in `.mario/AGENTS.md` to mirror verifier-session progress into the same tool card.
 
 ### Session agent knobs
 
@@ -169,8 +169,8 @@ STREAM_VERIFY=1
 
 - `WORK_AGENT`: agent used for build/repair prompts in the ephemeral work session.
 - `VERIFY_AGENT`: agent used for verifier prompts in the ephemeral verify session.
-- `STREAM_WORK=1` (default): forward compact live updates from work session to control session.
-- `STREAM_VERIFY=1` (default): forward compact live updates from verifier session to control session.
+- `STREAM_WORK=1` (default): forward compact work-session deltas into the running tool card metadata.
+- `STREAM_VERIFY=1` (default): forward compact verifier-session deltas into the running tool card metadata.
 
 ### The loop
 
