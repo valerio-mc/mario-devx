@@ -12,13 +12,14 @@ export const buildVerifierContextText = (opts: {
   task: PrdTask;
   doneWhen: string[];
   gates: PrdGateAttempt[];
-  uiResult: { ok: boolean } | null;
+  uiResult: { ok: boolean; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null;
   uiNote?: string;
   visualDirection?: string | null;
   uxRequirements?: string[];
   styleReferences?: string[];
   caps: AgentBrowserCapabilities;
   uiUrl: string;
+  uiCmd?: string;
 }): string => {
   const {
     task,
@@ -31,7 +32,17 @@ export const buildVerifierContextText = (opts: {
     styleReferences,
     caps,
     uiUrl,
+    uiCmd,
   } = opts;
+
+  const uiEvidenceLines = uiResult?.evidence
+    ? [
+        uiResult.evidence.snapshot ? `- Snapshot: ${uiResult.evidence.snapshot}` : "",
+        uiResult.evidence.snapshotInteractive ? `- Snapshot (-i): ${uiResult.evidence.snapshotInteractive}` : "",
+        uiResult.evidence.console ? `- Console: ${uiResult.evidence.console}` : "",
+        uiResult.evidence.errors ? `- Errors: ${uiResult.evidence.errors}` : "",
+      ].filter(Boolean)
+    : [];
 
   return sanitizeForPrompt([
     `Task: ${task.id} - ${task.title}`,
@@ -58,9 +69,19 @@ export const buildVerifierContextText = (opts: {
     "",
     "Autonomous UI check policy:",
     `- UI URL: ${uiUrl}`,
-    "- You may run agent-browser commands autonomously to gather missing evidence.",
+    `- UI dev command: ${uiCmd || "(not provided)"}`,
+    ...(uiEvidenceLines.length > 0
+      ? [
+          "- UI verification evidence is already provided below; treat it as primary evidence.",
+          "- Do NOT run additional agent-browser commands unless this evidence is missing or clearly inconclusive.",
+        ]
+      : [
+          "- You may run agent-browser commands autonomously to gather missing evidence.",
+          "- If the URL is unreachable, run the UI dev command first before retrying browser checks.",
+        ]),
     "- Maximum 8 browser commands for this verification pass.",
     "- Prefer snapshot/console/errors evidence before issuing FAIL.",
+    ...(uiEvidenceLines.length > 0 ? ["", "UI verification evidence:", ...uiEvidenceLines] : []),
   ]
     .filter((x) => x)
     .join("\n"));

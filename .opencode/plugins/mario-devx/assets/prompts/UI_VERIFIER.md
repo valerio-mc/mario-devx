@@ -14,6 +14,7 @@ Do not assume unsupported flags. If uncertain, run `agent-browser --help` first.
 
 ## Autonomous verification workflow
 
+0. If `UI verification evidence` is already present in prompt context, use it first and only run fresh browser commands when that evidence is missing or clearly inconclusive.
 1. Open the UI URL.
 2. Collect one full snapshot and at least one interactive snapshot (`snapshot -i`) when available.
 3. Validate PRD scope for the current task using concrete evidence from snapshot/text.

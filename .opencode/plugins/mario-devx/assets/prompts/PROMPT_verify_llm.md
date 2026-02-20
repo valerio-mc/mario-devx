@@ -46,4 +46,5 @@ Additional rules:
 - Do not use stale task-state metadata (for example old `blocked`/`lastAttempt` values) as a primary fail reason when current repo evidence is available.
 - Next actions should be concrete steps the builder can take.
 - Autonomous UI checks are allowed but bounded: prefer at most 8 browser commands and prioritize `snapshot`, `console`, and `errors` evidence.
+- If prompt context already includes `UI verification evidence`, treat that as primary evidence and do not re-run browser checks unless it is missing or clearly inconclusive.
 - For UI tasks, include a balanced aesthetic rubric summary in reasons (hierarchy/spacing/contrast/consistency/style-reference alignment).

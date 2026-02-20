@@ -19,6 +19,12 @@ export type PrdUiAttempt = {
   ran: boolean;
   ok: boolean | null;
   note?: string;
+  evidence?: {
+    snapshot?: string;
+    snapshotInteractive?: string;
+    console?: string;
+    errors?: string;
+  };
 };
 
 export type PrdJudgeAttempt = {

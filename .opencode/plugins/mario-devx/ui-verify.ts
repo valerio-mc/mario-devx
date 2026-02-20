@@ -13,6 +13,19 @@ export type LoggedShellResult = {
   durationMs: number;
 };
 
+export type UiVerificationEvidence = {
+  snapshot?: string;
+  snapshotInteractive?: string;
+  console?: string;
+  errors?: string;
+};
+
+export type UiVerificationResult = {
+  ok: boolean;
+  note?: string;
+  evidence?: UiVerificationEvidence;
+};
+
 type UiLog = (entry: {
   level: "info" | "warn" | "error";
   event: string;
@@ -416,7 +429,7 @@ export const runUiVerification = async (opts: {
   url: string;
   log?: UiLog;
   waitMs?: number;
-}): Promise<{ ok: boolean; note?: string }> => {
+}): Promise<UiVerificationResult> => {
   const { ctx, devCmd, url, log, waitMs } = opts;
   if (!ctx.$) {
     return { ok: false, note: "No shell available for UI verification." };
@@ -436,12 +449,15 @@ export const runUiVerification = async (opts: {
     return trimmed.length > 1200 ? `${trimmed.slice(-1200)}` : trimmed;
   };
 
-  const steps = [
+  const steps: Array<{ name: "open" | "snapshot" | "snapshot-interactive" | "console" | "errors"; command: string; optional?: boolean }> = [
     { name: "open", command: `agent-browser open ${JSON.stringify(url)}` },
     { name: "snapshot", command: "agent-browser snapshot" },
+    { name: "snapshot-interactive", command: "agent-browser snapshot -i", optional: true },
     { name: "console", command: "agent-browser console --limit=50" },
     { name: "errors", command: "agent-browser errors" },
   ];
+
+  const evidence: UiVerificationEvidence = {};
 
   const initialReady = await waitForUrlReady(url, 1500);
   let server: { pid: number | null; stop: () => Promise<void> } | null = null;
@@ -474,6 +490,20 @@ export const runUiVerification = async (opts: {
         reasonCode: "UI_VERIFY_STEP_FAILED",
       });
       if (result.exitCode !== 0) {
+        if (step.optional) {
+          await log?.({
+            level: "warn",
+            event: `ui.verify.${step.name}.optional-failed`,
+            message: "Optional UI verification step failed",
+            extra: {
+              step: step.name,
+              exitCode: result.exitCode,
+              stderr: summarize(result.stderr),
+              stdout: summarize(result.stdout),
+            },
+          });
+          continue;
+        }
         const stderr = summarize(result.stderr);
         const stdout = summarize(result.stdout);
         const details = [
@@ -497,13 +527,22 @@ export const runUiVerification = async (opts: {
         });
         return { ok: false, note: details };
       }
+
+      const out = summarize(result.stdout || result.stderr);
+      if (step.name === "snapshot" && out) evidence.snapshot = out;
+      if (step.name === "snapshot-interactive" && out) evidence.snapshotInteractive = out;
+      if (step.name === "console" && out) evidence.console = out;
+      if (step.name === "errors" && out) evidence.errors = out;
     }
     await log?.({
       level: "info",
       event: "ui.verify.success",
       message: "UI verification passed",
     });
-    return { ok: true };
+    return {
+      ok: true,
+      ...(Object.keys(evidence).length > 0 ? { evidence } : {}),
+    };
   } finally {
     await runShellLogged(ctx, "agent-browser close", log, {
       eventPrefix: "ui.verify.close",

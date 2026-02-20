@@ -452,7 +452,7 @@ export const createRunTool = (opts: {
             });
           };
 
-          const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string } | null> => {
+          const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null> => {
             return runUiVerifyForTaskPhase({
               shouldRunUiVerify,
               taskId,
@@ -1035,6 +1035,7 @@ export const createRunTool = (opts: {
                 styleReferences: prd.ui.styleReferences,
                 caps: agentBrowserCaps,
                 uiUrl: uiVerifyUrl,
+                uiCmd: uiVerifyCmd,
               }));
 
               const verifierOutcome = await resolveVerifierJudge({

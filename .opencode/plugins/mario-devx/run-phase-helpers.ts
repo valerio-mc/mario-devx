@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
-import { runUiVerification } from "./ui-verify";
+import { runUiVerification, type UiVerificationResult } from "./ui-verify";
 import type { GateRunItem } from "./gates";
 import type { PrdGatesAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
 import type { RunExecutionContext, RunLogMeta, RunPhaseName } from "./run-types";
@@ -36,7 +36,7 @@ export const toGatesAttempt = (result: { ok: boolean; results: GateRunItem[] }):
 
 export const toUiAttempt = (opts: {
   gateOk: boolean;
-  uiResult: { ok: boolean; note?: string } | null;
+  uiResult: UiVerificationResult | null;
   uiVerifyEnabled: boolean;
   isWebApp: boolean;
   cliOk: boolean;
@@ -45,7 +45,12 @@ export const toUiAttempt = (opts: {
 }): PrdUiAttempt => {
   const { gateOk, uiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk } = opts;
   return uiResult
-    ? { ran: true, ok: uiResult.ok, ...(uiResult.note ? { note: uiResult.note } : {}) }
+    ? {
+        ran: true,
+        ok: uiResult.ok,
+        ...(uiResult.note ? { note: uiResult.note } : {}),
+        ...(uiResult.evidence ? { evidence: uiResult.evidence } : {}),
+      }
     : {
         ran: false,
         ok: null,
@@ -109,7 +114,7 @@ export const runUiVerifyForTask = async (opts: {
     extra?: Record<string, unknown>,
     meta?: RunLogMeta,
   ) => Promise<void>;
-}): Promise<{ ok: boolean; note?: string } | null> => {
+}): Promise<UiVerificationResult | null> => {
   const { shouldRunUiVerify, taskId, ctx, uiVerifyCmd, uiVerifyUrl, waitMs, runCtx, logRunEvent } = opts;
   if (!shouldRunUiVerify) {
     return null;
