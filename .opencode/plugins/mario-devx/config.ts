@@ -10,15 +10,6 @@ export const TIMEOUTS = {
   // Maximum time to spend repairing a single task (25 minutes)
   MAX_TASK_REPAIR_MS: 25 * 60 * 1000,
   
-  // Maximum time to wait for a session to become idle (20 minutes)
-  SESSION_IDLE_TIMEOUT_MS: 20 * 60 * 1000,
-
-  // Maximum time for one session.status() poll RPC
-  SESSION_STATUS_POLL_TIMEOUT_MS: 5 * 1000,
-
-  // Idle wait after repair prompts before re-running gates (15 minutes)
-  REPAIR_IDLE_TIMEOUT_MS: 15 * 60 * 1000,
-
   // Short idle settle before a final gate reconciliation pass (15 seconds)
   GATE_SETTLE_IDLE_MS: 15 * 1000,
   

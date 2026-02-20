@@ -13,7 +13,7 @@ export const runShellCommand = async (
   command: string,
 ): Promise<ShellCommandResult> => {
   const started = Date.now();
-  const result = await $`sh -c ${command}`.nothrow();
+  const result = await $`sh -c ${command}`.quiet().nothrow();
   return {
     command,
     exitCode: result.exitCode,

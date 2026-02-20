@@ -1,126 +1,68 @@
 import { ensureMario, readRunState, writeRunState } from "./state";
-import { TIMEOUTS } from "./config";
 import type { RunState } from "./types";
-import { unwrapSdkData } from "./opencode-sdk";
+import { getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
 
 const nowIso = (): string => new Date().toISOString();
 
-type SessionStatusType = "idle" | "unknown" | "active";
-
 export type SessionIdleWaitResult = {
   ok: boolean;
-  reason: "idle" | "timeout-active" | "timeout-unknown";
+  reason: "idle" | "aborted";
   unknownChecks: number;
   activeChecks: number;
-};
-
-const getSessionStatusType = (statuses: unknown, sessionId: string): SessionStatusType => {
-  const fromRecord = statuses as Record<string, { type?: unknown } | undefined>;
-  const direct = fromRecord?.[sessionId];
-  if (direct && typeof direct.type === "string") {
-    return direct.type === "idle" ? "idle" : "active";
-  }
-
-  if (Array.isArray(statuses)) {
-    const match = (statuses as Array<Record<string, unknown>>).find((entry) => {
-      const id = entry.id ?? entry.sessionId ?? entry.sessionID;
-      return typeof id === "string" && id === sessionId;
-    });
-    if (match && typeof match.type === "string") {
-      return match.type === "idle" ? "idle" : "active";
-    }
-  }
-
-  return "unknown";
-};
-
-const readSessionStatusesWithTimeout = async (ctx: any): Promise<unknown | null> => {
-  try {
-    const response = await Promise.race([
-      ctx.client.session.status(),
-      new Promise<null>((resolve) => {
-        setTimeout(() => resolve(null), TIMEOUTS.SESSION_STATUS_POLL_TIMEOUT_MS);
-      }),
-    ]);
-    if (response === null) {
-      return null;
-    }
-    return unwrapSdkData<Record<string, { type?: unknown }> | Array<Record<string, unknown>>>(response);
-  } catch {
-    return null;
-  }
+  idleSequence: number;
 };
 
 export const waitForSessionIdle = async (
-  ctx: any,
+  _ctx: any,
   sessionId: string,
-  timeoutMs: number,
+  _timeoutMs: number,
+  opts?: {
+    afterSequence?: number;
+    abortSignal?: AbortSignal;
+  },
 ): Promise<boolean> => {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const statuses = await readSessionStatusesWithTimeout(ctx);
-    if (statuses === null) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      continue;
-    }
-    const statusType = getSessionStatusType(statuses, sessionId);
-    if (statusType === "idle") {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  return false;
+  const result = await waitForSessionIdleStableDetailed(_ctx, sessionId, _timeoutMs, 1, opts);
+  return result.ok;
 };
 
 export const waitForSessionIdleStable = async (
-  ctx: any,
+  _ctx: any,
   sessionId: string,
-  timeoutMs: number,
-  consecutiveIdleChecks = 2,
+  _timeoutMs: number,
+  consecutiveIdleChecks = 1,
+  opts?: {
+    afterSequence?: number;
+    abortSignal?: AbortSignal;
+  },
 ): Promise<boolean> => {
-  const result = await waitForSessionIdleStableDetailed(ctx, sessionId, timeoutMs, consecutiveIdleChecks);
+  const result = await waitForSessionIdleStableDetailed(_ctx, sessionId, _timeoutMs, consecutiveIdleChecks, opts);
   return result.ok;
 };
 
 export const waitForSessionIdleStableDetailed = async (
-  ctx: any,
+  _ctx: any,
   sessionId: string,
-  timeoutMs: number,
-  consecutiveIdleChecks = 2,
+  _timeoutMs: number,
+  _consecutiveIdleChecks = 1,
+  opts?: {
+    afterSequence?: number;
+    abortSignal?: AbortSignal;
+  },
 ): Promise<SessionIdleWaitResult> => {
-  const start = Date.now();
-  let idleStreak = 0;
-  let unknownChecks = 0;
-  let activeChecks = 0;
-  while (Date.now() - start < timeoutMs) {
-    const statuses = await readSessionStatusesWithTimeout(ctx);
-    if (statuses === null) {
-      idleStreak = 0;
-      unknownChecks += 1;
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      continue;
-    }
-    const statusType = getSessionStatusType(statuses, sessionId);
-    if (statusType === "idle") {
-      idleStreak += 1;
-      if (idleStreak >= Math.max(1, consecutiveIdleChecks)) {
-        return { ok: true, reason: "idle", unknownChecks, activeChecks };
-      }
-    } else {
-      idleStreak = 0;
-      if (statusType === "unknown") {
-        unknownChecks += 1;
-      } else {
-        activeChecks += 1;
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
+  const afterSequence = Number.isFinite(opts?.afterSequence)
+    ? Number(opts?.afterSequence)
+    : getSessionIdleSequence(sessionId);
+  const idleResult = await waitForSessionIdleSignal({
+    sessionId,
+    afterSequence,
+    ...(opts?.abortSignal ? { signal: opts.abortSignal } : {}),
+  });
   return {
-    ok: false,
-    reason: activeChecks > 0 ? "timeout-active" : "timeout-unknown",
-    unknownChecks,
-    activeChecks,
+    ok: idleResult.ok,
+    reason: idleResult.reason,
+    unknownChecks: 0,
+    activeChecks: 0,
+    idleSequence: idleResult.sequence,
   };
 };
 
@@ -322,7 +264,6 @@ export const resolvePromptText = async (
   ctx: any,
   sessionId: string,
   promptResponse: unknown,
-  waitTimeoutMs: number,
 ): Promise<string> => {
   const direct = extractTextFromPromptResponse(promptResponse);
   if (direct.length > 0) {
@@ -334,7 +275,7 @@ export const resolvePromptText = async (
     return "";
   }
 
-  const idle = await waitForSessionIdle(ctx, sessionId, waitTimeoutMs);
+  const idle = await waitForSessionIdle(ctx, sessionId, 0);
   if (!idle) {
     return "";
   }

@@ -30,7 +30,6 @@ import {
   type PrdUiAttempt,
 } from "./prd";
 import {
-  TIMEOUTS,
   WIZARD_REQUIREMENTS,
 } from "./config";
 import { logError, logInfo } from "./errors";
@@ -938,12 +937,16 @@ const showToast = async (
   if (!ctx.client?.tui?.showToast) {
     return;
   }
-  await ctx.client.tui.showToast({
-    body: {
-      message,
-      variant,
-    },
-  });
+  try {
+    await ctx.client.tui.showToast({
+      body: {
+        message,
+        variant,
+      },
+    });
+  } catch {
+    // Best-effort notifications only.
+  }
 };
 
 const logRunEvent = async (
@@ -1079,10 +1082,9 @@ const promptAndResolveWithRetry = async (opts: {
   runId: string;
   taskId: string;
   agent?: string;
-  timeoutMs: number;
   capabilitySummary: string;
 }): Promise<string> => {
-  const { ctx, repoRoot, promptText, runId, taskId, agent, timeoutMs, capabilitySummary } = opts;
+  const { ctx, repoRoot, promptText, runId, taskId, agent, capabilitySummary } = opts;
   const maxAttempts = 3;
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1110,7 +1112,6 @@ const promptAndResolveWithRetry = async (opts: {
         ctx,
         sessionId: verifierPhaseSession.sessionId,
         promptText,
-        timeoutMs,
         ...(agent ? { agent } : {}),
       });
       if (!verifierText.trim()) {
@@ -1168,7 +1169,6 @@ const resolveVerifierJudge = async (opts: {
       runId,
       taskId,
       ...(agent ? { agent } : {}),
-      timeoutMs: TIMEOUTS.SESSION_IDLE_TIMEOUT_MS,
       capabilitySummary,
     });
     return { judge: enforceJudgeOutputQuality(parseJudgeAttemptFromText(verifierText)) };

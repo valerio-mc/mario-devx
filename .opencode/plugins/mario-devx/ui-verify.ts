@@ -239,7 +239,7 @@ export const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> =
 
 export const hasAgentBrowserCli = async (ctx: any): Promise<boolean> => {
   if (!ctx.$) return false;
-  const r = await ctx.$`sh -c "command -v agent-browser"`.nothrow();
+  const r = await ctx.$`sh -c "command -v agent-browser"`.quiet().nothrow();
   return r.exitCode === 0;
 };
 

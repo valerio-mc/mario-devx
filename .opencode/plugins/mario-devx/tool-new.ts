@@ -4,7 +4,7 @@ import { tool } from "@opencode-ai/plugin";
 import { ensureMario } from "./state";
 import { writePrdJson } from "./prd";
 import { ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
-import { WIZARD_REQUIREMENTS, TIMEOUTS } from "./config";
+import { WIZARD_REQUIREMENTS } from "./config";
 import { LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
 
@@ -236,7 +236,7 @@ export const createNewTool = (opts: {
             parts: [{ type: "text", text: interviewPrompt(prd, interviewInput) }],
           },
         });
-        const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+        const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse);
         let parsedInterview = parseInterviewTurn(text);
 
         if (parsedInterview.error) {
@@ -250,7 +250,7 @@ export const createNewTool = (opts: {
               parts: [{ type: "text", text: interviewTurnRepairPrompt(text) }],
             },
           });
-          const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+          const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
           const repairedInterview = parseInterviewTurn(repairedText);
 
           if (!repairedInterview.error) {
@@ -279,7 +279,7 @@ export const createNewTool = (opts: {
               parts: [{ type: "text", text: compileInterviewPrompt(prd) }],
             },
           });
-          const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+          const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse);
           let compiled = parseCompileInterviewResponse(compileText);
           if (compiled.error) {
             await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error", "Failed to parse compiled interview envelope", {
@@ -291,7 +291,7 @@ export const createNewTool = (opts: {
                 parts: [{ type: "text", text: compileRepairPrompt(compileText) }],
               },
             });
-            const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+            const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
             compiled = parseCompileInterviewResponse(repairedText);
             if (compiled.error) {
               await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error-retry", "Compile parse retry failed", {
@@ -326,7 +326,7 @@ export const createNewTool = (opts: {
                 parts: [{ type: "text", text: qualityGatePresetPrompt(prd) }],
               },
             });
-            const presetText = await resolvePromptText(ctx, ws.sessionId, presetResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+            const presetText = await resolvePromptText(ctx, ws.sessionId, presetResponse);
             let selection = parseQualityGatePresetResponse(presetText);
             if (!selection) {
               const repairResponse = await ctx.client.session.prompt({
@@ -335,7 +335,7 @@ export const createNewTool = (opts: {
                   parts: [{ type: "text", text: qualityGatePresetRepairPrompt(presetText) }],
                 },
               });
-              const repairText = await resolvePromptText(ctx, ws.sessionId, repairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+              const repairText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
               selection = parseQualityGatePresetResponse(repairText);
             }
             if (selection) {
@@ -367,7 +367,7 @@ export const createNewTool = (opts: {
                 parts: [{ type: "text", text: repeatedQuestionRepairPrompt(cachedQuestion, rawInput) }],
               },
             });
-            const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse, TIMEOUTS.SESSION_IDLE_TIMEOUT_MS);
+            const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse);
             const repeatRepairTurn = parseInterviewTurn(repeatRepairText);
             if (!repeatRepairTurn.error && repeatRepairTurn.question) {
               finalQuestion = repeatRepairTurn.question;

@@ -3,6 +3,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 export type ToolContext = {
   sessionID?: string;
   agent?: string;
+  abort?: AbortSignal;
   metadata?: (input: {
     title?: string;
     metadata?: Record<string, unknown>;

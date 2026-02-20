@@ -4,6 +4,7 @@ import { assetsDir } from "./assets";
 import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
 import { unwrapSdkData } from "./opencode-sdk";
+import { getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -118,10 +119,9 @@ export const runVerifierTurn = async (opts: {
   ctx: any;
   sessionId: string;
   promptText: string;
-  timeoutMs: number;
   agent?: string;
 }): Promise<string> => {
-  const { ctx, sessionId, promptText, timeoutMs, agent } = opts;
+  const { ctx, sessionId, promptText, agent } = opts;
   const body = {
     ...(agent ? { agent } : {}),
     parts: [{ type: "text", text: promptText }],
@@ -158,8 +158,8 @@ export const runVerifierTurn = async (opts: {
   };
 
   const waitForLatestAssistantText = async (baselineAssistantCount: number): Promise<string> => {
-    const started = Date.now();
-    while (Date.now() - started < timeoutMs) {
+    let afterSequence = getSessionIdleSequence(sessionId);
+    while (true) {
       const messages = await readMessages();
       const assistants = messages.filter((entry) => entry.info?.role === "assistant");
       if (assistants.length > baselineAssistantCount) {
@@ -169,9 +169,15 @@ export const runVerifierTurn = async (opts: {
           return text;
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, 750));
+      const idle = await waitForSessionIdleSignal({
+        sessionId,
+        afterSequence,
+      });
+      if (!idle.ok) {
+        return "";
+      }
+      afterSequence = idle.sequence;
     }
-    return "";
   };
 
   try {
@@ -179,7 +185,7 @@ export const runVerifierTurn = async (opts: {
       path: { id: sessionId },
       body,
     });
-    return resolvePromptText(ctx, sessionId, response, timeoutMs);
+    return resolvePromptText(ctx, sessionId, response);
   } catch (error) {
     if (!isLikelyTransportParseError(error)) {
       throw error;

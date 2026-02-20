@@ -12,7 +12,11 @@
  * See: https://opencode.ai/docs/plugins/#logging
  */
 
-import type { MarioError } from "./types-extended";
+type MarioError = {
+  code: string;
+  message: string;
+  details?: unknown;
+};
 
 export class MarioErrorClass extends Error implements MarioError {
   code: string;

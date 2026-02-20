@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
 import { flushControlProgress, ingestControlProgressEvent, pushControlProgressLine } from "./progress-stream";
+import { markSessionIdle } from "./session-idle-signal";
 import { readRunState } from "./state";
 
 const getIdleSessionId = (event: unknown): string | null => {
@@ -51,6 +52,11 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
   return {
     tool: tools,
     event: async ({ event }) => {
+      const idleSessionID = getIdleSessionId(event);
+      if (idleSessionID) {
+        markSessionIdle(idleSessionID);
+      }
+
       const run = await readRunState(repoRoot);
       if (run.status !== "DOING") {
         return;
@@ -65,7 +71,6 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
       }
 
       // Notify control session when the work session becomes idle.
-      const idleSessionID = getIdleSessionId(event);
       if (idleSessionID && idleSessionID === workSessionId) {
         pushControlProgressLine(run.controlSessionId, {
           phase: "work",
