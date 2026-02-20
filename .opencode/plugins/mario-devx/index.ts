@@ -132,6 +132,7 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
       await flushToastStream({
         controlSessionId: run.controlSessionId,
         phase: accepted.phase,
+        force: accepted.forceFlush,
         minIntervalMs: STREAM_TOAST_INTERVAL_MS,
         notify: async ({ message, variant }) => safeShowToast(client, message, variant),
       });
