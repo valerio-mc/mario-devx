@@ -32,7 +32,7 @@ import {
 import {
   WIZARD_REQUIREMENTS,
 } from "./config";
-import { logError, logInfo } from "./errors";
+import { logError } from "./errors";
 import { logEvent, logPrdComplete, redactForLog } from "./logging";
 import { type RunLogMeta } from "./run-types";
 import { runShellCommand } from "./shell";
@@ -874,7 +874,6 @@ const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
     try {
       const parsed = JSON.parse(jsonMatch[1].trim());
       if (parsed.status && (parsed.status === "PASS" || parsed.status === "FAIL")) {
-        logInfo("verifier", `${parsed.status} - ${Array.isArray(parsed.reason) ? parsed.reason.length : 0} reasons`);
         return {
           status: parsed.status,
           exitSignal: parsed.status === "PASS",
