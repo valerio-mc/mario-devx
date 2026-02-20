@@ -47,9 +47,9 @@ import {
 } from "./run-phase-helpers";
 import { buildGateRepairPrompt, buildIterationTaskPlan, buildSemanticRepairPrompt } from "./run-prompts";
 import { buildPrompt } from "./prompt";
-import { flushControlProgress, pushControlProgressLine, registerControlProgressReporter } from "./progress-stream";
 import { getSessionIdleSequence } from "./session-idle-signal";
 import { buildVerifierContextText } from "./run-verifier";
+import { clearToastStreamChannel } from "./toast-stream";
 import { LIMITS, TIMEOUTS } from "./config";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
 import { writePrdJson } from "./prd";
@@ -149,43 +149,10 @@ export const createRunTool = (opts: {
         await ensureMario(repoRoot, false);
         const runId = createRunId();
         const controlSessionId = context.sessionID;
-        const emitToolMetadata = (snapshot: {
-          phase: "work" | "verify";
-          taskId?: string;
-          lines: string[];
-          updatedAt: string;
-        }): void => {
-          if (typeof context.metadata !== "function") return;
-          context.metadata({
-            title: `mario-devx: ${snapshot.phase}${snapshot.taskId ? ` ${snapshot.taskId}` : ""}`,
-            metadata: {
-              phase: snapshot.phase,
-              taskId: snapshot.taskId ?? null,
-              stream: snapshot.lines.join("\n"),
-              updatedAt: snapshot.updatedAt,
-            },
-          });
-        };
-        const flushInlineProgress = (force = false): void => {
-          if (!controlSessionId) return;
-          flushControlProgress(controlSessionId, { force });
-        };
-        const pushInlineProgress = (phase: "work" | "verify", text: string, taskId?: string): void => {
-          if (!controlSessionId) return;
-          const pushed = pushControlProgressLine(controlSessionId, {
-            phase,
-            text,
-            ...(taskId ? { taskId } : {}),
-          });
-          if (pushed) {
-            flushInlineProgress(true);
-          }
-        };
-        const unregisterProgress = controlSessionId
-          ? registerControlProgressReporter(controlSessionId, emitToolMetadata, 5)
-          : null;
+        if (controlSessionId) {
+          clearToastStreamChannel(controlSessionId);
+        }
         await showToast(ctx, "Run: preflight started", "info");
-        pushInlineProgress("work", "preflight started");
         await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.PRECHECK_START, "Run preflight started", {
           controlSessionId: context.sessionID ?? null,
         }, { runId });
@@ -206,8 +173,6 @@ export const createRunTool = (opts: {
             duplicateWindowMs: TIMEOUTS.RUN_DUPLICATE_WINDOW_MS,
           }, { runId, reasonCode: RUN_REASON.DUPLICATE_WINDOW });
           await showToast(ctx, "Run: returning cached result (duplicate window)", "info");
-          pushInlineProgress("work", "duplicate window cache hit");
-          unregisterProgress?.();
           return previousRun.lastRunResult;
         }
 
@@ -224,8 +189,6 @@ export const createRunTool = (opts: {
             lockMessage: lock.message,
           }, { runId, reasonCode: RUN_REASON.RUN_LOCK_HELD });
           await showToast(ctx, "Run blocked: another run is already active", "warning");
-          pushInlineProgress("work", "blocked by active run lock");
-          unregisterProgress?.();
           return lock.message;
         }
 
@@ -275,7 +238,6 @@ export const createRunTool = (opts: {
               ...(prerequisites.extra ?? {}),
             }, { runId, ...(prerequisites.reasonCode ? { reasonCode: prerequisites.reasonCode } : {}) });
             await showToast(ctx, "Run blocked during preflight", "warning");
-            pushInlineProgress("work", "preflight blocked; check PRD and quality gates");
             return prerequisites.message ?? "Run blocked during preflight validation.";
           }
 
@@ -550,7 +512,6 @@ export const createRunTool = (opts: {
             let verifyIdleAnnounced = false;
 
             await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
-            pushInlineProgress("work", `task ${task.id} started`, task.id);
 
             const blockForHeartbeatFailure = async (phase: string): Promise<void> => {
               const gates: PrdGatesAttempt = { ok: false, commands: [] };
@@ -810,14 +771,12 @@ export const createRunTool = (opts: {
             if (!workPhaseAnnounced) {
               workPhaseAnnounced = true;
               await showToast(ctx, `Run: work phase started for ${task.id}`, "info");
-              pushInlineProgress("work", "phase started", task.id);
             }
 
             const buildPromptDispatch = await promptWorkSessionWithTimeout("build", buildModePrompt);
             if (!buildPromptDispatch.ok) {
               break;
             }
-            pushInlineProgress("work", "build prompt dispatched", task.id);
 
             if (!(await heartbeatRunLock(repoRoot))) {
               await blockForHeartbeatFailure("after-build-prompt");
@@ -856,12 +815,9 @@ export const createRunTool = (opts: {
             if (!workIdleAnnounced) {
               workIdleAnnounced = true;
               await showToast(ctx, `Run: work phase idle for ${task.id}`, "success");
-              pushInlineProgress("work", "phase idle", task.id);
             }
 
-            pushInlineProgress("work", "running deterministic gates", task.id);
             let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-            pushInlineProgress("work", gateResult.ok ? "deterministic gates passed" : "deterministic gates failed", task.id);
             await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
 
             const taskRepairStartedAt = Date.now();
@@ -930,7 +886,6 @@ export const createRunTool = (opts: {
                   await showToast(ctx, `Run: default scaffold failed on ${task.id}, falling back to agent repair`, "warning");
                 }
                 gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-                pushInlineProgress("work", gateResult.ok ? "deterministic gates passed" : "deterministic gates failed", task.id);
                 await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
                 if (gateResult.ok) break;
               }
@@ -969,7 +924,6 @@ export const createRunTool = (opts: {
               if (!workIdleAnnounced) {
                 workIdleAnnounced = true;
                 await showToast(ctx, `Run: work phase idle for ${task.id}`, "success");
-                pushInlineProgress("work", "phase idle", task.id);
               }
 
               const repairSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
@@ -988,7 +942,6 @@ export const createRunTool = (opts: {
               repairAttempts += 1;
               totalRepairAttempts += 1;
               gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-              pushInlineProgress("work", gateResult.ok ? "deterministic gates passed" : "deterministic gates failed", task.id);
               await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
             }
 
@@ -1066,10 +1019,8 @@ export const createRunTool = (opts: {
               if (!verifyPhaseAnnounced) {
                 verifyPhaseAnnounced = true;
                 await showToast(ctx, `Run: verify phase started for ${task.id}`, "info");
-                pushInlineProgress("verify", "phase started", task.id);
               }
 
-              pushInlineProgress("verify", "building verifier prompt", task.id);
               const verifierPrompt = await buildPrompt(repoRoot, "verify", buildVerifierContextText({
                 task,
                 doneWhen: effectiveDoneWhen,
@@ -1092,11 +1043,9 @@ export const createRunTool = (opts: {
                 capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
                 ...(sessionAgents.verifyAgent ? { agent: sessionAgents.verifyAgent } : {}),
               });
-              pushInlineProgress("verify", "verifier judgement received", task.id);
               if (!verifyIdleAnnounced) {
                 verifyIdleAnnounced = true;
                 await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
-                pushInlineProgress("verify", "phase idle", task.id);
               }
 
               if (!(await heartbeatRunLock(repoRoot))) {
@@ -1172,7 +1121,6 @@ export const createRunTool = (opts: {
               }
 
               latestGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-              pushInlineProgress("work", latestGateResult.ok ? "deterministic gates passed" : "deterministic gates failed", task.id);
               latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
               gates = toGatesAttempt(latestGateResult);
               ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
@@ -1321,7 +1269,9 @@ export const createRunTool = (opts: {
               error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
             }, { runId });
           }
-          unregisterProgress?.();
+          if (controlSessionId) {
+            clearToastStreamChannel(controlSessionId);
+          }
           await releaseRunLock(repoRoot);
         }
       },

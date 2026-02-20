@@ -1,9 +1,11 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { createCommands } from "./commands";
 import { createTools } from "./tools";
-import { flushControlProgress, ingestControlProgressEvent, pushControlProgressLine } from "./progress-stream";
 import { markSessionIdle } from "./session-idle-signal";
 import { readRunState } from "./state";
+import { clearToastStreamChannel, flushToastStream, ingestToastStreamEvent } from "./toast-stream";
+
+const STREAM_TOAST_INTERVAL_MS = 3500;
 
 const getIdleSessionId = (event: unknown): string | null => {
   if (!event || typeof event !== "object") {
@@ -38,6 +40,25 @@ const safePluginLog = async (
   }
 };
 
+const safeShowToast = async (
+  client: { tui?: { showToast?: (args: { body: { message: string; variant: "info" | "success" | "warning" | "error" } }) => Promise<unknown> } },
+  message: string,
+  variant: "info" | "success" | "warning" | "error" = "info",
+): Promise<void> => {
+  try {
+    if (client.tui?.showToast) {
+      await client.tui.showToast({
+        body: {
+          message,
+          variant,
+        },
+      });
+    }
+  } catch {
+    // Best-effort notifications only.
+  }
+};
+
 export const marioDevxPlugin: Plugin = async (ctx) => {
   const { client, directory, worktree } = ctx;
   const repoRoot = worktree ?? directory;
@@ -59,38 +80,45 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
 
       const run = await readRunState(repoRoot);
       if (run.status !== "DOING") {
+        if (run.controlSessionId) {
+          clearToastStreamChannel(run.controlSessionId);
+        }
         return;
       }
       const workSessionId = run.workSessionId;
       const verifierSessionId = run.verifierSessionId;
       if (!workSessionId && !verifierSessionId) {
+        if (run.controlSessionId) {
+          clearToastStreamChannel(run.controlSessionId);
+        }
         return;
       }
       if (!run.controlSessionId) {
         return;
       }
 
-      // Notify control session when the work session becomes idle.
       if (idleSessionID && idleSessionID === workSessionId) {
-        pushControlProgressLine(run.controlSessionId, {
+        await flushToastStream({
+          controlSessionId: run.controlSessionId,
           phase: "work",
-          text: `phase idle (${run.currentPI ?? "task"})`,
-          ...(run.currentPI ? { taskId: run.currentPI } : {}),
+          force: true,
+          minIntervalMs: STREAM_TOAST_INTERVAL_MS,
+          notify: async ({ message, variant }) => safeShowToast(client, message, variant),
         });
-        flushControlProgress(run.controlSessionId, { force: true });
         return;
       }
       if (idleSessionID && idleSessionID === verifierSessionId) {
-        pushControlProgressLine(run.controlSessionId, {
+        await flushToastStream({
+          controlSessionId: run.controlSessionId,
           phase: "verify",
-          text: `phase idle (${run.currentPI ?? "task"})`,
-          ...(run.currentPI ? { taskId: run.currentPI } : {}),
+          force: true,
+          minIntervalMs: STREAM_TOAST_INTERVAL_MS,
+          notify: async ({ message, variant }) => safeShowToast(client, message, variant),
         });
-        flushControlProgress(run.controlSessionId, { force: true });
         return;
       }
 
-      const accepted = ingestControlProgressEvent({
+      const accepted = ingestToastStreamEvent({
         controlSessionId: run.controlSessionId,
         event,
         ...(workSessionId ? { workSessionId } : {}),
@@ -99,8 +127,14 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
         streamVerifyEvents: run.streamVerifyEvents,
         ...(run.currentPI ? { taskId: run.currentPI } : {}),
       });
-      if (!accepted) return;
-      flushControlProgress(run.controlSessionId);
+      if (!accepted.accepted) return;
+
+      await flushToastStream({
+        controlSessionId: run.controlSessionId,
+        phase: accepted.phase,
+        minIntervalMs: STREAM_TOAST_INTERVAL_MS,
+        notify: async ({ message, variant }) => safeShowToast(client, message, variant),
+      });
     },
     config: async (config) => {
       config.command = config.command ?? {};

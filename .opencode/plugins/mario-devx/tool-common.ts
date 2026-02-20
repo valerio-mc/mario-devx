@@ -4,10 +4,6 @@ export type ToolContext = {
   sessionID?: string;
   agent?: string;
   abort?: AbortSignal;
-  metadata?: (input: {
-    title?: string;
-    metadata?: Record<string, unknown>;
-  }) => void;
 };
 
 export type PluginContext = Parameters<Plugin>[0];
