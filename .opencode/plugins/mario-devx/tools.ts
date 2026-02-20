@@ -398,6 +398,17 @@ const isMetaCarryForwardLine = (line: string): boolean => {
   return false;
 };
 
+const normalizeIssueLine = (line: unknown): string => {
+  const text = String(line ?? "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[-*]\s+/, "")
+    .trim()
+    .replace(/[.\s]+$/, "")
+    .toLowerCase();
+  return text;
+};
+
 const firstActionableJudgeReason = (judge: PrdJudgeAttempt | undefined): string | null => {
   if (!judge) return null;
   const reasons = (judge.reason ?? []).map((x) => String(x).trim()).filter(Boolean);
