@@ -1,6 +1,6 @@
 import { ensureMario, readRunState, writeRunState } from "./state";
 import type { RunState } from "./types";
-import { getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
+import { forgetSessionIdle, getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
 import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
 
 const nowIso = (): string => new Date().toISOString();
@@ -145,9 +145,11 @@ export const deleteSessionBestEffort = async (
   }
   try {
     await ctx.client.session.delete({ path: { id: sessionId } });
+    forgetSessionIdle(sessionId);
     return "deleted";
   } catch (error) {
     if (isSessionNotFoundError(error)) {
+      forgetSessionIdle(sessionId);
       return "not-found";
     }
     return "failed";

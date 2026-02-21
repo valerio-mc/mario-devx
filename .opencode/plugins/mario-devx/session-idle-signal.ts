@@ -58,6 +58,22 @@ export const markSessionIdle = (sessionId: string): number => {
   return nextSequence;
 };
 
+export const forgetSessionIdle = (sessionId: string): void => {
+  const waiters = sessionIdleWaiters.get(sessionId);
+  if (waiters && waiters.size > 0) {
+    const sequence = getSessionIdleSequence(sessionId);
+    for (const waiter of Array.from(waiters)) {
+      settleWaiter(sessionId, waiter, {
+        ok: false,
+        reason: "aborted",
+        sequence,
+      });
+    }
+  }
+  sessionIdleWaiters.delete(sessionId);
+  sessionIdleSequence.delete(sessionId);
+};
+
 export const waitForSessionIdleSignal = async (opts: {
   sessionId: string;
   afterSequence?: number;

@@ -4,7 +4,7 @@ import { assetsDir } from "./paths";
 import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
 import { unwrapSdkData } from "./opencode-sdk";
-import { getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
+import { forgetSessionIdle, getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
 import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
 
 const nowIso = (): string => new Date().toISOString();
@@ -92,9 +92,11 @@ export const disposeVerifierPhaseSession = async (
   }
   try {
     await ctx.client.session.delete({ path: { id: sessionId } });
+    forgetSessionIdle(sessionId);
     return "deleted";
   } catch (error) {
     if (isSessionNotFoundError(error)) {
+      forgetSessionIdle(sessionId);
       return "not-found";
     }
     return "failed";
