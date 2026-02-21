@@ -3,7 +3,7 @@ import { tool } from "@opencode-ai/plugin";
 import { compactIdea } from "./interview";
 import { decomposeFeatureRequestToTasks, makeTask, nextTaskOrdinal, normalizeTaskId } from "./planner";
 import { writePrdJson, type PrdJson, type PrdTask } from "./prd";
-import { deleteSessionBestEffort, ensureNotInWorkSession, ensureWorkSession, extractTextFromPromptResponse } from "./runner";
+import { deleteSessionBestEffort, ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
 import { ensureMario, readRunState } from "./state";
 import { logReplanComplete, redactForLog } from "./logging";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
@@ -141,7 +141,7 @@ export const createBacklogTools = (opts: {
           },
         });
 
-        const responseText = extractTextFromPromptResponse(featureResponse);
+        const responseText = await resolvePromptText(ctx, ws.sessionId, featureResponse);
         const jsonMatch = responseText.match(/<FEATURE_JSON>([\s\S]*?)<\/FEATURE_JSON>/i);
 
         if (!jsonMatch) {
@@ -359,7 +359,7 @@ export const createBacklogTools = (opts: {
           },
         });
 
-        const replanText = extractTextFromPromptResponse(replanResponse);
+        const replanText = await resolvePromptText(ctx, ws.sessionId, replanResponse);
         const replanMatch = replanText.match(/<REPLAN_JSON>([\s\S]*?)<\/REPLAN_JSON>/i);
 
         let n = nextTaskOrdinal(prd.tasks ?? []);
