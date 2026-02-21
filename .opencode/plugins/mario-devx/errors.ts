@@ -1,15 +1,8 @@
 /**
  * Error Handling Utilities
- * 
- * Standardized error handling across mario-devx.
- * All errors use structured format with codes for programmatic handling.
- * 
- * NOTE: This module uses console.log/error/warn which is acceptable for
- * plugin internal logging. Per OpenCode best practices, client.app.log()
- * should only be used in the main plugin function where the client is
- * available. Internal utility functions can use console for simplicity.
- * 
- * See: https://opencode.ai/docs/plugins/#logging
+ *
+ * Console logging is disabled by default to avoid polluting the OpenCode TUI.
+ * Set MARIO_DEVX_DEBUG=1 to emit verbose console diagnostics when needed.
  */
 
 type MarioError = {
@@ -30,7 +23,10 @@ export class MarioErrorClass extends Error implements MarioError {
   }
 }
 
+const shouldLogToConsole = (): boolean => process.env.MARIO_DEVX_DEBUG === "1";
+
 export const logError = (context: string, error: unknown): void => {
+  if (!shouldLogToConsole()) return;
   if (error instanceof MarioErrorClass) {
     console.error(`[mario-devx] ${context}: [${error.code}] ${error.message}`);
     if (error.details) {
@@ -47,9 +43,11 @@ export const logError = (context: string, error: unknown): void => {
 };
 
 export const logWarning = (context: string, message: string): void => {
+  if (!shouldLogToConsole()) return;
   console.warn(`[mario-devx] ${context}: ${message}`);
 };
 
 export const logInfo = (context: string, message: string): void => {
+  if (!shouldLogToConsole()) return;
   console.log(`[mario-devx] ${context}: ${message}`);
 };
