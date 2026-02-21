@@ -1,5 +1,5 @@
 import path from "path";
-import { readTextIfExists, writeText } from "./fs";
+import { ensureDir, readTextIfExists, writeText, writeTextAtomic } from "./fs";
 
 export type PrdTaskStatus = "open" | "in_progress" | "blocked" | "completed" | "cancelled";
 
@@ -218,6 +218,14 @@ export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | n
     }
     return prd;
   } catch {
+    const rand = Math.random().toString(16).slice(2, 8);
+    const backupPath = `${prdJsonPath(repoRoot)}.corrupt-${new Date().toISOString().replace(/[:.]/g, "")}-${rand}`;
+    try {
+      await ensureDir(path.dirname(prdJsonPath(repoRoot)));
+      await writeText(backupPath, raw);
+    } catch {
+      // Best-effort only.
+    }
     return null;
   }
 };
@@ -231,5 +239,5 @@ export const writePrdJson = async (repoRoot: string, prd: PrdJson): Promise<void
       updatedAt: new Date().toISOString(),
     },
   };
-  await writeText(prdJsonPath(repoRoot), `${JSON.stringify(next, null, 2)}\n`);
+  await writeTextAtomic(prdJsonPath(repoRoot), `${JSON.stringify(next, null, 2)}\n`);
 };
