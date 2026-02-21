@@ -115,21 +115,27 @@ const waitForUrlReady = async (url: string, timeoutMs: number): Promise<boolean>
 };
 
 const startDevServer = (command: string): { pid: number | null; stop: () => Promise<void> } => {
+  const isWindows = process.platform === "win32";
   const child = spawn("sh", ["-c", command], {
     stdio: "ignore",
     env: { ...process.env, CI: "1", npm_config_yes: "true" },
+    detached: !isWindows,
   });
+  if (!isWindows) {
+    child.unref();
+  }
   const pid = child.pid ?? null;
   const stop = async (): Promise<void> => {
     if (!pid) return;
+    const targetPid = isWindows ? pid : -pid;
     try {
-      process.kill(pid, "SIGTERM");
+      process.kill(targetPid, "SIGTERM");
     } catch {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
     try {
-      process.kill(pid, "SIGKILL");
+      process.kill(targetPid, "SIGKILL");
     } catch {
       // already closed
     }
