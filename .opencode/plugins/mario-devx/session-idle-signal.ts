@@ -1,6 +1,6 @@
 type IdleWaitResult = {
   ok: boolean;
-  reason: "idle" | "aborted";
+  reason: "idle" | "aborted" | "timeout";
   sequence: number;
 };
 
@@ -9,6 +9,7 @@ type IdleWaiter = {
   resolve: (result: IdleWaitResult) => void;
   signal?: AbortSignal;
   abortListener?: () => void;
+  timeoutHandle?: ReturnType<typeof setTimeout>;
 };
 
 const sessionIdleSequence = new Map<string, number>();
@@ -28,6 +29,9 @@ const settleWaiter = (sessionId: string, waiter: IdleWaiter, result: IdleWaitRes
   }
   if (waiter.signal && waiter.abortListener) {
     waiter.signal.removeEventListener("abort", waiter.abortListener);
+  }
+  if (waiter.timeoutHandle) {
+    clearTimeout(waiter.timeoutHandle);
   }
   waiter.resolve(result);
 };
@@ -58,6 +62,7 @@ export const waitForSessionIdleSignal = async (opts: {
   sessionId: string;
   afterSequence?: number;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<IdleWaitResult> => {
   const { sessionId, signal } = opts;
   const afterSequence = Number.isFinite(opts.afterSequence)
@@ -100,6 +105,18 @@ export const waitForSessionIdleSignal = async (opts: {
       waiter.abortListener = onAbort;
       signal.addEventListener("abort", onAbort, { once: true });
     }
+
+    const timeoutMs = Number.isFinite(opts.timeoutMs)
+      ? Math.max(1, Number(opts.timeoutMs))
+      : 60_000;
+    waiter.timeoutHandle = setTimeout(() => {
+      const latest = getSessionIdleSequence(sessionId);
+      settleWaiter(sessionId, waiter, {
+        ok: false,
+        reason: "timeout",
+        sequence: latest,
+      });
+    }, timeoutMs);
 
     const waiters = sessionIdleWaiters.get(sessionId);
     if (waiters) {

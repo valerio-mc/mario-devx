@@ -7,11 +7,13 @@ const nowIso = (): string => new Date().toISOString();
 
 export type SessionIdleWaitResult = {
   ok: boolean;
-  reason: "idle" | "aborted";
+  reason: "idle" | "aborted" | "timeout";
   unknownChecks: number;
   activeChecks: number;
   idleSequence: number;
 };
+
+const DEFAULT_IDLE_WAIT_TIMEOUT_MS = 60_000;
 
 export const waitForSessionIdle = async (
   _ctx: any,
@@ -56,6 +58,7 @@ export const waitForSessionIdleStableDetailed = async (
   const idleResult = await waitForSessionIdleSignal({
     sessionId,
     afterSequence,
+    timeoutMs: _timeoutMs > 0 ? _timeoutMs : DEFAULT_IDLE_WAIT_TIMEOUT_MS,
     ...(opts?.abortSignal ? { signal: opts.abortSignal } : {}),
   });
   return {
@@ -261,9 +264,9 @@ export const resolvePromptText = async (
     return "";
   }
 
-  const idle = await waitForSessionIdle(ctx, sessionId, 0);
+  const idle = await waitForSessionIdle(ctx, sessionId, 45_000);
   if (!idle) {
-    return "";
+    return readSessionMessageText(ctx, sessionId, messageId);
   }
 
   return readSessionMessageText(ctx, sessionId, messageId);
