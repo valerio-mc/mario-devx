@@ -145,7 +145,6 @@ export const marioDevxPlugin: Plugin = async (ctx) => {
       await safePluginLog(client, "Commands registered", {
         commandCount: commands.length,
       });
-      return config;
     },
   };
 };
