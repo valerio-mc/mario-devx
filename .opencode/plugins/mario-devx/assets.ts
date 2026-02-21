@@ -1,6 +1,6 @@
 import path from "path";
 import { ensureDir, fileExists, readText, writeText } from "./fs";
-import { assetsDir as resolveAssetsDir, marioRoot, marioStateDir } from "./paths";
+import { assetsDir, marioRoot, marioStateDir } from "./paths";
 
 type AssetCopy = {
   source: string;
@@ -43,5 +43,3 @@ export const seedMarioAssets = async (
 export const getPromptTemplatePath = (mode: string): string => {
   return path.join(assetsDir(), `prompts/PROMPT_${mode}.md`);
 };
-
-export const assetsDir = (): string => resolveAssetsDir();

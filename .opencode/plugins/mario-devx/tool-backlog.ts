@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin";
 
 import { compactIdea } from "./interview";
-import { decomposeFeatureRequestToTasks, makeTask, nextTaskOrdinal, normalizeTaskId } from "./planner";
+import { decomposeFeatureRequestToTasks, makeTask, nextBacklogId, nextTaskOrdinal, normalizeTaskId } from "./planner";
 import { writePrdJson, type PrdJson, type PrdTask } from "./prd";
 import { deleteSessionBestEffort, ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
 import { ensureMario, readRunState } from "./state";
@@ -45,16 +45,6 @@ const writeAddInterviewState = (prd: PrdJson, state: AddInterviewState | null): 
       answers,
     },
   };
-};
-
-const nextBacklogId = (items: PrdJson["backlog"]["featureRequests"]): string => {
-  const max = items.reduce((acc, item) => {
-    const m = item.id.match(/^F-(\d{4})$/);
-    if (!m) return acc;
-    const v = Number.parseInt(m[1] ?? "0", 10);
-    return Number.isFinite(v) ? Math.max(acc, v) : acc;
-  }, 0);
-  return `F-${String(max + 1).padStart(4, "0")}`;
 };
 
 export const createBacklogTools = (opts: {

@@ -5,18 +5,9 @@ import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
 import { unwrapSdkData } from "./opencode-sdk";
 import { getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
+import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
 
 const nowIso = (): string => new Date().toISOString();
-
-const extractSessionId = (response: unknown): string | null => {
-  const candidate = response as { data?: { id?: string } };
-  return candidate.data?.id ?? null;
-};
-
-const extractMessageId = (response: unknown): string | null => {
-  const candidate = response as { data?: { info?: { id?: string } }; info?: { id?: string } };
-  return candidate.data?.info?.id ?? candidate.info?.id ?? null;
-};
 
 const buildFingerprint = (input: string): string => {
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
@@ -89,11 +80,6 @@ export const createVerifierPhaseSession = async (opts: {
     baselineFingerprint: baseline.fingerprint,
     createdAt: nowIso(),
   };
-};
-
-const isSessionNotFoundError = (error: unknown): boolean => {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /session not found|notfounderror/i.test(message);
 };
 
 export const disposeVerifierPhaseSession = async (

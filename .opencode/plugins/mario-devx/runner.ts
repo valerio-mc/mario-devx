@@ -1,6 +1,7 @@
 import { ensureMario, readRunState, writeRunState } from "./state";
 import type { RunState } from "./types";
 import { getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
+import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -84,21 +85,6 @@ const getBaselineText = (repoRoot: string): string => {
     "",
     `Repo: ${repoRoot}`,
   ].join("\n");
-};
-
-const extractSessionId = (response: unknown): string | null => {
-  const candidate = response as { data?: { id?: string } };
-  return candidate.data?.id ?? null;
-};
-
-const extractMessageId = (response: unknown): string | null => {
-  const candidate = response as { data?: { info?: { id?: string } }; info?: { id?: string } };
-  return candidate.data?.info?.id ?? candidate.info?.id ?? null;
-};
-
-const isSessionNotFoundError = (error: unknown): boolean => {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /session not found|notfounderror/i.test(message);
 };
 
 export const ensureWorkSession = async (
