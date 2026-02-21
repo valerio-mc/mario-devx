@@ -1,6 +1,6 @@
 import path from "path";
 import type { PrdJson } from "./prd";
-import { readTextIfExists, writeText } from "./fs";
+import { readTextIfExists, writeTextAtomic } from "./fs";
 import { hasAgentsKey, parseAgentsEnv, upsertAgentsKey } from "./ui-verify";
 import type { RunReasonCode } from "./run-contracts";
 import { RUN_REASON } from "./run-contracts";
@@ -84,13 +84,13 @@ export const syncFrontendAgentsConfig = async (opts: {
     }
     if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
     if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
-    await writeText(agentsPath, next);
+    await writeTextAtomic(agentsPath, next);
   } else if ((env.UI_VERIFY_REQUIRED === "1") !== uiRequired) {
     let next = upsertAgentsKey(raw, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
     if ((workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev") || !hasAgentsKey(raw, "UI_VERIFY_CMD")) {
       next = upsertAgentsKey(next, "UI_VERIFY_CMD", workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
     }
-    await writeText(agentsPath, next);
+    await writeTextAtomic(agentsPath, next);
   }
   return { parseWarnings: parsed.warnings.length };
 };

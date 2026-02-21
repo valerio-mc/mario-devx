@@ -2,6 +2,7 @@ import { mkdir, readFile, stat, unlink, writeFile } from "fs/promises";
 import path from "path";
 import { TIMEOUTS } from "./config";
 import { logError } from "./errors";
+import { writeTextAtomic } from "./fs";
 import { pidLooksAlive } from "./process";
 
 const nowIso = (): string => new Date().toISOString();
@@ -80,7 +81,7 @@ export const heartbeatRunLock = async (repoRoot: string): Promise<boolean> => {
       return false;
     }
     const next = { ...parsed, heartbeatAt: nowIso() };
-    await writeFile(lockPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: "utf8" });
+    await writeTextAtomic(lockPath, `${JSON.stringify(next, null, 2)}\n`);
     return true;
   } catch (err) {
     logError("heartbeat", `Update failed: ${err instanceof Error ? err.message : String(err)}`);

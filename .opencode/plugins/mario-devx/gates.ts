@@ -1,5 +1,5 @@
 import path from "path";
-import { readTextIfExists, writeText } from "./fs";
+import { readTextIfExists, writeTextAtomic } from "./fs";
 import { runShellCommand } from "./shell";
 
 export type GateCommand = { name: string; command: string };
@@ -120,7 +120,7 @@ export const ensureT0002QualityBootstrap = async (
   }
 
   pkg.scripts = scripts;
-  await writeText(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  await writeTextAtomic(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
   notes.push("Updated quality-gate scripts for T-0002 bootstrap.");
   return { changed: true, notes };
 };

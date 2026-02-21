@@ -1,5 +1,5 @@
 import path from "path";
-import { ensureDir, fileExists, readTextIfExists, writeText } from "./fs";
+import { ensureDir, fileExists, readTextIfExists, writeText, writeTextAtomic } from "./fs";
 import { marioStateDir } from "./paths";
 import { RunState, UiVerifyState } from "./types";
 import { seedMarioAssets } from "./assets";
@@ -79,7 +79,7 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
       const next = sanitizeState(parsed);
       const normalized = JSON.stringify(next, null, 2);
       if (normalized !== JSON.stringify(parsed, null, 2)) {
-        await writeText(stateFile(repoRoot), `${normalized}\n`);
+        await writeTextAtomic(stateFile(repoRoot), `${normalized}\n`);
       }
       return next;
     } catch {
@@ -89,7 +89,7 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
       try {
         await ensureDir(marioStateDir(repoRoot));
         await writeText(backupPath, raw);
-        await writeText(stateFile(repoRoot), JSON.stringify({ version: 1 }, null, 2));
+        await writeTextAtomic(stateFile(repoRoot), JSON.stringify({ version: 1 }, null, 2));
       } catch {
         // Best-effort only.
       }
@@ -102,7 +102,7 @@ const readState = async (repoRoot: string): Promise<MarioState> => {
 
 const writeState = async (repoRoot: string, next: MarioState): Promise<void> => {
   await ensureDir(marioStateDir(repoRoot));
-  await writeText(stateFile(repoRoot), JSON.stringify({ ...next, version: 1 }, null, 2));
+  await writeTextAtomic(stateFile(repoRoot), JSON.stringify({ ...next, version: 1 }, null, 2));
 };
 
 export const ensureMario = async (repoRoot: string, force = false): Promise<void> => {
