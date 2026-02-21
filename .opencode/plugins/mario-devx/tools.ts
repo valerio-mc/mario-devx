@@ -16,7 +16,7 @@ import {
 import {
   deleteSessionBestEffort,
   ensureWorkSession,
-  extractTextFromPromptResponse,
+  resolvePromptText,
   updateRunState,
 } from "./runner";
 import {
@@ -295,7 +295,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
       body: { parts: [{ type: "text", text: taskGenPrompt }] },
     });
   
-    const taskText = extractTextFromPromptResponse(taskResponse);
+    const taskText = await resolvePromptText(pluginCtx, ws.sessionId, taskResponse);
     const taskMatch = taskText.match(/<TASK_JSON>([\s\S]*?)<\/TASK_JSON>/i);
   
     let tasks: PrdTask[];
