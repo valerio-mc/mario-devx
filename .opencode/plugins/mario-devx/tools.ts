@@ -1238,27 +1238,6 @@ const persistBlockedTaskAttempt = async (opts: {
   return nextPrd;
 };
 
-const notifyControlSession = async (
-  ctx: PluginContext,
-  controlSessionId: string | undefined,
-  message: string,
-): Promise<void> => {
-  if (!controlSessionId) {
-    return;
-  }
-  try {
-    await ctx.client.session.prompt({
-      path: { id: controlSessionId },
-      body: {
-        noReply: true,
-        parts: [{ type: "text", text: message }],
-      },
-    });
-  } catch {
-    // Best-effort only.
-  }
-};
-
 export const createTools = (ctx: PluginContext) => {
   const repoRoot = getRepoRoot(ctx);
 
@@ -1267,7 +1246,6 @@ export const createTools = (ctx: PluginContext) => {
     repoRoot,
     ensurePrd,
     logToolEvent,
-    notifyControlSession,
   });
   const doctorTool = createDoctorTool({
     ctx,

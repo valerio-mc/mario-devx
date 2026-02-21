@@ -10,9 +10,8 @@ export const createStatusTool = (opts: {
   repoRoot: string;
   ensurePrd: (repoRoot: string) => Promise<PrdJson>;
   logToolEvent: ToolEventLogger;
-  notifyControlSession: (ctx: PluginContext, controlSessionId: string | undefined, message: string) => Promise<void>;
 }) => {
-  const { ctx, repoRoot, ensurePrd, logToolEvent, notifyControlSession } = opts;
+  const { ctx, repoRoot, ensurePrd, logToolEvent } = opts;
 
   return {
     mario_devx_status: tool({
@@ -41,11 +40,6 @@ export const createStatusTool = (opts: {
                   ? `Run /mario-devx:run 1 to execute ${nextTask.id}.`
                   : "No remaining open tasks.";
 
-        await notifyControlSession(
-          ctx,
-          context.sessionID,
-          `mario-devx status: work session ${workSessionId}.`,
-        );
         await logToolEvent(ctx, repoRoot, "info", "status.complete", "Status computed", {
           runStatus: run.status,
           currentPI: run.currentPI ?? null,
