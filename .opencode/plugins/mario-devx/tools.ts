@@ -14,6 +14,7 @@ import {
   setPrdTaskStatus,
 } from "./planner";
 import {
+  deleteSessionBestEffort,
   ensureWorkSession,
   extractTextFromPromptResponse,
   updateRunState,
@@ -256,8 +257,11 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
    * - Appropriate task granularity
    * - Considers platform, framework, and complexity
    */
-  const ws = await ensureWorkSession(pluginCtx, repoRoot, undefined);
-  const taskGenPrompt = [
+  let wsSessionId: string | undefined;
+  try {
+    const ws = await ensureWorkSession(pluginCtx, repoRoot, undefined);
+    wsSessionId = ws.sessionId;
+    const taskGenPrompt = [
     "You are mario-devx's task planner.",
     "Generate an optimal task breakdown from this PRD.",
     "",
@@ -286,50 +290,55 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
     event: "task-generation.start",
     message: "Generating tasks from PRD via LLM",
   });
-  const taskResponse = await pluginCtx.client.session.prompt({
-    path: { id: ws.sessionId },
-    body: { parts: [{ type: "text", text: taskGenPrompt }] },
-  });
+    const taskResponse = await pluginCtx.client.session.prompt({
+      path: { id: ws.sessionId },
+      body: { parts: [{ type: "text", text: taskGenPrompt }] },
+    });
   
-  const taskText = extractTextFromPromptResponse(taskResponse);
-  const taskMatch = taskText.match(/<TASK_JSON>([\s\S]*?)<\/TASK_JSON>/i);
+    const taskText = extractTextFromPromptResponse(taskResponse);
+    const taskMatch = taskText.match(/<TASK_JSON>([\s\S]*?)<\/TASK_JSON>/i);
   
-  let tasks: PrdTask[];
-  if (taskMatch) {
-    try {
-      const parsed = JSON.parse(taskMatch[1].trim());
-      tasks = parsed.tasks?.map((t: any, idx: number) => makeTask({
-        id: t.id || normalizeTaskId(idx + 1),
-        title: t.title,
-        doneWhen: t.doneWhen || prd.qualityGates || [],
-        labels: t.labels || ["feature"],
-        acceptance: t.acceptance || [t.title],
-        dependsOn: t.dependsOn,
-        notes: t.notes,
-      })) || [];
-      await logEvent(pluginCtx, repoRoot, {
-        level: "info",
-        event: "task-generation.complete",
-        message: "Task generation completed",
-        extra: { tasks: tasks.length },
-      });
-    } catch (err) {
-      logError("task-generation", `Failed to parse LLM task generation, using fallback: ${err instanceof Error ? err.message : String(err)}`);
+    let tasks: PrdTask[];
+    if (taskMatch) {
+      try {
+        const parsed = JSON.parse(taskMatch[1].trim());
+        tasks = parsed.tasks?.map((t: any, idx: number) => makeTask({
+          id: t.id || normalizeTaskId(idx + 1),
+          title: t.title,
+          doneWhen: t.doneWhen || prd.qualityGates || [],
+          labels: t.labels || ["feature"],
+          acceptance: t.acceptance || [t.title],
+          dependsOn: t.dependsOn,
+          notes: t.notes,
+        })) || [];
+        await logEvent(pluginCtx, repoRoot, {
+          level: "info",
+          event: "task-generation.complete",
+          message: "Task generation completed",
+          extra: { tasks: tasks.length },
+        });
+      } catch (err) {
+        logError("task-generation", `Failed to parse LLM task generation, using fallback: ${err instanceof Error ? err.message : String(err)}`);
+        tasks = generateFallbackTasks(prd);
+      }
+    } else {
+      logError("task-generation", "No <TASK_JSON> found in LLM response, using fallback");
       tasks = generateFallbackTasks(prd);
     }
-  } else {
-    logError("task-generation", "No <TASK_JSON> found in LLM response, using fallback");
-    tasks = generateFallbackTasks(prd);
-  }
   
-  return {
-    ...prd,
-    tasks,
-    verificationPolicy: {
-      ...prd.verificationPolicy,
-      globalGates: prd.qualityGates || [],
-    },
-  };
+    return {
+      ...prd,
+      tasks,
+      verificationPolicy: {
+        ...prd.verificationPolicy,
+        globalGates: prd.qualityGates || [],
+      },
+    };
+  } finally {
+    if (wsSessionId) {
+      await deleteSessionBestEffort(pluginCtx, wsSessionId);
+    }
+  }
 };
 
 /**

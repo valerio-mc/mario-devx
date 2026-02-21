@@ -3,7 +3,7 @@ import { tool } from "@opencode-ai/plugin";
 import { compactIdea } from "./interview";
 import { decomposeFeatureRequestToTasks, makeTask, nextTaskOrdinal, normalizeTaskId } from "./planner";
 import { writePrdJson, type PrdJson, type PrdTask } from "./prd";
-import { ensureNotInWorkSession, ensureWorkSession, extractTextFromPromptResponse } from "./runner";
+import { deleteSessionBestEffort, ensureNotInWorkSession, ensureWorkSession, extractTextFromPromptResponse } from "./runner";
 import { ensureMario, readRunState } from "./state";
 import { logReplanComplete, redactForLog } from "./logging";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
@@ -95,8 +95,11 @@ export const createBacklogTools = (opts: {
           return "Feature request is empty. Provide a short description.";
         }
 
-        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
-        const runState = await readRunState(repoRoot);
+        let wsSessionId: string | undefined;
+        try {
+          const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
+          wsSessionId = ws.sessionId;
+          const runState = await readRunState(repoRoot);
 
         const featurePrompt = [
           "You are mario-devx's feature interviewer.",
@@ -240,12 +243,17 @@ export const createBacklogTools = (opts: {
           runIteration: runState.iteration,
         });
 
-        return [
-          `Feature added: ${backlogId}`,
-          `New tasks: ${newTasks.length}`,
-          `Task IDs: ${newTasks.map((t) => t.id).join(", ")}`,
-          `Next: /mario-devx:run 1`,
-        ].join("\n");
+          return [
+            `Feature added: ${backlogId}`,
+            `New tasks: ${newTasks.length}`,
+            `Task IDs: ${newTasks.map((t) => t.id).join(", ")}`,
+            `Next: /mario-devx:run 1`,
+          ].join("\n");
+        } finally {
+          if (wsSessionId) {
+            await deleteSessionBestEffort(ctx, wsSessionId, context.sessionID);
+          }
+        }
       },
     }),
 
@@ -285,10 +293,13 @@ export const createBacklogTools = (opts: {
           return "No replannable backlog items: all candidates already have active/completed tasks.";
         }
 
-        const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
-        const gates = prd.verificationPolicy?.globalGates?.length
-          ? prd.verificationPolicy.globalGates
-          : prd.qualityGates;
+        let wsSessionId: string | undefined;
+        try {
+          const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
+          wsSessionId = ws.sessionId;
+          const gates = prd.verificationPolicy?.globalGates?.length
+            ? prd.verificationPolicy.globalGates
+            : prd.qualityGates;
 
         await logToolEvent(ctx, repoRoot, "info", "replan.llm.start", "Replanning backlog items via LLM", {
           candidates: replanCandidates.length,
@@ -443,12 +454,17 @@ export const createBacklogTools = (opts: {
           generatedTasks: generated.length,
         });
 
-        return [
-          "Replan complete.",
-          `Backlog items replanned: ${replanCandidates.length}`,
-          `New tasks: ${generated.length}`,
-          "Next: /mario-devx:run 1",
-        ].join("\n");
+          return [
+            "Replan complete.",
+            `Backlog items replanned: ${replanCandidates.length}`,
+            `New tasks: ${generated.length}`,
+            "Next: /mario-devx:run 1",
+          ].join("\n");
+        } finally {
+          if (wsSessionId) {
+            await deleteSessionBestEffort(ctx, wsSessionId, context.sessionID);
+          }
+        }
       },
     }),
   };

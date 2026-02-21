@@ -3,7 +3,7 @@ import { tool } from "@opencode-ai/plugin";
 
 import { ensureMario } from "./state";
 import { writePrdJson } from "./prd";
-import { ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
+import { deleteSessionBestEffort, ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
 import { WIZARD_REQUIREMENTS } from "./config";
 import { LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
@@ -226,136 +226,139 @@ export const createNewTool = (opts: {
           ].join("\n");
         }
 
-        const ws = await ensureWorkSession(ctx, repoRoot, undefined);
-        const interviewInput = hasAnswer
-          ? rawInput
-          : (isBootstrapIdea ? `Project idea provided: ${prd.idea}` : "Start the interview and ask the first question.");
-        const interviewResponse = await ctx.client.session.prompt({
-          path: { id: ws.sessionId },
-          body: {
-            parts: [{ type: "text", text: interviewPrompt(prd, interviewInput) }],
-          },
-        });
-        const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse);
-        let parsedInterview = parseInterviewTurn(text);
-
-        if (parsedInterview.error) {
-          await logToolEvent(ctx, repoRoot, "error", "new.interview.parse-error", "Failed to parse interview turn", {
-            error: parsedInterview.error,
-          });
-
-          const repairResponse = await ctx.client.session.prompt({
+        let wsSessionId: string | undefined;
+        try {
+          const ws = await ensureWorkSession(ctx, repoRoot, undefined);
+          wsSessionId = ws.sessionId;
+          const interviewInput = hasAnswer
+            ? rawInput
+            : (isBootstrapIdea ? `Project idea provided: ${prd.idea}` : "Start the interview and ask the first question.");
+          const interviewResponse = await ctx.client.session.prompt({
             path: { id: ws.sessionId },
             body: {
-              parts: [{ type: "text", text: interviewTurnRepairPrompt(text) }],
+              parts: [{ type: "text", text: interviewPrompt(prd, interviewInput) }],
             },
           });
-          const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
-          const repairedInterview = parseInterviewTurn(repairedText);
+          const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse);
+          let parsedInterview = parseInterviewTurn(text);
 
-          if (!repairedInterview.error) {
-            await logToolEvent(ctx, repoRoot, "info", "new.interview.recovered", "Recovered malformed interview response");
-            parsedInterview = repairedInterview;
-          } else {
-            await logToolEvent(ctx, repoRoot, "error", "new.interview.parse-error-retry", "Interview parse retry failed", {
-              error: repairedInterview.error,
+          if (parsedInterview.error) {
+            await logToolEvent(ctx, repoRoot, "error", "new.interview.parse-error", "Failed to parse interview turn", {
+              error: parsedInterview.error,
             });
-            const fallbackQuestion = repairedInterview.question || parsedInterview.question || "In one sentence, what are we building?";
-            return [
-              "PRD interview",
-              fallbackQuestion,
-              "Reply with your answer in natural language.",
-            ].join("\n");
-          }
-        }
 
-        let done = parsedInterview.done;
-        let finalQuestion = parsedInterview.question || "What else should we capture?";
-
-        if (parsedInterview.done) {
-          const compileResponse = await ctx.client.session.prompt({
-            path: { id: ws.sessionId },
-            body: {
-              parts: [{ type: "text", text: compileInterviewPrompt(prd) }],
-            },
-          });
-          const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse);
-          let compiled = parseCompileInterviewResponse(compileText);
-          if (compiled.error) {
-            await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error", "Failed to parse compiled interview envelope", {
-              error: compiled.error,
-            });
             const repairResponse = await ctx.client.session.prompt({
               path: { id: ws.sessionId },
               body: {
-                parts: [{ type: "text", text: compileRepairPrompt(compileText) }],
+                parts: [{ type: "text", text: interviewTurnRepairPrompt(text) }],
               },
             });
             const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
-            compiled = parseCompileInterviewResponse(repairedText);
-            if (compiled.error) {
-              await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error-retry", "Compile parse retry failed", {
-                error: compiled.error,
+            const repairedInterview = parseInterviewTurn(repairedText);
+
+            if (!repairedInterview.error) {
+              await logToolEvent(ctx, repoRoot, "info", "new.interview.recovered", "Recovered malformed interview response");
+              parsedInterview = repairedInterview;
+            } else {
+              await logToolEvent(ctx, repoRoot, "error", "new.interview.parse-error-retry", "Interview parse retry failed", {
+                error: repairedInterview.error,
               });
+              const fallbackQuestion = repairedInterview.question || parsedInterview.question || "In one sentence, what are we building?";
+              return [
+                "PRD interview",
+                fallbackQuestion,
+                "Reply with your answer in natural language.",
+              ].join("\n");
             }
           }
 
-          if (compiled.envelope?.updates) {
-            prd = applyInterviewUpdates(prd, compiled.envelope.updates);
-          }
-          done = isPrdComplete(prd);
-          finalQuestion = (compiled.envelope?.next_question || "What should we clarify next to finish the PRD?").trim();
-        }
+          let done = parsedInterview.done;
+          let finalQuestion = parsedInterview.question || "What else should we capture?";
 
-        if (
-          done
-          && prd.frontend
-          && (prd.ui.styleReferences ?? []).length === 0
-          && prd.wizard.answers?.[STYLE_REFS_ACK_KEY] !== "true"
-        ) {
-          done = false;
-          finalQuestion = STYLE_REFS_REQUIRED_QUESTION;
-        }
-
-        if (!done && !hasMeaningfulList(prd.qualityGates, WIZARD_REQUIREMENTS.MIN_QUALITY_GATES)) {
-          const existingSelection = parseQualityGateSelectionState(prd.wizard.answers?.[QUALITY_GATES_STATE_KEY]);
-          if (!existingSelection) {
-            const presetResponse = await ctx.client.session.prompt({
+          if (parsedInterview.done) {
+            const compileResponse = await ctx.client.session.prompt({
               path: { id: ws.sessionId },
               body: {
-                parts: [{ type: "text", text: qualityGatePresetPrompt(prd) }],
+                parts: [{ type: "text", text: compileInterviewPrompt(prd) }],
               },
             });
-            const presetText = await resolvePromptText(ctx, ws.sessionId, presetResponse);
-            let selection = parseQualityGatePresetResponse(presetText);
-            if (!selection) {
+            const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse);
+            let compiled = parseCompileInterviewResponse(compileText);
+            if (compiled.error) {
+              await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error", "Failed to parse compiled interview envelope", {
+                error: compiled.error,
+              });
               const repairResponse = await ctx.client.session.prompt({
                 path: { id: ws.sessionId },
                 body: {
-                  parts: [{ type: "text", text: qualityGatePresetRepairPrompt(presetText) }],
+                  parts: [{ type: "text", text: compileRepairPrompt(compileText) }],
                 },
               });
-              const repairText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
-              selection = parseQualityGatePresetResponse(repairText);
+              const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
+              compiled = parseCompileInterviewResponse(repairedText);
+              if (compiled.error) {
+                await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error-retry", "Compile parse retry failed", {
+                  error: compiled.error,
+                });
+              }
             }
-            if (selection) {
-              prd = writeQualityGateSelectionState(prd, selection);
-              finalQuestion = formatQualityGateSelectionQuestion(selection);
-              await logToolEvent(ctx, repoRoot, "info", "new.quality-gates.suggested", "Suggested quality gate presets", {
-                options: selection.options.map((o: { label: string }) => o.label),
-                llmGenerated: true,
-              });
-            } else {
-              finalQuestion = "List at least 2 runnable quality-gate commands for this project (one per line).";
-              await logToolEvent(ctx, repoRoot, "warn", "new.quality-gates.suggest-failed", "Failed to generate quality gate presets", {
-                llmGenerated: false,
-              });
-            }
-          }
-          done = false;
-        }
 
-        if (!done) {
+            if (compiled.envelope?.updates) {
+              prd = applyInterviewUpdates(prd, compiled.envelope.updates);
+            }
+            done = isPrdComplete(prd);
+            finalQuestion = (compiled.envelope?.next_question || "What should we clarify next to finish the PRD?").trim();
+          }
+
+          if (
+            done
+            && prd.frontend
+            && (prd.ui.styleReferences ?? []).length === 0
+            && prd.wizard.answers?.[STYLE_REFS_ACK_KEY] !== "true"
+          ) {
+            done = false;
+            finalQuestion = STYLE_REFS_REQUIRED_QUESTION;
+          }
+
+          if (!done && !hasMeaningfulList(prd.qualityGates, WIZARD_REQUIREMENTS.MIN_QUALITY_GATES)) {
+            const existingSelection = parseQualityGateSelectionState(prd.wizard.answers?.[QUALITY_GATES_STATE_KEY]);
+            if (!existingSelection) {
+              const presetResponse = await ctx.client.session.prompt({
+                path: { id: ws.sessionId },
+                body: {
+                  parts: [{ type: "text", text: qualityGatePresetPrompt(prd) }],
+                },
+              });
+              const presetText = await resolvePromptText(ctx, ws.sessionId, presetResponse);
+              let selection = parseQualityGatePresetResponse(presetText);
+              if (!selection) {
+                const repairResponse = await ctx.client.session.prompt({
+                  path: { id: ws.sessionId },
+                  body: {
+                    parts: [{ type: "text", text: qualityGatePresetRepairPrompt(presetText) }],
+                  },
+                });
+                const repairText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
+                selection = parseQualityGatePresetResponse(repairText);
+              }
+              if (selection) {
+                prd = writeQualityGateSelectionState(prd, selection);
+                finalQuestion = formatQualityGateSelectionQuestion(selection);
+                await logToolEvent(ctx, repoRoot, "info", "new.quality-gates.suggested", "Suggested quality gate presets", {
+                  options: selection.options.map((o: { label: string }) => o.label),
+                  llmGenerated: true,
+                });
+              } else {
+                finalQuestion = "List at least 2 runnable quality-gate commands for this project (one per line).";
+                await logToolEvent(ctx, repoRoot, "warn", "new.quality-gates.suggest-failed", "Failed to generate quality gate presets", {
+                  llmGenerated: false,
+                });
+              }
+            }
+            done = false;
+          }
+
+          if (!done) {
           if (
             hasAnswer
             && typeof cachedQuestion === "string"
@@ -374,7 +377,7 @@ export const createNewTool = (opts: {
             }
           }
 
-          prd = {
+            prd = {
             ...prd,
             wizard: {
               ...prd.wizard,
@@ -389,18 +392,18 @@ export const createNewTool = (opts: {
               },
             },
           };
-          await writePrdJson(repoRoot, prd);
-          await logToolEvent(ctx, repoRoot, "info", "new.question", "PRD follow-up question generated", {
-            question: finalQuestion,
-          });
-          return [
-            `PRD interview (0/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
-            finalQuestion,
-            "Reply with your answer in natural language.",
-          ].join("\n");
-        }
+            await writePrdJson(repoRoot, prd);
+            await logToolEvent(ctx, repoRoot, "info", "new.question", "PRD follow-up question generated", {
+              question: finalQuestion,
+            });
+            return [
+              `PRD interview (0/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
+              finalQuestion,
+              "Reply with your answer in natural language.",
+            ].join("\n");
+          }
 
-        prd = {
+          prd = {
           ...prd,
           wizard: {
             ...prd.wizard,
@@ -415,18 +418,23 @@ export const createNewTool = (opts: {
           },
         };
 
-        prd = await seedTasksFromPrd(repoRoot, prd, ctx);
-        await writePrdJson(repoRoot, prd);
-        await logPrdComplete(ctx, repoRoot, prd.tasks.length);
-        await logToolEvent(ctx, repoRoot, "info", "new.complete", "PRD interview completed and tasks seeded", {
-          tasks: prd.tasks.length,
-        });
-        return [
-          "PRD wizard: completed.",
-          `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
-          `Tasks: ${prd.tasks.length}`,
-          "Next: /mario-devx:run 1",
-        ].join("\n");
+          prd = await seedTasksFromPrd(repoRoot, prd, ctx);
+          await writePrdJson(repoRoot, prd);
+          await logPrdComplete(ctx, repoRoot, prd.tasks.length);
+          await logToolEvent(ctx, repoRoot, "info", "new.complete", "PRD interview completed and tasks seeded", {
+            tasks: prd.tasks.length,
+          });
+          return [
+            "PRD wizard: completed.",
+            `PRD: ${path.join(repoRoot, ".mario", "prd.json")}`,
+            `Tasks: ${prd.tasks.length}`,
+            "Next: /mario-devx:run 1",
+          ].join("\n");
+        } finally {
+          if (wsSessionId) {
+            await deleteSessionBestEffort(ctx, wsSessionId, context.sessionID);
+          }
+        }
       },
     }),
   };
