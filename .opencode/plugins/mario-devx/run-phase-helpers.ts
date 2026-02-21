@@ -148,6 +148,7 @@ const shouldIncludeSnapshotFile = (relativePath: string): boolean => {
   if (!relativePath) return false;
   if (relativePath.startsWith("public/")) return true;
   if (relativePath.startsWith("src/")) return true;
+  if (relativePath.startsWith("app/")) return true;
   if (/^README\.md$/i.test(relativePath)) return true;
   if (/^(package|pnpm-workspace)\.json$/i.test(relativePath)) return true;
   if (/^(pnpm-lock\.yaml|tsconfig\.json|next\.config\.(js|mjs|ts))$/i.test(relativePath)) return true;
@@ -262,29 +263,58 @@ const readTextOrEmpty = async (filePath: string): Promise<string> => {
   }
 };
 
+const resolveAppRouterRoots = async (repoRoot: string): Promise<string[]> => {
+  const candidates = ["src/app", "app"];
+  const found: string[] = [];
+  for (const rel of candidates) {
+    try {
+      const s = await stat(path.join(repoRoot, rel));
+      if (s.isDirectory()) {
+        found.push(rel);
+      }
+    } catch {
+      // Ignore missing candidates.
+    }
+  }
+  return found.length > 0 ? found : ["src/app", "app"];
+};
+
 export const checkAcceptanceArtifacts = async (repoRoot: string, acceptance: string[]): Promise<AcceptanceArtifactCheck> => {
   const labels = extractNavigationLabels(acceptance);
   if (labels.length === 0) {
     return { missingFiles: [], missingLabels: [] };
   }
 
+  const appRoots = await resolveAppRouterRoots(repoRoot);
+
   const missingFiles: string[] = [];
   for (const label of labels) {
     const slug = slugifyLabel(label);
     if (!slug) continue;
-    const rel = `src/app/${slug}/page.tsx`;
-    const abs = path.join(repoRoot, rel);
-    try {
-      const s = await stat(abs);
-      if (!s.isFile()) missingFiles.push(rel);
-    } catch {
-      missingFiles.push(rel);
+    const pageCandidates = appRoots.map((root) => `${root}/${slug}/page.tsx`);
+    let foundPage = false;
+    for (const rel of pageCandidates) {
+      try {
+        const s = await stat(path.join(repoRoot, rel));
+        if (s.isFile()) {
+          foundPage = true;
+          break;
+        }
+      } catch {
+        // Candidate does not exist.
+      }
+    }
+    if (!foundPage) {
+      missingFiles.push(pageCandidates[0]);
     }
   }
 
-  const layoutText = await readTextOrEmpty(path.join(repoRoot, "src/app/layout.tsx"));
-  const homeText = await readTextOrEmpty(path.join(repoRoot, "src/app/page.tsx"));
-  const combined = `${layoutText}\n${homeText}`;
+  let combined = "";
+  for (const root of appRoots) {
+    const layoutText = await readTextOrEmpty(path.join(repoRoot, root, "layout.tsx"));
+    const homeText = await readTextOrEmpty(path.join(repoRoot, root, "page.tsx"));
+    combined = `${combined}\n${layoutText}\n${homeText}`;
+  }
   const missingLabels = labels.filter((label) => !new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(combined));
 
   return {
