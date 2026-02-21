@@ -1,6 +1,7 @@
 import path from "path";
 import { readText, readTextIfExists } from "./fs";
-import { assetsDir, getPromptTemplatePath } from "./assets";
+import { getPromptTemplatePath } from "./assets";
+import { assetsDir } from "./paths";
 
 export const buildPrompt = async (
   repoRoot: string,

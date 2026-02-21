@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import path from "path";
-import { assetsDir } from "./assets";
+import { assetsDir } from "./paths";
 import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
 import { unwrapSdkData } from "./opencode-sdk";

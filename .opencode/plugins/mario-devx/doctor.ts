@@ -1,6 +1,6 @@
 import path from "path";
 import { readTextIfExists } from "./fs";
-import { assetsDir } from "./assets";
+import { assetsDir } from "./paths";
 import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { redactForLog } from "./logging";
 import { pidLooksAlive } from "./process";
