@@ -5,7 +5,6 @@ import { decomposeFeatureRequestToTasks, makeTask, nextTaskOrdinal, normalizeTas
 import { writePrdJson, type PrdJson, type PrdTask } from "./prd";
 import { ensureNotInWorkSession, ensureWorkSession, extractTextFromPromptResponse } from "./runner";
 import { ensureMario, readRunState } from "./state";
-import { logError, logInfo } from "./errors";
 import { logReplanComplete, redactForLog } from "./logging";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
 
@@ -143,8 +142,6 @@ export const createBacklogTools = (opts: {
         const jsonMatch = responseText.match(/<FEATURE_JSON>([\s\S]*?)<\/FEATURE_JSON>/i);
 
         if (!jsonMatch) {
-          logError("feature-interview", "No <FEATURE_JSON> tags found in LLM response");
-          logError("feature-interview", `Raw response: ${responseText.substring(0, 500)}`);
           await logToolEvent(ctx, repoRoot, "error", "add.parse.missing-tags", "Feature interview response missing <FEATURE_JSON>", {
             rawResponse: redactForLog(responseText),
           });
@@ -163,8 +160,6 @@ export const createBacklogTools = (opts: {
         try {
           envelope = JSON.parse(jsonMatch[1].trim());
         } catch (err) {
-          logError("feature-interview", `JSON parse error: ${err instanceof Error ? err.message : String(err)}`);
-          logError("feature-interview", `Raw JSON: ${jsonMatch[1].trim().substring(0, 500)}`);
           await logToolEvent(ctx, repoRoot, "error", "add.parse.invalid-json", "Feature interview JSON parse failed", {
             error: err instanceof Error ? err.message : String(err),
             rawJson: redactForLog(jsonMatch[1].trim()),
@@ -295,7 +290,9 @@ export const createBacklogTools = (opts: {
           ? prd.verificationPolicy.globalGates
           : prd.qualityGates;
 
-        logInfo("replan", `Replanning ${replanCandidates.length} backlog items via LLM...`);
+        await logToolEvent(ctx, repoRoot, "info", "replan.llm.start", "Replanning backlog items via LLM", {
+          candidates: replanCandidates.length,
+        });
 
         const replanPrompt = [
           "You are mario-devx's replanning assistant.",
@@ -385,9 +382,11 @@ export const createBacklogTools = (opts: {
               );
             }
 
-            logInfo("replan", `LLM generated ${generated.length} tasks from ${parsed.breakdowns?.length || 0} backlog items`);
+            await logToolEvent(ctx, repoRoot, "info", "replan.llm.complete", "LLM generated replanned tasks", {
+              generated: generated.length,
+              breakdowns: parsed.breakdowns?.length || 0,
+            });
           } catch (err) {
-            logError("replan", `Failed to parse LLM replan response: ${err instanceof Error ? err.message : String(err)}`);
             await logToolEvent(ctx, repoRoot, "error", "replan.parse.invalid-json", "Failed to parse REPLAN_JSON", {
               error: err instanceof Error ? err.message : String(err),
               rawResponse: redactForLog(replanText),
@@ -396,7 +395,9 @@ export const createBacklogTools = (opts: {
         }
 
         if (generated.length === 0) {
-          logInfo("replan", "Using fallback decomposition");
+          await logToolEvent(ctx, repoRoot, "warn", "replan.fallback", "Using fallback feature decomposition", {
+            candidates: candidatesToReplan.length,
+          });
           for (const f of candidatesToReplan) {
             if (f.status === "implemented") continue;
 

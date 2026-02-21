@@ -281,7 +281,11 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
     "</TASK_JSON>",
   ].join("\n");
   
-  logInfo("task-generation", "Generating tasks from PRD via LLM...");
+  await logEvent(pluginCtx, repoRoot, {
+    level: "info",
+    event: "task-generation.start",
+    message: "Generating tasks from PRD via LLM",
+  });
   const taskResponse = await pluginCtx.client.session.prompt({
     path: { id: ws.sessionId },
     body: { parts: [{ type: "text", text: taskGenPrompt }] },
@@ -303,7 +307,12 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
         dependsOn: t.dependsOn,
         notes: t.notes,
       })) || [];
-      logInfo("task-generation", `LLM generated ${tasks.length} tasks`);
+      await logEvent(pluginCtx, repoRoot, {
+        level: "info",
+        event: "task-generation.complete",
+        message: "Task generation completed",
+        extra: { tasks: tasks.length },
+      });
     } catch (err) {
       logError("task-generation", `Failed to parse LLM task generation, using fallback: ${err instanceof Error ? err.message : String(err)}`);
       tasks = generateFallbackTasks(prd);
