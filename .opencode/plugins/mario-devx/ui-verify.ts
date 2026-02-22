@@ -17,6 +17,7 @@ export type LoggedShellResult = {
 export type UiVerificationEvidence = {
   snapshot?: string;
   snapshotInteractive?: string;
+  screenshot?: string;
   console?: string;
   errors?: string;
 };
@@ -482,10 +483,11 @@ export const runUiVerification = async (opts: {
     }
   };
 
-  const steps: Array<{ name: "open" | "snapshot" | "snapshot-interactive" | "console" | "errors"; command: string; optional?: boolean }> = [
+  const steps: Array<{ name: "open" | "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
     { name: "open", command: `agent-browser open ${JSON.stringify(url)}` },
     { name: "snapshot", command: "agent-browser snapshot" },
     { name: "snapshot-interactive", command: "agent-browser snapshot -i", optional: true },
+    { name: "screenshot", command: "agent-browser screenshot", optional: true },
     { name: "console", command: "agent-browser console --limit=50" },
     { name: "errors", command: "agent-browser errors" },
   ];
@@ -564,6 +566,7 @@ export const runUiVerification = async (opts: {
       const out = await relocateTmpEvidence(result.stdout || result.stderr, step.name);
       if (step.name === "snapshot" && out) evidence.snapshot = out;
       if (step.name === "snapshot-interactive" && out) evidence.snapshotInteractive = out;
+      if (step.name === "screenshot" && out) evidence.screenshot = out;
       if (step.name === "console" && out) evidence.console = out;
       if (step.name === "errors" && out) evidence.errors = out;
     }

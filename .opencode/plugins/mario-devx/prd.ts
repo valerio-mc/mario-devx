@@ -22,6 +22,7 @@ export type PrdUiAttempt = {
   evidence?: {
     snapshot?: string;
     snapshotInteractive?: string;
+    screenshot?: string;
     console?: string;
     errors?: string;
   };

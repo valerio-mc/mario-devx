@@ -39,6 +39,7 @@ export const buildVerifierContextText = (opts: {
     ? [
         uiResult.evidence.snapshot ? `- Snapshot: ${uiResult.evidence.snapshot}` : "",
         uiResult.evidence.snapshotInteractive ? `- Snapshot (-i): ${uiResult.evidence.snapshotInteractive}` : "",
+        uiResult.evidence.screenshot ? `- Screenshot: ${uiResult.evidence.screenshot}` : "",
         uiResult.evidence.console ? `- Console: ${uiResult.evidence.console}` : "",
         uiResult.evidence.errors ? `- Errors: ${uiResult.evidence.errors}` : "",
       ].filter(Boolean)
