@@ -207,7 +207,7 @@ export const createRunTool = (opts: {
             return preflight.message;
           }
 
-          return runEngine({
+          return await runEngine({
             runCtx: {
               ctx,
               repoRoot,
@@ -240,7 +240,7 @@ export const createRunTool = (opts: {
             deleteSessionBestEffort,
           });
         } catch (error) {
-          return finalizeRunCrash({
+          return await finalizeRunCrash({
             ctx,
             repoRoot,
             runId,
