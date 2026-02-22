@@ -102,6 +102,8 @@ STREAM_VERIFY=1
 
 When `frontend: true`, mario-devx configures UI verification and auto-heals browser prerequisites during `/mario-devx:run` (non-interactive first), then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
 
+UI evidence includes accessibility snapshots, console/errors, and an optional screenshot saved under `.mario/state/ui-evidence/<taskId>/` (repo-local, so the verifier can `Read` it without external directory permissions).
+
 Verifier output is stored under `tasks[].lastAttempt.judge` as structured JSON (`status`, `reason`, `nextActions`).
 
 ## What gets created
@@ -115,6 +117,7 @@ In your project:
   state/state.json           # internal state (iteration + run status)
   state/run.lock             # active-run lock + heartbeat
   state/mario-devx.log       # centralized structured run/tool logs (auto-capped/rotated)
+  state/ui-evidence/         # UI verification artifacts (per-task; snapshot/screenshot pointers live in prd.json)
 ```
 
 In this repo:
