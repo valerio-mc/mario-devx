@@ -220,6 +220,7 @@ export const createRunTool = (opts: {
               agentBrowserCaps: preflight.agentBrowserCaps,
               nowIso,
               runStartIteration: preflight.runStartIteration,
+              abortSignal: context.abort,
             },
             preflightPrd: preflight.prd,
             maxItems: preflight.maxItems,

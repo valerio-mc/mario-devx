@@ -73,8 +73,8 @@ export const runSemanticRepairLoop = async (opts: {
     carryForwardIssues: string[];
     strictChecklist: string;
   }) => string;
-  promptWorkSessionWithTimeout: (phase: "semantic-repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number } | { ok: false }>;
-  waitForWorkIdleAfterPrompt: (idleSequenceBeforePrompt: number) => Promise<boolean>;
+  promptWorkSessionWithTimeout: (phase: "semantic-repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
+  waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "semantic-repair") => Promise<boolean>;
   heartbeatRunLock: (repoRoot: string) => Promise<boolean>;
   blockForHeartbeatFailure: (phase: string) => Promise<void>;
   captureWorkspaceSnapshot: (repoRoot: string) => Promise<Map<string, string>>;
@@ -236,7 +236,7 @@ export const runSemanticRepairLoop = async (opts: {
       break;
     }
 
-    const semanticIdleOk = await waitForWorkIdleAfterPrompt(semanticPromptDispatch.idleSequenceBeforePrompt);
+    const semanticIdleOk = await waitForWorkIdleAfterPrompt(semanticPromptDispatch, "semantic-repair");
     if (!semanticIdleOk) {
       blockedByVerifierFailure = true;
       break;

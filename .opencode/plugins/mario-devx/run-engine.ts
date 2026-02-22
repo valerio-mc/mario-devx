@@ -3,7 +3,7 @@ import { RUN_PHASE, type RunPhaseName } from "./run-types";
 import { LIMITS, TIMEOUTS } from "./config";
 import { getNextPrdTask, getTaskDependencyBlockers, setPrdTaskLastAttempt, setPrdTaskStatus } from "./planner";
 import { bumpIteration } from "./state";
-import { updateRunState, waitForSessionIdleStableDetailed, setWorkSessionTitle } from "./runner";
+import { updateRunState, waitForSessionIdleOrAssistantQuiet, setWorkSessionTitle } from "./runner";
 import { writePrdJson, type PrdGatesAttempt, type PrdJudgeAttempt, type PrdJson, type PrdTask, type PrdTaskAttempt, type PrdUiAttempt } from "./prd";
 import { runUiVerifyForTask as runUiVerifyForTaskPhase, checkAcceptanceArtifacts, resolveEffectiveDoneWhen, toGateCommands, toGatesAttempt, toUiAttempt, logGateRunResults as logGateRunResultsPhase, captureWorkspaceSnapshot, summarizeWorkspaceDelta } from "./run-phase-helpers";
 import { buildIterationTaskPlan, buildGateRepairPrompt, buildSemanticRepairPrompt } from "./run-prompts";
@@ -39,6 +39,7 @@ export type RunContext = {
   agentBrowserCaps: { available: boolean; version: string | null; commands: string[]; openUsage: string | null; notes: string[] };
   nowIso: () => string;
   runStartIteration: number;
+  abortSignal?: AbortSignal;
 };
 
 export type TaskRunInput = {
@@ -128,7 +129,7 @@ export const runEngine = async (opts: {
     resetWorkSession,
     deleteSessionBestEffort,
   } = opts;
-  const { ctx, repoRoot, runId, controlSessionId, workspaceRoot, workspaceAbs, sessionAgents, uiSetup, agentBrowserCaps, nowIso, runStartIteration } = runCtx;
+  const { ctx, repoRoot, runId, controlSessionId, workspaceRoot, workspaceAbs, sessionAgents, uiSetup, agentBrowserCaps, nowIso, runStartIteration, abortSignal } = runCtx;
   const { uiVerifyEnabled, uiVerifyCmd, uiVerifyUrl, uiVerifyRequired, agentBrowserRepo, isWebApp, cliOk, skillOk, browserOk, autoInstallAttempted, shouldRunUiVerify } = uiSetup;
 
   let prd = preflightPrd;
@@ -291,7 +292,7 @@ export const runEngine = async (opts: {
     const promptWorkSessionWithTimeout = async (
       phase: "build" | "repair" | "semantic-repair",
       text: string,
-    ): Promise<{ ok: true; idleSequenceBeforePrompt: number } | { ok: false }> => {
+    ): Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }> => {
       return promptWorkSessionWithTimeoutStep({
         ctx,
         repoRoot,
@@ -353,7 +354,16 @@ export const runEngine = async (opts: {
       break;
     }
 
-    const idle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, 0, 1, { afterSequence: buildPromptDispatch.idleSequenceBeforePrompt, abortSignal: undefined });
+    const BUILD_WAIT_MAX_MS = 10 * 60 * 1000;
+    const REPAIR_WAIT_MAX_MS = 5 * 60 * 1000;
+    const SEMANTIC_WAIT_MAX_MS = 5 * 60 * 1000;
+
+    const idle = await waitForSessionIdleOrAssistantQuiet(ctx, ws.sessionId, {
+      afterSequence: buildPromptDispatch.idleSequenceBeforePrompt,
+      baselineAssistantCount: buildPromptDispatch.baselineAssistantCount,
+      maxWaitMs: BUILD_WAIT_MAX_MS,
+      abortSignal,
+    });
     if (!idle.ok) {
       const gates: PrdGatesAttempt = { ok: false, commands: [] };
       const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
@@ -362,8 +372,10 @@ export const runEngine = async (opts: {
         exitSignal: false,
         reason: [
           idle.reason === "aborted"
-            ? "Run interrupted while waiting for work-session idle signal."
-            : "Work-session idle wait failed before deterministic gates.",
+            ? "Run interrupted while waiting for work-session progress."
+            : idle.reason === "timeout"
+              ? "Work-session did not reach idle or stable assistant output before timeout."
+              : "Work-session idle/progress wait failed before deterministic gates.",
         ],
         nextActions: [
           "Rerun /mario-devx:run 1 from the control session.",
@@ -379,9 +391,18 @@ export const runEngine = async (opts: {
     }
 
     const maxTotalRepairAttempts = LIMITS.MAX_TOTAL_REPAIR_ATTEMPTS;
-    const waitForWorkIdleAfterPrompt = async (idleSequenceBeforePrompt: number): Promise<boolean> => {
+    const waitForWorkIdleAfterPrompt = async (
+      dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number },
+      phase: "repair" | "semantic-repair",
+    ): Promise<boolean> => {
       if (!ws) return false;
-      const nextIdle = await waitForSessionIdleStableDetailed(ctx, ws.sessionId, 0, 1, { afterSequence: idleSequenceBeforePrompt, abortSignal: undefined });
+      const maxWaitMs = phase === "repair" ? REPAIR_WAIT_MAX_MS : SEMANTIC_WAIT_MAX_MS;
+      const nextIdle = await waitForSessionIdleOrAssistantQuiet(ctx, ws.sessionId, {
+        afterSequence: dispatch.idleSequenceBeforePrompt,
+        baselineAssistantCount: dispatch.baselineAssistantCount,
+        maxWaitMs,
+        abortSignal,
+      });
       return nextIdle.ok;
     };
 

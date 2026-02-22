@@ -2,6 +2,7 @@ import { ensureMario, readRunState, writeRunState } from "./state";
 import type { RunState } from "./types";
 import { forgetSessionIdle, getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
 import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
+import { unwrapSdkData } from "./opencode-sdk";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -14,6 +15,8 @@ export type SessionIdleWaitResult = {
 };
 
 const DEFAULT_IDLE_WAIT_TIMEOUT_MS = 60_000;
+const DEFAULT_ASSISTANT_PROGRESS_POLL_MS = 2000;
+const DEFAULT_ASSISTANT_QUIET_WINDOW_MS = 7000;
 
 export const waitForSessionIdle = async (
   _ctx: any,
@@ -68,6 +71,101 @@ export const waitForSessionIdleStableDetailed = async (
     activeChecks: 0,
     idleSequence: idleResult.sequence,
   };
+};
+
+export type SessionProgressWaitResult = {
+  ok: boolean;
+  reason: "idle" | "assistant-quiet" | "aborted" | "timeout";
+  idleSequence: number;
+  assistantCount: number;
+};
+
+const readAssistantCount = async (ctx: any, sessionId: string): Promise<number> => {
+  const readMessages = async (): Promise<Array<{ info?: { role?: string } }>> => {
+    try {
+      const byId = await ctx.client.session.messages({ path: { id: sessionId } });
+      const unwrapped = unwrapSdkData<Array<{ info?: { role?: string } }>>(byId);
+      return Array.isArray(unwrapped) ? unwrapped : [];
+    } catch {
+      try {
+        const bySessionID = await ctx.client.session.messages({ path: { sessionID: sessionId } });
+        const unwrapped = unwrapSdkData<Array<{ info?: { role?: string } }>>(bySessionID);
+        return Array.isArray(unwrapped) ? unwrapped : [];
+      } catch {
+        return [];
+      }
+    }
+  };
+  const messages = await readMessages();
+  return messages.reduce((count, entry) => (entry?.info?.role === "assistant" ? count + 1 : count), 0);
+};
+
+export const waitForSessionIdleOrAssistantQuiet = async (
+  ctx: any,
+  sessionId: string,
+  opts: {
+    afterSequence?: number;
+    baselineAssistantCount?: number;
+    maxWaitMs: number;
+    pollIntervalMs?: number;
+    quietWindowMs?: number;
+    abortSignal?: AbortSignal;
+  },
+): Promise<SessionProgressWaitResult> => {
+  const afterSequence = Number.isFinite(opts.afterSequence)
+    ? Number(opts.afterSequence)
+    : getSessionIdleSequence(sessionId);
+  const pollIntervalMs = Number.isFinite(opts.pollIntervalMs)
+    ? Math.max(250, Number(opts.pollIntervalMs))
+    : DEFAULT_ASSISTANT_PROGRESS_POLL_MS;
+  const quietWindowMs = Number.isFinite(opts.quietWindowMs)
+    ? Math.max(1000, Number(opts.quietWindowMs))
+    : DEFAULT_ASSISTANT_QUIET_WINDOW_MS;
+  const maxWaitMs = Math.max(1000, Number(opts.maxWaitMs));
+  const startedAt = Date.now();
+  let idleSequence = afterSequence;
+  let assistantCount = Number.isFinite(opts.baselineAssistantCount)
+    ? Number(opts.baselineAssistantCount)
+    : await readAssistantCount(ctx, sessionId);
+  let observedAssistantProgress = false;
+  let lastAssistantProgressAt = 0;
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    if (opts.abortSignal?.aborted) {
+      return { ok: false, reason: "aborted", idleSequence, assistantCount };
+    }
+
+    const latestAssistantCount = await readAssistantCount(ctx, sessionId);
+    if (latestAssistantCount > assistantCount) {
+      assistantCount = latestAssistantCount;
+      observedAssistantProgress = true;
+      lastAssistantProgressAt = Date.now();
+    }
+
+    if (observedAssistantProgress && Date.now() - lastAssistantProgressAt >= quietWindowMs) {
+      return { ok: true, reason: "assistant-quiet", idleSequence, assistantCount };
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    const remainingMs = Math.max(1, maxWaitMs - elapsedMs);
+    const stepTimeoutMs = Math.min(pollIntervalMs, remainingMs);
+    const idleResult = await waitForSessionIdleSignal({
+      sessionId,
+      afterSequence: idleSequence,
+      timeoutMs: stepTimeoutMs,
+      ...(opts.abortSignal ? { signal: opts.abortSignal } : {}),
+    });
+    idleSequence = idleResult.sequence;
+
+    if (idleResult.ok) {
+      return { ok: true, reason: "idle", idleSequence, assistantCount };
+    }
+    if (idleResult.reason === "aborted") {
+      return { ok: false, reason: "aborted", idleSequence, assistantCount };
+    }
+  }
+
+  return { ok: false, reason: "timeout", idleSequence, assistantCount };
 };
 
 const getBaselineText = (repoRoot: string): string => {

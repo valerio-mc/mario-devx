@@ -22,8 +22,8 @@ export const runGateRepairLoop = async (opts: {
   runId: string;
   maxTotalRepairAttempts: number;
   initialWorkIdleAnnounced: boolean;
-  promptWorkSessionWithTimeout: (phase: "repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number } | { ok: false }>;
-  waitForWorkIdleAfterPrompt: (idleSequenceBeforePrompt: number) => Promise<boolean>;
+  promptWorkSessionWithTimeout: (phase: "repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
+  waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "repair") => Promise<boolean>;
   heartbeatRunLock: (repoRoot: string) => Promise<boolean>;
   blockForHeartbeatFailure: (phase: string) => Promise<void>;
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
@@ -178,7 +178,7 @@ export const runGateRepairLoop = async (opts: {
       break;
     }
 
-    const repairIdleOk = await waitForWorkIdleAfterPrompt(repairPromptDispatch.idleSequenceBeforePrompt);
+    const repairIdleOk = await waitForWorkIdleAfterPrompt(repairPromptDispatch, "repair");
     if (!repairIdleOk) break;
     if (!workIdleAnnounced) {
       workIdleAnnounced = true;
