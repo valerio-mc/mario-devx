@@ -41,9 +41,10 @@ UI style-reference rule:
 
 Next.js scaffolding note (common failure):
 - If you scaffold a Next.js app in a repo that already contains `.mario/` and `.opencode/`, `create-next-app .` often refuses because the directory is not empty.
-- Use a temp directory and copy the scaffold into the repo root instead.
-  - Example:
-    - `tmpdir=$(mktemp -d)`
+- Use a repo-local temp directory and copy the scaffold into the repo root instead.
+  - Example (repo-local, no external temp dirs):
+    - `tmpdir=.mario/state/tmp/next-scaffold`
+    - `rm -rf "$tmpdir" && mkdir -p "$tmpdir"`
     - `npx create-next-app@latest "$tmpdir/app" --yes --typescript --eslint --app`
     - copy files into repo root (exclude `.mario/` and `.opencode/`)
 
