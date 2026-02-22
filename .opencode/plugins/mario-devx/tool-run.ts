@@ -51,6 +51,7 @@ import { getSessionIdleSequence } from "./session-idle-signal";
 import { buildVerifierContextText } from "./run-verifier";
 import { clearToastStreamChannel } from "./toast-stream";
 import { LIMITS, TIMEOUTS } from "./config";
+import { runPreflightStep } from "./run-preflight-step";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
 import { writePrdJson } from "./prd";
 import type { ToolContext } from "./tool-common";
@@ -224,146 +225,28 @@ export const createRunTool = (opts: {
             await showToast(ctx, "Run: recovered stale in-progress state from interrupted session", "warning");
           }
 
-          let prd = await ensurePrd(repoRoot);
-          const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
-          const workspaceAbs = workspaceRoot === "." ? repoRoot : `${repoRoot}/${workspaceRoot}`;
-          const prerequisites = validateRunPrerequisites(prd);
-          if (!prerequisites.ok) {
-            const event = prerequisites.reasonCode === RUN_REASON.PRD_INCOMPLETE
-              ? RUN_EVENT.BLOCKED_PRD_INCOMPLETE
-              : prerequisites.reasonCode === RUN_REASON.NO_TASKS
-                ? RUN_EVENT.BLOCKED_NO_TASKS
-                : RUN_EVENT.BLOCKED_NO_QUALITY_GATES;
-            await logRunEvent(ctx, repoRoot, "warn", event, "Run blocked during preflight validation", {
-              ...(prerequisites.extra ?? {}),
-            }, { runId, ...(prerequisites.reasonCode ? { reasonCode: prerequisites.reasonCode } : {}) });
-            await showToast(ctx, "Run blocked during preflight", "warning");
-            return prerequisites.message ?? "Run blocked during preflight validation.";
-          }
-
-          const inProgress = (prd.tasks ?? []).filter((t) => t.status === "in_progress");
-          if (inProgress.length > 1) {
-            const focus = inProgress[0];
-            const ids = new Set(inProgress.map((t) => t.id));
-            const state = await bumpIteration(repoRoot);
-            const attemptAt = nowIso();
-            const gates: PrdGatesAttempt = { ok: false, commands: [] };
-            const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-            const judge: PrdJudgeAttempt = {
-              status: "FAIL",
-              exitSignal: false,
-              reason: [
-                `Invalid task state: multiple tasks are in_progress (${inProgress.map((t) => t.id).join(", ")}).`,
-              ],
-              nextActions: [
-                "Edit .mario/prd.json so at most one task is in_progress (set the others to open/blocked/cancelled).",
-                "Then rerun /mario-devx:run 1.",
-              ],
-            };
-            const lastAttempt: PrdTaskAttempt = {
-              at: attemptAt,
-              iteration: state.iteration,
-              gates,
-              ui,
-              judge,
-            };
-            prd = {
-              ...prd,
-              tasks: (prd.tasks ?? []).map((t) => (ids.has(t.id) ? { ...t, status: "blocked" as const } : t)),
-            };
-            for (const t of inProgress) {
-              prd = setPrdTaskLastAttempt(prd, t.id, lastAttempt);
-            }
-            await writePrdJson(repoRoot, prd);
-            await writeRunState(repoRoot, {
-              iteration: state.iteration,
-              status: "BLOCKED",
-              phase: "run",
-              ...(focus?.id ? { currentPI: focus.id } : {}),
-              ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
-              updatedAt: nowIso(),
-            });
-            await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_INVALID_TASK_STATE, "Run blocked: invalid in_progress task state", {
-              inProgressTaskIds: inProgress.map((t) => t.id),
-            }, { runId, reasonCode: RUN_REASON.INVALID_TASK_STATE });
-            return judge.reason.concat(["", "See tasks[].lastAttempt.judge.nextActions in .mario/prd.json."]).join("\n");
-          }
-
-          const taskGraphIssue = validateTaskGraph(prd);
-          if (taskGraphIssue) {
-            const focusTask = (prd.tasks ?? []).find((t) => t.id === taskGraphIssue.taskId) ?? (prd.tasks ?? [])[0];
-            if (focusTask) {
-              const state = await bumpIteration(repoRoot);
-              const attemptAt = nowIso();
-              const gates: PrdGatesAttempt = { ok: false, commands: [] };
-              const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-              const judge: PrdJudgeAttempt = {
-                status: "FAIL",
-                exitSignal: false,
-                reason: [
-                  formatReasonCode(taskGraphIssue.reasonCode),
-                  taskGraphIssue.message,
-                ],
-                nextActions: taskGraphIssue.nextActions,
-              };
-              prd = await persistBlockedTaskAttempt({
-                ctx,
-                repoRoot,
-                prd,
-                task: focusTask,
-                attemptAt,
-                iteration: state.iteration,
-                gates,
-                ui,
-                judge,
-                runId,
-              });
-            }
-            await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_TASK_GRAPH, "Run blocked: invalid task dependency graph", {
-              reasonCode: taskGraphIssue.reasonCode,
-              taskId: taskGraphIssue.taskId,
-              message: taskGraphIssue.message,
-            }, { runId, taskId: taskGraphIssue.taskId, reasonCode: taskGraphIssue.reasonCode });
-            return [
-              formatReasonCode(taskGraphIssue.reasonCode),
-              taskGraphIssue.message,
-              ...taskGraphIssue.nextActions,
-            ].join("\n");
-          }
-
-          const frontendSync = await syncFrontendAgentsConfig({
-            repoRoot,
-            workspaceRoot,
-            prd,
-          });
-          if (frontendSync.parseWarnings > 0) {
-            await showToast(ctx, `Run warning: AGENTS.md parse warnings (${frontendSync.parseWarnings})`, "warning");
-          }
-
-          const maxItems = parseMaxItems(args.max_items);
-          const uiSetup = await resolveUiRunSetup({
+          const preflight = await runPreflightStep({
             ctx,
             repoRoot,
-            workspaceRoot,
-            onWarnings: async (count) => {
-              await showToast(ctx, `Run warning: AGENTS.md parse warnings (${count})`, "warning");
-            },
-            onPrereqLog: async (entry) => {
-              if (entry.event === "ui.prereq.browser-install.start") {
-                await showToast(ctx, "Run: installing browser runtime for UI verification (may take a few minutes)", "info");
-              }
-              await logRunEvent(
-                ctx,
-                repoRoot,
-                entry.level,
-                entry.event,
-                entry.message,
-                entry.extra,
-                { runId, ...(entry.reasonCode ? { reasonCode: entry.reasonCode } : {}) },
-              );
-            },
+            args,
+            controlSessionId: context.sessionID,
+            runId,
+            nowIso,
+            ensurePrd,
+            formatReasonCode,
+            persistBlockedTaskAttempt,
+            showToast,
+            logRunEvent,
+            buildCapabilitySummary,
           });
+          if (preflight.blocked) {
+            return preflight.message;
+          }
 
+          let prd = preflight.prd;
+          const workspaceRoot = preflight.workspaceRoot;
+          const workspaceAbs = preflight.workspaceAbs;
+          const maxItems = preflight.maxItems;
           const {
             uiVerifyEnabled,
             uiVerifyCmd,
@@ -376,59 +259,10 @@ export const createRunTool = (opts: {
             browserOk,
             autoInstallAttempted,
             shouldRunUiVerify,
-          } = uiSetup;
-          const sessionAgents = await resolveSessionAgents({ repoRoot });
-          if (sessionAgents.parseWarnings > 0) {
-            await showToast(ctx, `Run warning: AGENTS.md parse warnings (${sessionAgents.parseWarnings})`, "warning");
-          }
-          const defaultAgentBrowserCaps = {
-            available: false,
-            version: null,
-            commands: [] as string[],
-            openUsage: null,
-            notes: [] as string[],
-          };
-          const agentBrowserCaps = (uiVerifyEnabled && isWebApp)
-            ? await Promise.race([
-              discoverAgentBrowserCapabilities(ctx),
-              new Promise<typeof defaultAgentBrowserCaps>((resolve) => {
-                setTimeout(() => {
-                  resolve({
-                    ...defaultAgentBrowserCaps,
-                    notes: ["Capability probe timed out after 8s; continuing without capability metadata."],
-                  });
-                }, 8000);
-              }),
-            ])
-            : defaultAgentBrowserCaps;
-
-          if (uiVerifyEnabled && isWebApp) {
-            await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.UI_CAPABILITIES, "Discovered agent-browser capabilities", {
-              available: agentBrowserCaps.available,
-              version: agentBrowserCaps.version,
-              openUsage: agentBrowserCaps.openUsage,
-              commands: agentBrowserCaps.commands,
-              notes: agentBrowserCaps.notes,
-            }, { runId });
-          }
-
-          await logRunEvent(ctx, repoRoot, "info", RUN_EVENT.STARTED, "Run started", {
-            maxItems,
-            uiVerifyEnabled,
-            uiVerifyRequired,
-            shouldRunUiVerify,
-            workAgent: sessionAgents.workAgent,
-            verifyAgent: sessionAgents.verifyAgent,
-            streamWorkEvents: sessionAgents.streamWorkEvents,
-            streamVerifyEvents: sessionAgents.streamVerifyEvents,
-            uiVerifyWaitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
-            agentBrowserVersion: agentBrowserCaps.version,
-            agentBrowserOpenUsage: agentBrowserCaps.openUsage,
-            agentBrowserCommands: agentBrowserCaps.commands,
-            agentBrowserNotes: agentBrowserCaps.notes,
-          }, { runId });
-
-          const runStartIteration = (await readRunState(repoRoot)).iteration;
+          } = preflight.uiSetup;
+          const sessionAgents = preflight.sessionAgents;
+          const agentBrowserCaps = preflight.agentBrowserCaps;
+          const runStartIteration = preflight.runStartIteration;
           let attempted = 0;
           let completed = 0;
 
