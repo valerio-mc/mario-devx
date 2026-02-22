@@ -34,19 +34,7 @@ export const runSemanticRepairLoop = async (opts: {
   verifyAgent?: string;
   limits: { maxVerifierRepairAttempts: number };
   buildPrompt: (repoRoot: string, mode: "verify", extra?: string) => Promise<string>;
-  buildVerifierContextText: (opts: {
-    task: PrdTask;
-    doneWhen: string[];
-    gates: Array<{ name: string; command: string; ok: boolean; exitCode: number; durationMs: number; stdout?: string; stderr?: string }>;
-    uiResult: { ok: boolean; note?: string; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null;
-    uiNote?: string;
-    visualDirection?: string;
-    uxRequirements?: string[];
-    styleReferences?: string[];
-    caps: { available: boolean; version: string | null; commands: string[]; openUsage: string | null; notes: string[] };
-    uiUrl?: string;
-    uiCmd?: string;
-  }) => string;
+  buildVerifierContextText: (opts: any) => string;
   buildCapabilitySummary: (caps: {
     available: boolean;
     version: string | null;

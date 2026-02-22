@@ -15,6 +15,7 @@ import { runGateRepairLoop } from "./run-gate-repair";
 import { runSemanticRepairLoop } from "./run-semantic-repair";
 import { finalizeRunSuccess } from "./run-finalize";
 import { buildVerifierContextText } from "./run-verifier";
+import { runGateCommands } from "./gates";
 
 export type RunContext = {
   ctx: any;

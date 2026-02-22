@@ -6,7 +6,8 @@ import {
   type GateCommand,
   type GateRunItem,
 } from "./gates";
-import { firstScaffoldHintFromNotes, isScaffoldMissingGateCommand, type PrdTask } from "./planner";
+import { firstScaffoldHintFromNotes, isScaffoldMissingGateCommand } from "./planner";
+import type { PrdTask } from "./prd";
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
 
 type GateResult = Awaited<ReturnType<typeof runGateCommands>>;
