@@ -54,6 +54,7 @@ import { LIMITS, TIMEOUTS } from "./config";
 import { runPreflightStep } from "./run-preflight-step";
 import { promptWorkSessionWithTimeout as promptWorkSessionWithTimeoutStep, resetWorkSessionWithTimeout as resetWorkSessionWithTimeoutStep } from "./run-work-session";
 import { runGateRepairLoop } from "./run-gate-repair";
+import { runSemanticRepairLoop } from "./run-semantic-repair";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
 import { writePrdJson } from "./prd";
 import type { ToolContext } from "./tool-common";
@@ -666,146 +667,70 @@ export const createRunTool = (opts: {
               break;
             }
 
-            let blockedByVerifierFailure = false;
-            let judge: PrdJudgeAttempt | null = null;
-            let semanticRepairAttempts = 0;
-            let semanticNoProgressStreak = 0;
-            let verifierPassAttempts = 0;
-
-            while (true) {
-              verifierPassAttempts += 1;
-              if (!verifyPhaseAnnounced) {
-                verifyPhaseAnnounced = true;
-                await showToast(ctx, `Run: verify phase started for ${task.id}`, "info");
-              }
-              await showToast(ctx, `Run: verifier pass ${verifierPassAttempts} started for ${task.id}`, "info");
-
-              const verifierPrompt = await buildPrompt(repoRoot, "verify", buildVerifierContextText({
-                task,
-                doneWhen: effectiveDoneWhen,
-                gates: latestGateResult.results,
-                uiResult: latestUiResult,
-                ...(latestUiResult?.note ? { uiNote: latestUiResult.note } : {}),
-                visualDirection: prd.ui.visualDirection,
-                uxRequirements: prd.ui.uxRequirements,
-                styleReferences: prd.ui.styleReferences,
-                caps: agentBrowserCaps,
-                uiUrl: uiVerifyUrl,
-                uiCmd: uiVerifyCmd,
-              }));
-
-              const verifierOutcome = await resolveVerifierJudge({
-                ctx,
-                repoRoot,
-                verifierPrompt,
-                runId,
-                taskId: task.id,
-                capabilitySummary: buildCapabilitySummary(agentBrowserCaps),
-                ...(sessionAgents.verifyAgent ? { agent: sessionAgents.verifyAgent } : {}),
-              });
-              await showToast(ctx, `Run: verifier response received for ${task.id}`, "info");
-              if (!verifyIdleAnnounced) {
-                verifyIdleAnnounced = true;
-                await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
-              }
-
-              if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure("after-judge");
-                blockedByVerifierFailure = true;
-                break;
-              }
-
-              if ("transportFailure" in verifierOutcome) {
-                await failEarly(verifierOutcome.transportFailure.reason, verifierOutcome.transportFailure.nextActions);
-                blockedByVerifierFailure = true;
-                break;
-              }
-
-              judge = applyRepeatedFailureBackpressure(task.lastAttempt, verifierOutcome.judge);
-              if (judge.status === "PASS" && judge.exitSignal) break;
-
-              if (semanticRepairAttempts >= LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS || totalRepairAttempts >= maxTotalRepairAttempts) {
-                break;
-              }
-
-              semanticRepairAttempts += 1;
-              totalRepairAttempts += 1;
-              await showToast(
-                ctx,
-                `Run: verifier requested changes; returning to work for ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS})`,
-                "warning",
-              );
-              const actionableReason = firstActionableJudgeReason(judge) ?? "Verifier failed to confirm acceptance.";
-              const strictChecklist = semanticNoProgressStreak > 0
-                ? "Repeated finding detected with no clear progress. Make explicit file edits that directly satisfy acceptance criteria; avoid generic refinements."
-                : "";
-              const semanticRepairPrompt = buildSemanticRepairPrompt({ taskId: task.id, acceptance: task.acceptance ?? [], actionableReason, judge, carryForwardIssues, strictChecklist });
-
-              const semanticSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
-              const semanticPromptDispatch = await promptWorkSessionWithTimeout("semantic-repair", semanticRepairPrompt);
-              if (!semanticPromptDispatch.ok) {
-                blockedByVerifierFailure = true;
-                break;
-              }
-              await showToast(
-                ctx,
-                `Run: semantic repair dispatched for ${task.id} (${semanticRepairAttempts}/${LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS})`,
-                "info",
-              );
-
-              if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure("during-semantic-repair");
-                blockedByVerifierFailure = true;
-                break;
-              }
-
-              const semanticIdle = await waitForSessionIdleStableDetailed(
-                ctx,
-                ws.sessionId,
-                0,
-                1,
-                {
-                  afterSequence: semanticPromptDispatch.idleSequenceBeforePrompt,
-                  abortSignal: context.abort,
-                },
-              );
-              if (!semanticIdle.ok) {
-                blockedByVerifierFailure = true;
-                break;
-              }
-              await showToast(ctx, `Run: semantic repair idle for ${task.id}`, "success");
-
-              const semanticSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
-              const semanticDelta = summarizeWorkspaceDelta(semanticSnapshotBefore, semanticSnapshotAfter);
-              if (semanticDelta.changed === 0) {
-                semanticNoProgressStreak += 1;
-                if (semanticNoProgressStreak >= 2 || semanticRepairAttempts >= LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS) {
-                  await failEarly([
-                    formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
-                    `No source file changes detected after semantic repair attempt ${semanticRepairAttempts}.`,
-                    `Primary blocker remains: ${actionableReason}`,
-                  ]);
-                  blockedByVerifierFailure = true;
-                  break;
-                }
-              } else {
-                semanticNoProgressStreak = 0;
-              }
-
-              latestGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-              latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
-              gates = toGatesAttempt(latestGateResult);
-              ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
-
-              if (!latestGateResult.ok) {
-                await failEarly([
-                  formatReasonCode(RUN_REASON.SEMANTIC_REPAIR_GATE_REGRESSION),
-                  `Deterministic gate failed after semantic repair: ${latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)"}.`,
-                ]);
-                blockedByVerifierFailure = true;
-                break;
-              }
+            if (!verifyPhaseAnnounced) {
+              verifyPhaseAnnounced = true;
+              await showToast(ctx, `Run: verify phase started for ${task.id}`, "info");
             }
+
+            const semanticResult = await runSemanticRepairLoop({
+              ctx,
+              repoRoot,
+              workspaceAbs,
+              task,
+              doneWhen: effectiveDoneWhen,
+              runId,
+              gateCommands,
+              carryForwardIssues,
+              maxTotalRepairAttempts,
+              totalRepairAttempts,
+              latestGateResult,
+              latestUiResult,
+              uiVerifyEnabled,
+              isWebApp,
+              cliOk,
+              skillOk,
+              browserOk,
+              uiVerifyUrl,
+              uiVerifyCmd,
+              visualDirection: prd.ui.visualDirection,
+              uxRequirements: prd.ui.uxRequirements,
+              styleReferences: prd.ui.styleReferences,
+              agentBrowserCaps,
+              verifyAgent: sessionAgents.verifyAgent,
+              limits: { maxVerifierRepairAttempts: LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS },
+              buildPrompt,
+              buildVerifierContextText,
+              buildCapabilitySummary,
+              resolveVerifierJudge,
+              applyRepeatedFailureBackpressure,
+              firstActionableJudgeReason,
+              buildSemanticRepairPrompt,
+              promptWorkSessionWithTimeout: (phase, text) => promptWorkSessionWithTimeout(phase, text),
+              waitForWorkIdleAfterPrompt,
+              heartbeatRunLock,
+              blockForHeartbeatFailure,
+              captureWorkspaceSnapshot,
+              summarizeWorkspaceDelta,
+              runGateCommands,
+              runUiVerifyForTask,
+              toGatesAttempt,
+              toUiAttempt,
+              failEarly,
+              showToast,
+            });
+
+            if (!verifyIdleAnnounced) {
+              verifyIdleAnnounced = true;
+              await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
+            }
+
+            const blockedByVerifierFailure = semanticResult.blockedByVerifierFailure;
+            const judge = semanticResult.judge;
+            totalRepairAttempts = semanticResult.totalRepairAttempts;
+            latestGateResult = semanticResult.latestGateResult;
+            latestUiResult = semanticResult.latestUiResult;
+            gates = semanticResult.gates;
+            ui = semanticResult.ui;
 
             if (blockedByVerifierFailure || !judge) {
               break;
