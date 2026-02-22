@@ -14,6 +14,7 @@ import { promptWorkSessionWithTimeout as promptWorkSessionWithTimeoutStep, reset
 import { runGateRepairLoop } from "./run-gate-repair";
 import { runSemanticRepairLoop } from "./run-semantic-repair";
 import { finalizeRunSuccess } from "./run-finalize";
+import { buildVerifierContextText } from "./run-verifier";
 
 export type RunContext = {
   ctx: any;
