@@ -483,11 +483,16 @@ export const runUiVerification = async (opts: {
     }
   };
 
+  const evidenceDirAbs = path.join(repoRoot, ".mario", "state", "ui-evidence", taskId);
+  const screenshotAbs = path.join(evidenceDirAbs, "screenshot.png");
+  const screenshotRel = path.relative(repoRoot, screenshotAbs).replace(/\\/g, "/");
+
   const steps: Array<{ name: "open" | "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
     { name: "open", command: `agent-browser open ${JSON.stringify(url)}` },
     { name: "snapshot", command: "agent-browser snapshot" },
     { name: "snapshot-interactive", command: "agent-browser snapshot -i", optional: true },
-    { name: "screenshot", command: "agent-browser screenshot", optional: true },
+    // Optional screenshot; write repo-local path to avoid /tmp permissions.
+    { name: "screenshot", command: `agent-browser screenshot ${JSON.stringify(screenshotAbs)}`, optional: true },
     { name: "console", command: "agent-browser console --limit=50" },
     { name: "errors", command: "agent-browser errors" },
   ];
@@ -520,6 +525,13 @@ export const runUiVerification = async (opts: {
 
   try {
     for (const step of steps) {
+      if (step.name === "screenshot") {
+        try {
+          await mkdir(evidenceDirAbs, { recursive: true });
+        } catch {
+          // Best-effort only.
+        }
+      }
       const result = await runShellLogged(ctx, step.command, log, {
         eventPrefix: `ui.verify.${step.name}`,
         reasonCode: "UI_VERIFY_STEP_FAILED",
@@ -561,6 +573,18 @@ export const runUiVerification = async (opts: {
           },
         });
         return { ok: false, note: details };
+      }
+
+      if (step.name === "screenshot" && result.exitCode === 0) {
+        try {
+          const s = await stat(screenshotAbs);
+          if (s.isFile() && s.size > 0) {
+            evidence.screenshot = screenshotRel;
+            continue;
+          }
+        } catch {
+          // fall back to parsing stdout/stderr
+        }
       }
 
       const out = await relocateTmpEvidence(result.stdout || result.stderr, step.name);
