@@ -53,6 +53,7 @@ import { clearToastStreamChannel } from "./toast-stream";
 import { LIMITS, TIMEOUTS } from "./config";
 import { runPreflightStep } from "./run-preflight-step";
 import { promptWorkSessionWithTimeout as promptWorkSessionWithTimeoutStep, resetWorkSessionWithTimeout as resetWorkSessionWithTimeoutStep } from "./run-work-session";
+import { runGateRepairLoop } from "./run-gate-repair";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
 import { writePrdJson } from "./prd";
 import type { ToolContext } from "./tool-common";
@@ -551,133 +552,54 @@ export const createRunTool = (opts: {
               await showToast(ctx, `Run: work phase idle for ${task.id}`, "success");
             }
 
-            let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-            await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
-
-            const taskRepairStartedAt = Date.now();
-            let repairAttempts = 0;
-            let totalRepairAttempts = 0;
             const maxTotalRepairAttempts = LIMITS.MAX_TOTAL_REPAIR_ATTEMPTS;
-            let noProgressStreak = 0;
-            let noChangeStreak = 0;
-            let stoppedForNoChanges = false;
-            let lastNoChangeGate: string | null = null;
-            let lastGateFailureSig: string | null = null;
-            let deterministicScaffoldTried = false;
 
-            const usesNodePackageScripts = gateCommands.some((g) => {
-              const c = g.command.trim();
-              return /^npm\s+run\s+/i.test(c) || /^pnpm\s+/i.test(c) || /^yarn\s+/i.test(c) || /^bun\s+run\s+/i.test(c);
-            });
-
-            if (task.id === "T-0002" && usesNodePackageScripts) {
-              const bootstrap = await ensureT0002QualityBootstrap(repoRoot, workspaceRoot, gateCommands);
-              if (ctx.$ && (!(await hasNodeModules(repoRoot, workspaceRoot)) || bootstrap.changed)) {
-                const installCmd = workspaceRoot === "." ? "npm install" : `npm --prefix ${workspaceRoot} install`;
-                await runShellWithFailureLog(ctx, repoRoot, installCmd, {
-                  event: RUN_EVENT.BOOTSTRAP_INSTALL_FAILED,
-                  message: `Dependency install failed while bootstrapping ${task.id}`,
-                  reasonCode: RUN_REASON.BOOTSTRAP_INSTALL_FAILED,
-                  runId,
-                  taskId: task.id,
-                  extra: { workspaceRoot },
-                });
-              }
-            }
-
-            const failSigFromGate = (): string => {
-              const failed = gateResult.failed;
-              return failed ? `${failed.command}:${failed.exitCode}` : "unknown";
-            };
-
-            while (!gateResult.ok) {
-              const currentSig = failSigFromGate();
-              const elapsedMs = Date.now() - taskRepairStartedAt;
-              if (lastGateFailureSig === currentSig) noProgressStreak += 1;
-              else noProgressStreak = 0;
-              lastGateFailureSig = currentSig;
-
-              if (repairAttempts > 0 && (elapsedMs >= TIMEOUTS.MAX_TASK_REPAIR_MS || noProgressStreak >= LIMITS.MAX_NO_PROGRESS_STREAK || totalRepairAttempts >= maxTotalRepairAttempts)) {
-                break;
-              }
-
-              const failedGate = gateResult.failed ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})` : "(unknown command)";
-              const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
-              const missingScript = gateResult.failed ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command) : null;
-
-              if (!deterministicScaffoldTried && gateResult.failed?.command && isScaffoldMissingGateCommand(gateResult.failed.command) && scaffoldHint && ctx.$) {
-                deterministicScaffoldTried = true;
-                const scaffoldRun = await runShellWithFailureLog(ctx, repoRoot, scaffoldHint, {
-                  event: RUN_EVENT.SCAFFOLD_DEFAULT_FAILED,
-                  message: `Default scaffold command failed for ${task.id}`,
-                  reasonCode: RUN_REASON.SCAFFOLD_COMMAND_FAILED,
-                  runId,
-                  taskId: task.id,
-                });
-                repairAttempts += 1;
-                totalRepairAttempts += 1;
-                if (scaffoldRun.exitCode !== 0) {
-                  await showToast(ctx, `Run: default scaffold failed on ${task.id}, falling back to agent repair`, "warning");
-                }
-                gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-                await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
-                if (gateResult.ok) break;
-              }
-
-              const repairPrompt = buildGateRepairPrompt({
-                taskId: task.id,
-                failedGate,
-                carryForwardIssues,
-                missingScript,
-                scaffoldHint,
-                scaffoldGateFailure: Boolean(gateResult.failed?.command && isScaffoldMissingGateCommand(gateResult.failed.command)),
-              });
-
-              const repairSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
-              const repairPromptDispatch = await promptWorkSessionWithTimeout("repair", repairPrompt);
-              if (!repairPromptDispatch.ok) {
-                break;
-              }
-
-              if (!(await heartbeatRunLock(repoRoot))) {
-                await blockForHeartbeatFailure("during-auto-repair");
-                break;
-              }
-
-              const repairIdle = await waitForSessionIdleStableDetailed(
+            const waitForWorkIdleAfterPrompt = async (idleSequenceBeforePrompt: number): Promise<boolean> => {
+              if (!ws) return false;
+              const idle = await waitForSessionIdleStableDetailed(
                 ctx,
                 ws.sessionId,
                 0,
                 1,
                 {
-                  afterSequence: repairPromptDispatch.idleSequenceBeforePrompt,
+                  afterSequence: idleSequenceBeforePrompt,
                   abortSignal: context.abort,
                 },
               );
-              if (!repairIdle.ok) break;
-              if (!workIdleAnnounced) {
-                workIdleAnnounced = true;
-                await showToast(ctx, `Run: work phase idle for ${task.id}`, "success");
-              }
+              return idle.ok;
+            };
 
-              const repairSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
-              const repairDelta = summarizeWorkspaceDelta(repairSnapshotBefore, repairSnapshotAfter);
-              if (repairDelta.changed === 0) {
-                noChangeStreak += 1;
-                lastNoChangeGate = failedGate;
-                if (noChangeStreak >= 2) {
-                  stoppedForNoChanges = true;
-                  break;
-                }
-              } else {
-                noChangeStreak = 0;
-              }
+            const gateRepair = await runGateRepairLoop({
+              ctx,
+              repoRoot,
+              workspaceRoot,
+              workspaceAbs,
+              task,
+              gateCommands,
+              carryForwardIssues,
+              runId,
+              maxTotalRepairAttempts,
+              initialWorkIdleAnnounced: workIdleAnnounced,
+              promptWorkSessionWithTimeout: (phase, text) => promptWorkSessionWithTimeout(phase, text),
+              waitForWorkIdleAfterPrompt,
+              heartbeatRunLock,
+              blockForHeartbeatFailure,
+              showToast,
+              buildGateRepairPrompt,
+              captureWorkspaceSnapshot,
+              summarizeWorkspaceDelta,
+              logGateRunResults: (phase, taskId, gateResults) => logGateRunResults(RUN_PHASE.REPAIR, taskId, gateResults),
+              runShellWithFailureLog,
+              timeouts: { maxTaskRepairMs: TIMEOUTS.MAX_TASK_REPAIR_MS },
+              limits: { maxNoProgressStreak: LIMITS.MAX_NO_PROGRESS_STREAK },
+            });
 
-              repairAttempts += 1;
-              totalRepairAttempts += 1;
-              gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-              await logGateRunResults(RUN_PHASE.REPAIR, task.id, gateResult.results);
-            }
+            workIdleAnnounced = gateRepair.workIdleAnnounced;
+            let gateResult = gateRepair.gateResult;
+            let repairAttempts = gateRepair.repairAttempts;
+            let totalRepairAttempts = gateRepair.totalRepairAttempts;
+            const stoppedForNoChanges = gateRepair.stoppedForNoChanges;
+            const lastNoChangeGate = gateRepair.lastNoChangeGate;
 
             let latestGateResult = gateResult;
             let latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
