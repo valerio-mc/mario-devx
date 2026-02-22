@@ -1,5 +1,6 @@
 import path from "path";
 import { spawn } from "child_process";
+import { copyFile, mkdir, stat } from "fs/promises";
 import { readTextIfExists } from "./fs";
 import { redactForLog } from "./logging";
 import { runShellCommand } from "./shell";
@@ -431,12 +432,14 @@ export const ensureAgentBrowserPrereqs = async (
 
 export const runUiVerification = async (opts: {
   ctx: any;
+  repoRoot: string;
+  taskId: string;
   devCmd: string;
   url: string;
   log?: UiLog;
   waitMs?: number;
 }): Promise<UiVerificationResult> => {
-  const { ctx, devCmd, url, log, waitMs } = opts;
+  const { ctx, repoRoot, taskId, devCmd, url, log, waitMs } = opts;
   if (!ctx.$) {
     return { ok: false, note: "No shell available for UI verification." };
   }
@@ -453,6 +456,30 @@ export const runUiVerification = async (opts: {
     const trimmed = value.trim();
     if (!trimmed) return "";
     return trimmed.length > 1200 ? `${trimmed.slice(-1200)}` : trimmed;
+  };
+
+  const extractTmpFilePath = (value: string): string | null => {
+    const match = value.match(/\/tmp\/[^\s"']+/);
+    return match ? match[0] : null;
+  };
+
+  const relocateTmpEvidence = async (rawOutput: string, stepName: string): Promise<string> => {
+    const tmpPath = extractTmpFilePath(rawOutput);
+    if (!tmpPath) return summarize(rawOutput);
+    try {
+      const fileStat = await stat(tmpPath);
+      if (!fileStat.isFile()) return summarize(rawOutput);
+      const ext = path.extname(tmpPath) || ".txt";
+      const evidenceDir = path.join(repoRoot, ".mario", "state", "ui-evidence", taskId);
+      await mkdir(evidenceDir, { recursive: true });
+      const targetName = `${stepName}${ext}`;
+      const targetAbs = path.join(evidenceDir, targetName);
+      await copyFile(tmpPath, targetAbs);
+      const rel = path.relative(repoRoot, targetAbs).replace(/\\/g, "/");
+      return rel;
+    } catch {
+      return summarize(rawOutput);
+    }
   };
 
   const steps: Array<{ name: "open" | "snapshot" | "snapshot-interactive" | "console" | "errors"; command: string; optional?: boolean }> = [
@@ -534,7 +561,7 @@ export const runUiVerification = async (opts: {
         return { ok: false, note: details };
       }
 
-      const out = summarize(result.stdout || result.stderr);
+      const out = await relocateTmpEvidence(result.stdout || result.stderr, step.name);
       if (step.name === "snapshot" && out) evidence.snapshot = out;
       if (step.name === "snapshot-interactive" && out) evidence.snapshotInteractive = out;
       if (step.name === "console" && out) evidence.console = out;

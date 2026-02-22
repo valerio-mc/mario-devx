@@ -74,6 +74,7 @@ export const buildVerifierContextText = (opts: {
       ? [
           "- UI verification evidence is already provided below; treat it as primary evidence.",
           "- Do NOT run additional agent-browser commands unless this evidence is missing or clearly inconclusive.",
+          "- Do NOT read evidence from /tmp paths; use repository-local evidence paths only.",
         ]
       : [
           "- You may run agent-browser commands autonomously to gather missing evidence.",

@@ -103,6 +103,7 @@ export const runUiVerifyForTask = async (opts: {
   shouldRunUiVerify: boolean;
   taskId: string;
   ctx: any;
+  repoRoot: string;
   uiVerifyCmd: string;
   uiVerifyUrl: string;
   waitMs: number;
@@ -115,12 +116,14 @@ export const runUiVerifyForTask = async (opts: {
     meta?: RunLogMeta,
   ) => Promise<void>;
 }): Promise<UiVerificationResult | null> => {
-  const { shouldRunUiVerify, taskId, ctx, uiVerifyCmd, uiVerifyUrl, waitMs, runCtx, logRunEvent } = opts;
+  const { shouldRunUiVerify, taskId, ctx, repoRoot, uiVerifyCmd, uiVerifyUrl, waitMs, runCtx, logRunEvent } = opts;
   if (!shouldRunUiVerify) {
     return null;
   }
   return runUiVerification({
     ctx,
+    repoRoot,
+    taskId,
     devCmd: uiVerifyCmd,
     url: uiVerifyUrl,
     waitMs,

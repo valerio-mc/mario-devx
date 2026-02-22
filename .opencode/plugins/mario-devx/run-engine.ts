@@ -157,6 +157,7 @@ export const runEngine = async (opts: {
       shouldRunUiVerify,
       taskId,
       ctx,
+      repoRoot,
       uiVerifyCmd,
       uiVerifyUrl,
       waitMs: TIMEOUTS.UI_VERIFY_WAIT_MS,
