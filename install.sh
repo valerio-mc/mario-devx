@@ -15,11 +15,18 @@ fi
 # Create .opencode directory
 mkdir -p .opencode/plugins
 
-# Clone the plugin
-tmpdir=$(mktemp -d)
+# Clone the plugin (repo-local temp dir; avoids external /tmp)
+tmpdir=".opencode/.mario-devx-install-tmp-$$"
+
+cleanup() {
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+
+rm -rf "$tmpdir"
+mkdir -p "$tmpdir"
 git clone --depth 1 https://github.com/valerio-mc/mario-devx.git "$tmpdir" 2>/dev/null || {
     echo "Error: Failed to clone repository"
-    rm -rf "$tmpdir"
     exit 1
 }
 
@@ -56,9 +63,6 @@ NODE
 else
     cp "$src_pkg" "$dst_pkg"
 fi
-
-# Cleanup
-rm -rf "$tmpdir"
 
 echo "✅ Mario DevX installed successfully!"
 echo ""
