@@ -55,6 +55,7 @@ import { runPreflightStep } from "./run-preflight-step";
 import { promptWorkSessionWithTimeout as promptWorkSessionWithTimeoutStep, resetWorkSessionWithTimeout as resetWorkSessionWithTimeoutStep } from "./run-work-session";
 import { runGateRepairLoop } from "./run-gate-repair";
 import { runSemanticRepairLoop } from "./run-semantic-repair";
+import { finalizeRunCleanup, finalizeRunCrash, finalizeRunSuccess } from "./run-finalize";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
 import { writePrdJson } from "./prd";
 import type { ToolContext } from "./tool-common";
@@ -766,110 +767,51 @@ export const createRunTool = (opts: {
             }
           }
 
-          const blockedThisRun = (prd.tasks ?? []).some((t) => {
-            if (t.status !== "blocked" || !t.lastAttempt) return false;
-            return t.lastAttempt.iteration > runStartIteration;
-          });
-          const finalRunStatus = blockedThisRun ? "BLOCKED" : "DONE";
-
-          await updateRunState(repoRoot, {
-            status: finalRunStatus,
-            phase: "run",
-            ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
-            updatedAt: nowIso(),
-          });
-
-          const { result, latestTask, judgeTopReason } = buildRunSummary({
+          return finalizeRunSuccess({
+            ctx,
+            repoRoot,
+            runId,
+            nowIso,
             attempted,
             completed,
             maxItems,
-            tasks: prd.tasks ?? [],
-            runNotes: [],
-            uiVerifyRequired,
+            prd,
+            runStartIteration,
+            controlSessionId: context.sessionID,
+            updateRunState,
+            buildRunSummary,
+            logRunEvent,
+            readTasks: () => prd.tasks ?? [],
+            finishedEvent: RUN_EVENT.FINISHED,
           });
-
-          await updateRunState(repoRoot, {
-            ...(context.sessionID ? { lastRunControlSessionId: context.sessionID } : {}),
-            lastRunAt: nowIso(),
-            lastRunResult: result,
-          });
-
-          await logRunEvent(ctx, repoRoot, finalRunStatus === "DONE" ? "info" : "warn", RUN_EVENT.FINISHED, "Run finished", {
-            attempted,
-            completed,
-            status: finalRunStatus,
-            latestTaskId: latestTask?.id ?? null,
-            reason: judgeTopReason,
-          }, { runId, ...(latestTask?.id ? { taskId: latestTask.id } : {}) });
-
-          return result;
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.FATAL_EXCEPTION, "Run crashed with unhandled exception", {
-            error: errorMessage,
-            stack: error instanceof Error ? error.stack ?? "" : "",
-          }, { runId, reasonCode: RUN_REASON.RUN_FATAL_EXCEPTION });
-          const current = await readRunState(repoRoot);
-          await writeRunState(repoRoot, {
-            ...current,
-            status: "BLOCKED",
-            phase: "run",
-            updatedAt: nowIso(),
-            ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
-            lastRunAt: nowIso(),
-            lastRunResult: `Run failed unexpectedly: ${errorMessage}. See .mario/state/mario-devx.log for details.`,
+          return finalizeRunCrash({
+            ctx,
+            repoRoot,
+            runId,
+            nowIso,
+            controlSessionId: context.sessionID,
+            error,
+            fatalEvent: RUN_EVENT.FATAL_EXCEPTION,
+            fatalReasonCode: RUN_REASON.RUN_FATAL_EXCEPTION,
+            readRunState,
+            writeRunState,
+            logRunEvent,
+            showToast,
           });
-          await showToast(ctx, "Run crashed unexpectedly; see mario-devx.log for details", "warning");
-          return `Run failed unexpectedly: ${errorMessage}\nCheck .mario/state/mario-devx.log and rerun /mario-devx:run 1.`;
         } finally {
-          try {
-            await logRunEvent(ctx, repoRoot, "info", "run.session.cleanup.start", "Cleaning ephemeral phase sessions", {
-              controlSessionId: context.sessionID ?? null,
-            }, { runId });
-
-            const runForCleanup = await readRunState(repoRoot);
-
-            const deleteResults: Record<string, string> = {};
-            const deletedIds = new Set<string>();
-            const sessionsToDelete = [
-              { key: "work", id: runForCleanup.workSessionId },
-            ];
-
-            for (const session of sessionsToDelete) {
-              if (!session.id) {
-                deleteResults[session.key] = "none";
-                continue;
-              }
-              if (deletedIds.has(session.id)) {
-                deleteResults[session.key] = "deduped";
-                continue;
-              }
-              const result = await deleteSessionBestEffort(ctx, session.id, context.sessionID);
-              deleteResults[session.key] = result;
-              if (result === "deleted" || result === "not-found") {
-                deletedIds.add(session.id);
-              }
-            }
-
-            await clearSessionCaches(repoRoot);
-            await updateRunState(repoRoot, {
-              workSessionId: undefined,
-              verifierSessionId: undefined,
-              baselineMessageId: undefined,
-            });
-
-            await logRunEvent(ctx, repoRoot, "info", "run.session.cleanup.ok", "Session cleanup complete", {
-              ...deleteResults,
-            }, { runId });
-          } catch (cleanupError) {
-            await logRunEvent(ctx, repoRoot, "warn", "run.session.cleanup.failed", "Session cleanup failed (best-effort)", {
-              error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-            }, { runId });
-          }
-          if (controlSessionId) {
-            clearToastStreamChannel(controlSessionId);
-          }
-          await releaseRunLock(repoRoot);
+          await finalizeRunCleanup({
+            ctx,
+            repoRoot,
+            runId,
+            controlSessionId: context.sessionID,
+            clearSessionCaches,
+            readRunState,
+            updateRunState,
+            deleteSessionBestEffort,
+            releaseRunLock,
+            logRunEvent,
+          });
         }
       },
     }),
