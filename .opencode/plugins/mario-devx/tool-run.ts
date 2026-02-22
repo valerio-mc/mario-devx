@@ -52,6 +52,7 @@ import { buildVerifierContextText } from "./run-verifier";
 import { clearToastStreamChannel } from "./toast-stream";
 import { LIMITS, TIMEOUTS } from "./config";
 import { runPreflightStep } from "./run-preflight-step";
+import { promptWorkSessionWithTimeout as promptWorkSessionWithTimeoutStep, resetWorkSessionWithTimeout as resetWorkSessionWithTimeoutStep } from "./run-work-session";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
 import { writePrdJson } from "./prd";
 import type { ToolContext } from "./tool-common";
@@ -429,155 +430,54 @@ export const createRunTool = (opts: {
             let ws: { sessionId: string; baselineMessageId: string } | null = null;
 
             const resetWorkSessionWithTimeout = async (): Promise<{ sessionId: string; baselineMessageId: string } | null> => {
-              return Promise.race([
-                resetWorkSession(ctx, repoRoot, sessionAgents.workAgent),
-                new Promise<never>((_, reject) => {
-                  setTimeout(() => {
-                    reject(new Error("resetWorkSession timeout"));
-                  }, TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS);
-                }),
-              ]).catch(async (error) => {
-                const gates: PrdGatesAttempt = { ok: false, commands: [] };
-                const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                const isTimeout = /timeout/i.test(errorMessage);
-                const judge: PrdJudgeAttempt = {
-                  status: "FAIL",
-                  exitSignal: false,
-                  reason: [
-                    formatReasonCode(isTimeout ? RUN_REASON.WORK_SESSION_RESET_TIMEOUT : RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR),
-                    isTimeout
-                      ? `Work session reset timed out (${TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS}ms).`
-                      : "Work session reset failed while recovering from transport errors.",
-                    errorMessage,
-                  ],
-                  nextActions: [
-                    "Retry /mario-devx:run 1.",
-                    "If this repeats, restart OpenCode and rerun.",
-                  ],
-                };
-                prd = await persistBlockedTaskAttempt({
-                  ctx,
-                  repoRoot,
-                  prd,
-                  task,
-                  attemptAt,
-                  iteration: state.iteration,
-                  gates,
-                  ui,
-                  judge,
-                  runId,
-                });
-                await logRunEvent(
-                  ctx,
-                  repoRoot,
-                  "error",
-                  RUN_EVENT.BLOCKED_WORK_SESSION_RESET_TIMEOUT,
-                  "Run blocked: work-session reset failed",
-                  {
-                    taskId: task.id,
-                    timeoutMs: TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS,
-                    error: errorMessage,
-                  },
-                  {
-                    runId,
-                    taskId: task.id,
-                    reasonCode: isTimeout ? RUN_REASON.WORK_SESSION_RESET_TIMEOUT : RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR,
-                  },
-                );
-                return null;
+              const resetResult = await resetWorkSessionWithTimeoutStep({
+                ctx,
+                repoRoot,
+                runId,
+                task,
+                prd,
+                attemptAt,
+                iteration: state.iteration,
+                formatReasonCode,
+                resetWorkSession,
+                persistBlockedTaskAttempt,
+                logRunEvent,
+                blockedEvent: RUN_EVENT.BLOCKED_WORK_SESSION_RESET_TIMEOUT,
+                workAgent: sessionAgents.workAgent,
               });
+              prd = resetResult.prd;
+              return resetResult.session;
             };
 
             const promptWorkSessionWithTimeout = async (
               phase: "build" | "repair" | "semantic-repair",
               text: string,
             ): Promise<{ ok: true; idleSequenceBeforePrompt: number } | { ok: false }> => {
-              const maxTransportAttempts = 3;
-              const isTransportParseError = (message: string): boolean => {
-                const m = message.toLowerCase();
-                return m.includes("unexpected eof") || (m.includes("json parse") && m.includes("eof")) || m.includes("empty response");
-              };
-              try {
-                for (let attempt = 1; attempt <= maxTransportAttempts; attempt += 1) {
-                  try {
-                    if (!ws) {
-                      await blockForPromptDispatchFailure(phase, "Work session was not initialized before prompt dispatch.", RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR);
-                      return { ok: false };
-                    }
-                    const idleSequenceBeforePrompt = getSessionIdleSequence(ws.sessionId);
-                    await logRunEvent(ctx, repoRoot, "info", "run.work.prompt.send", "Dispatching work prompt", {
-                      taskId: task.id,
-                      phase,
-                      attempt,
-                      workSessionId: ws.sessionId,
-                    }, { runId, taskId: task.id });
-                    await Promise.race([
-                      ctx.client.session.promptAsync({
-                        path: { id: ws.sessionId },
-                        body: {
-                          ...(sessionAgents.workAgent ? { agent: sessionAgents.workAgent } : {}),
-                          parts: [{ type: "text", text }],
-                        },
-                      }),
-                      new Promise<never>((_, reject) => {
-                        setTimeout(() => {
-                          reject(new Error(`prompt dispatch timeout (${phase})`));
-                        }, TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS);
-                      }),
-                    ]);
-                    await logRunEvent(ctx, repoRoot, "info", "run.work.prompt.sent", "Work prompt dispatched", {
-                      taskId: task.id,
-                      phase,
-                      attempt,
-                      workSessionId: ws.sessionId,
-                    }, { runId, taskId: task.id });
-                    return { ok: true, idleSequenceBeforePrompt };
-                  } catch (error) {
-                    const errorMessage = error instanceof Error ? error.message : String(error);
-                    const timedOut = errorMessage.toLowerCase().includes("timeout");
-                    const isTransport = isTransportParseError(errorMessage);
-                    if (isTransport && attempt < maxTransportAttempts) {
-                      const previousSessionId = ws?.sessionId ?? null;
-                      await logRunEvent(ctx, repoRoot, "warn", "run.work.prompt.transport-retry", "Transport parse failure, rotating work session and retrying", {
-                        taskId: task.id,
-                        phase,
-                        attempt,
-                        maxTransportAttempts,
-                        previousWorkSessionId: previousSessionId,
-                        error: errorMessage,
-                      }, { runId, taskId: task.id, reasonCode: RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR });
-                      if (previousSessionId) {
-                        await deleteSessionBestEffort(ctx, previousSessionId, context.sessionID);
-                      }
-                      const rotated = await resetWorkSessionWithTimeout();
-                      if (!rotated) {
-                        return { ok: false };
-                      }
-                      ws = rotated;
-                      await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
-                      await updateRunState(repoRoot, {
-                        workSessionId: ws.sessionId,
-                        baselineMessageId: ws.baselineMessageId,
-                        controlSessionId: context.sessionID,
-                      });
-                      await new Promise((resolve) => setTimeout(resolve, 350 * attempt));
-                      continue;
-                    }
-                    await blockForPromptDispatchFailure(
-                      phase,
-                      errorMessage,
-                      timedOut ? RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT : RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR,
-                    );
-                    return { ok: false };
-                  }
-                }
-                return { ok: false };
-              } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                await blockForPromptDispatchFailure(phase, errorMessage, RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR);
-                return { ok: false };
-              }
+              return promptWorkSessionWithTimeoutStep({
+                ctx,
+                repoRoot,
+                runId,
+                taskId: task.id,
+                phase,
+                text,
+                getWorkSession: () => ws,
+                setWorkSession: async (value) => {
+                  ws = value;
+                },
+                resetWorkSession: resetWorkSessionWithTimeout,
+                deleteSessionBestEffort,
+                setWorkSessionTitle,
+                updateRunState,
+                getIdleSequence: getSessionIdleSequence,
+                logRunEvent,
+                onDispatchFailure: (failedPhase, errorMessage, reasonCode) => blockForPromptDispatchFailure(
+                  failedPhase,
+                  errorMessage,
+                  reasonCode as typeof RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT | typeof RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR,
+                ),
+                workAgent: sessionAgents.workAgent,
+                controlSessionId: context.sessionID,
+              });
             };
 
             if (!(await heartbeatRunLock(repoRoot))) {
