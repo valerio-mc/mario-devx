@@ -6,6 +6,21 @@ import { writeTextAtomic } from "./fs";
 import { pidLooksAlive } from "./process";
 
 const nowIso = (): string => new Date().toISOString();
+const LEGACY_LOCK_STALE_MS = 2 * 60 * 1000;
+
+type ParsedRunLock = {
+  pid?: unknown;
+  i?: unknown;
+  t?: unknown;
+};
+
+const legacyLockTimestampMs = (parsed: ParsedRunLock): number | null => {
+  const hasLegacyCounters = typeof parsed.i === "number" && Number.isFinite(parsed.i);
+  const hasLegacyTime = typeof parsed.t === "number" && Number.isFinite(parsed.t);
+  const hasPid = typeof parsed.pid === "number" && Number.isFinite(parsed.pid);
+  if (hasPid || !hasLegacyCounters || !hasLegacyTime) return null;
+  return parsed.t as number;
+};
 
 export const runLockPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "state", "run.lock");
 
@@ -23,7 +38,20 @@ export const acquireRunLock = async (
     const existing = await readFile(lockPath, "utf8");
     const lockIsOld = Date.now() - s.mtimeMs > staleAfterMs;
     try {
-      const parsed = JSON.parse(existing) as { pid?: unknown };
+      const parsed = JSON.parse(existing) as ParsedRunLock;
+      const legacyTs = legacyLockTimestampMs(parsed);
+      if (legacyTs !== null) {
+        const legacyAgeMs = Math.max(0, Date.now() - legacyTs);
+        const staleByTimestamp = legacyAgeMs >= LEGACY_LOCK_STALE_MS;
+        const staleByMtime = Date.now() - s.mtimeMs > staleAfterMs;
+        if (staleByTimestamp || staleByMtime) {
+          await unlink(lockPath);
+        } else {
+          // Legacy lock shape has no pid ownership info; self-heal immediately.
+          await unlink(lockPath);
+        }
+        // Proceed to acquire a modern lock below.
+      } else {
       const alive = pidLooksAlive(parsed.pid);
       if (alive === false || (lockIsOld && alive !== true)) {
         if (typeof parsed.pid === "number") {
@@ -39,6 +67,7 @@ export const acquireRunLock = async (
           ok: false,
           message: `Another mario-devx run appears to be in progress (lock: ${lockPath}).\n${existing.trim()}`,
         };
+      }
       }
     } catch {
       try {
