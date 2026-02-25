@@ -1,7 +1,17 @@
 import type { PrdJson } from "./prd";
 
+const WIZARD_PLAN_MODE_RULES = [
+  "<system-reminder>",
+  "MODE: PLAN_ONLY",
+  "Do not propose code edits, commands, patches, or implementation steps.",
+  "Collect requirements and produce planning artifacts only.",
+  "</system-reminder>",
+  "",
+];
+
 export const buildTaskGenerationPrompt = (prd: PrdJson): string => {
   return [
+    ...WIZARD_PLAN_MODE_RULES,
     "You are mario-devx's task planner.",
     "Generate an optimal task breakdown from this PRD.",
     "",
@@ -42,6 +52,7 @@ export const buildTaskGenerationPrompt = (prd: PrdJson): string => {
 
 export const buildInterviewPrompt = (prd: PrdJson, input: string, transcriptLines: string[]): string => {
   return [
+    ...WIZARD_PLAN_MODE_RULES,
     "You are mario-devx's PRD interviewer.",
     "Ask ONE focused question at a time. Do NOT output JSON.",
     "",
@@ -116,6 +127,7 @@ export const buildRepeatedQuestionRepairPrompt = (previousQuestion: string, late
 
 export const buildQualityGatePresetPrompt = (prd: PrdJson): string => {
   return [
+    ...WIZARD_PLAN_MODE_RULES,
     "You are mario-devx's quality gate assistant.",
     "Generate exactly 3 candidate deterministic quality-gate presets for this project.",
     "Prefer commands that are realistic for the provided language/framework and likely to pass once implementation is complete.",
@@ -151,6 +163,7 @@ export const buildQualityGatePresetRepairPrompt = (invalidResponse: string): str
 
 export const buildCompileInterviewPrompt = (prd: PrdJson, transcriptLines: string[]): string => {
   return [
+    ...WIZARD_PLAN_MODE_RULES,
     "You are mario-devx's PRD compiler.",
     "Convert the interview transcript into PRD updates.",
     "",

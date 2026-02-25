@@ -359,64 +359,68 @@ export const createNewTool = (opts: {
           }
 
           if (!done) {
-          if (
-            hasAnswer
-            && typeof cachedQuestion === "string"
-            && normalizeQuestionKey(finalQuestion) === normalizeQuestionKey(cachedQuestion)
-          ) {
-            const repeatRepairResponse = await ctx.client.session.prompt({
-              path: { id: ws.sessionId },
-              body: {
-                parts: [{ type: "text", text: repeatedQuestionRepairPrompt(cachedQuestion, rawInput) }],
-              },
-            });
-            const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse);
-            const repeatRepairTurn = parseInterviewTurn(repeatRepairText);
-            if (!repeatRepairTurn.error && repeatRepairTurn.question) {
-              finalQuestion = repeatRepairTurn.question;
+            const askedQuestionCount = Object.keys(prd.wizard.answers ?? {}).filter((key) => /^q-\d{5,}$/.test(key)).length;
+            const nextStep = Math.min(WIZARD_REQUIREMENTS.TOTAL_STEPS, Math.max(1, askedQuestionCount + 1));
+            if (
+              hasAnswer
+              && typeof cachedQuestion === "string"
+              && normalizeQuestionKey(finalQuestion) === normalizeQuestionKey(cachedQuestion)
+            ) {
+              const repeatRepairResponse = await ctx.client.session.prompt({
+                path: { id: ws.sessionId },
+                body: {
+                  parts: [{ type: "text", text: repeatedQuestionRepairPrompt(cachedQuestion, rawInput) }],
+                },
+              });
+              const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse);
+              const repeatRepairTurn = parseInterviewTurn(repeatRepairText);
+              if (!repeatRepairTurn.error && repeatRepairTurn.question) {
+                finalQuestion = repeatRepairTurn.question;
+              }
             }
-          }
 
             prd = {
-            ...prd,
-            wizard: {
-              ...prd.wizard,
-              step: 0,
-              totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
-              status: "in_progress",
-              lastQuestionId: "interview",
-              answers: {
-                ...prd.wizard.answers,
-                [`q-${Date.now()}`]: finalQuestion,
-                [LAST_QUESTION_KEY]: finalQuestion,
+              ...prd,
+              wizard: {
+                ...prd.wizard,
+                step: nextStep,
+                totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
+                status: "in_progress",
+                lastQuestionId: "interview",
+                answers: {
+                  ...prd.wizard.answers,
+                  [`q-${Date.now()}`]: finalQuestion,
+                  [LAST_QUESTION_KEY]: finalQuestion,
+                },
               },
-            },
-          };
+            };
             await writePrdJson(repoRoot, prd);
             await logToolEvent(ctx, repoRoot, "info", "new.question", "PRD follow-up question generated", {
               question: finalQuestion,
+              step: nextStep,
+              totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
             });
             return [
-              `PRD interview (0/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
+              `PRD interview (${nextStep}/${WIZARD_REQUIREMENTS.TOTAL_STEPS})`,
               finalQuestion,
               "Reply with your answer in natural language.",
             ].join("\n");
           }
 
           prd = {
-          ...prd,
-          wizard: {
-            ...prd.wizard,
-            step: WIZARD_REQUIREMENTS.TOTAL_STEPS,
-            totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
-            status: "completed",
-            lastQuestionId: "done",
-            answers: {
-              ...prd.wizard.answers,
-              [LAST_QUESTION_KEY]: "done",
+            ...prd,
+            wizard: {
+              ...prd.wizard,
+              step: WIZARD_REQUIREMENTS.TOTAL_STEPS,
+              totalSteps: WIZARD_REQUIREMENTS.TOTAL_STEPS,
+              status: "completed",
+              lastQuestionId: "done",
+              answers: {
+                ...prd.wizard.answers,
+                [LAST_QUESTION_KEY]: "done",
+              },
             },
-          },
-        };
+          };
 
           prd = await seedTasksFromPrd(repoRoot, prd, ctx);
           await writePrdJson(repoRoot, prd);

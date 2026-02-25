@@ -100,7 +100,7 @@ STREAM_VERIFY=1
 
 ## Frontend verification
 
-When `frontend: true`, mario-devx configures UI verification and auto-heals browser prerequisites during `/mario-devx:run` (non-interactive first), then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
+When `frontend: true`, mario-devx auto-syncs `.mario/AGENTS.md` to enable UI verification (`UI_VERIFY=1`) during `/mario-devx:run`, sets `UI_VERIFY_REQUIRED` from PRD policy, and auto-heals browser prerequisites (non-interactive first). It then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
 
 UI evidence includes accessibility snapshots, console/errors, and an optional screenshot saved under `.mario/state/ui-evidence/<taskId>/` (repo-local, so the verifier can `Read` it without external directory permissions).
 
@@ -116,7 +116,7 @@ In your project:
   AGENTS.md                  # harness knobs (UI_VERIFY*, WORK_AGENT, VERIFY_AGENT, STREAM_WORK, STREAM_VERIFY)
   state/state.json           # internal state (iteration + run status)
   state/run.lock             # active-run lock + heartbeat
-  state/mario-devx.log       # centralized structured run/tool logs (auto-capped/rotated)
+  state/mario-devx.log       # centralized structured run/tool logs (auto-capped at 50MB)
   state/ui-evidence/         # UI verification artifacts (per-task; snapshot/screenshot pointers live in prd.json)
 ```
 

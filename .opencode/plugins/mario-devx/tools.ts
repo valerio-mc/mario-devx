@@ -467,10 +467,32 @@ const applyRepeatedFailureBackpressure = (
 const interviewTranscript = (prd: PrdJson): string[] => {
   const entries = Object.entries(prd.wizard.answers ?? {})
     .filter(([key]) => key !== LAST_QUESTION_KEY)
-    .sort(([a], [b]) => a.localeCompare(b));
+    .map(([key, value], index) => {
+      const qMatch = key.match(/^q-(\d{5,})$/);
+      if (qMatch) {
+        return { key, value, index, kind: "q" as const, ts: Number.parseInt(qMatch[1], 10) };
+      }
+      const aMatch = key.match(/^(?:a|turn)-(\d{5,})$/);
+      if (aMatch) {
+        return { key, value, index, kind: "a" as const, ts: Number.parseInt(aMatch[1], 10) };
+      }
+      return { key, value, index, kind: "other" as const, ts: Number.NaN };
+    })
+    .filter((entry) => entry.kind !== "other")
+    .sort((a, b) => {
+      const aTsValid = Number.isFinite(a.ts);
+      const bTsValid = Number.isFinite(b.ts);
+      if (aTsValid && bTsValid && a.ts !== b.ts) {
+        return a.ts - b.ts;
+      }
+      if (a.kind !== b.kind) {
+        return a.kind === "q" ? -1 : 1;
+      }
+      return a.index - b.index;
+    });
 
   return entries
-    .map(([key, value]) => {
+    .map(({ key, value }) => {
       const text = String(value ?? "").trim();
       if (!text) return null;
       if (key.startsWith(INTERVIEW_QUESTION_PREFIX)) return `Q: ${text}`;
