@@ -38,7 +38,7 @@ export type RunReasonCode = (typeof RUN_REASON)[keyof typeof RUN_REASON];
 export const RUN_EVENT = {
   PRECHECK_START: "run.preflight.start",
   PRECHECK_DUPLICATE_WINDOW: "run.duplicate-window",
-  LOCK_STALE_PID: "run.lock.stale-pid",
+  LOCK_RECLAIMED: "run.lock.reclaimed",
   LOCK_ACQUIRE_FAILED: "run.lock.acquire-failed",
   BLOCKED_HEARTBEAT: "run.blocked.heartbeat",
   BLOCKED_PRD_INCOMPLETE: "run.blocked.prd-incomplete",

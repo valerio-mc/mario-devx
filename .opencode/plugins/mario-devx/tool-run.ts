@@ -143,7 +143,7 @@ export const createRunTool = (opts: {
 
         const lock = await acquireRunLock(repoRoot, runId, context.sessionID, async (event) => {
           if (event.type === "stale-lock-removed") {
-            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_STALE_PID, "Removed stale run lock during acquire", {
+            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_RECLAIMED, "Removed stale run lock during acquire", {
               lockPath: event.lockPath,
               reason: event.reason,
               ...(typeof event.stalePid === "number" ? { stalePid: event.stalePid } : {}),
