@@ -25,7 +25,7 @@ export const runGateRepairLoop = async (opts: {
   initialWorkIdleAnnounced: boolean;
   promptWorkSessionWithTimeout: (phase: "repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
   waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "repair") => Promise<boolean>;
-  heartbeatRunLock: (repoRoot: string) => Promise<boolean>;
+  heartbeatRunLock: () => Promise<boolean>;
   blockForHeartbeatFailure: (phase: string) => Promise<void>;
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
   buildGateRepairPrompt: (opts: {
@@ -174,7 +174,7 @@ export const runGateRepairLoop = async (opts: {
       break;
     }
 
-    if (!(await heartbeatRunLock(repoRoot))) {
+    if (!(await heartbeatRunLock())) {
       await blockForHeartbeatFailure("during-auto-repair");
       break;
     }

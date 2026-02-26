@@ -59,6 +59,7 @@ export const finalizeRunSuccess = async (opts: {
   await updateRunState(repoRoot, {
     status: finalRunStatus,
     phase: "run",
+    runId: null,
     ...(controlSessionId ? { controlSessionId } : {}),
     updatedAt: nowIso(),
   });
@@ -136,6 +137,7 @@ export const finalizeRunCrash = async (opts: {
     ...current,
     status: "BLOCKED",
     phase: "run",
+    runId: null,
     updatedAt: nowIso(),
     ...(controlSessionId ? { controlSessionId } : {}),
     lastRunAt: nowIso(),
@@ -154,7 +156,7 @@ export const finalizeRunCleanup = async (opts: {
   readRunState: (repoRoot: string) => Promise<any>;
   updateRunState: (repoRoot: string, patch: Record<string, unknown>) => Promise<unknown>;
   deleteSessionBestEffort: (ctx: any, sessionId: string | undefined, controlSessionId?: string) => Promise<"deleted" | "not-found" | "skipped-control" | "failed" | "none">;
-  releaseRunLock: (repoRoot: string) => Promise<void>;
+  releaseRunLock: (repoRoot: string, runId: string) => Promise<void>;
   logRunEvent: (
     ctx: any,
     repoRoot: string,
@@ -226,5 +228,5 @@ export const finalizeRunCleanup = async (opts: {
   if (controlSessionId) {
     clearToastStreamChannel(controlSessionId);
   }
-  await releaseRunLock(repoRoot);
+  await releaseRunLock(repoRoot, runId);
 };

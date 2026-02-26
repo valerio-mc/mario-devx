@@ -323,7 +323,7 @@ export const runEngine = async (opts: {
       });
     };
 
-    if (!(await heartbeatRunLock(repoRoot))) {
+    if (!(await heartbeatRunLock(repoRoot, runId))) {
       await blockForHeartbeatFailure("pre-work-session-reset");
       break;
     }
@@ -352,7 +352,7 @@ export const runEngine = async (opts: {
     const buildPromptDispatch = await promptWorkSessionWithTimeout("build", buildModePrompt);
     if (!buildPromptDispatch.ok) break;
 
-    if (!(await heartbeatRunLock(repoRoot))) {
+    if (!(await heartbeatRunLock(repoRoot, runId))) {
       await blockForHeartbeatFailure("after-build-prompt");
       break;
     }
@@ -422,7 +422,7 @@ export const runEngine = async (opts: {
       initialWorkIdleAnnounced: workIdleAnnounced,
       promptWorkSessionWithTimeout: (phase, text) => promptWorkSessionWithTimeout(phase, text),
       waitForWorkIdleAfterPrompt,
-      heartbeatRunLock,
+      heartbeatRunLock: () => heartbeatRunLock(repoRoot, runId),
       blockForHeartbeatFailure,
       showToast,
       buildGateRepairPrompt,
@@ -542,7 +542,7 @@ export const runEngine = async (opts: {
       buildSemanticRepairPrompt,
       promptWorkSessionWithTimeout: (phase, text) => promptWorkSessionWithTimeout(phase, text),
       waitForWorkIdleAfterPrompt,
-      heartbeatRunLock,
+      heartbeatRunLock: () => heartbeatRunLock(repoRoot, runId),
       blockForHeartbeatFailure,
       captureWorkspaceSnapshot,
       summarizeWorkspaceDelta,

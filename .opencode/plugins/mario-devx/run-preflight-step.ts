@@ -142,6 +142,7 @@ export const runPreflightStep = async (opts: {
       iteration: state.iteration,
       status: "BLOCKED",
       phase: "run",
+      runId: null,
       ...(focus?.id ? { currentPI: focus.id } : {}),
       ...(controlSessionId ? { controlSessionId } : {}),
       updatedAt: nowIso(),

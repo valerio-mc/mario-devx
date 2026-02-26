@@ -6,6 +6,7 @@ export type RunState = {
   iteration: number;
   status: RunStatus;
   phase: RunPhase;
+  runId?: string | null;
   lastRunAt?: string;
   lastRunControlSessionId?: string;
   lastRunResult?: string;

@@ -30,6 +30,7 @@ const defaultRunState = (): RunState => ({
   iteration: 0,
   status: "NONE",
   phase: "run",
+  runId: null,
   updatedAt: new Date().toISOString(),
 });
 
@@ -56,7 +57,12 @@ const sanitizeState = (parsed: RawMarioState): MarioState => {
   const next: MarioState = { version: 1 };
 
   if (parsed.run && typeof parsed.run === "object") {
-    next.run = parsed.run as RunState;
+    const rawRun = parsed.run as RunState & { runId?: unknown };
+    next.run = {
+      ...defaultRunState(),
+      ...rawRun,
+      runId: typeof rawRun.runId === "string" ? rawRun.runId : null,
+    };
   } else {
     const migratedRun = readLegacySessionRun(parsed.workSession);
     if (migratedRun) {

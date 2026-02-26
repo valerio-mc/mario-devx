@@ -63,7 +63,7 @@ export const runSemanticRepairLoop = async (opts: {
   }) => string;
   promptWorkSessionWithTimeout: (phase: "semantic-repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
   waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "semantic-repair") => Promise<boolean>;
-  heartbeatRunLock: (repoRoot: string) => Promise<boolean>;
+  heartbeatRunLock: () => Promise<boolean>;
   blockForHeartbeatFailure: (phase: string) => Promise<void>;
   captureWorkspaceSnapshot: (repoRoot: string) => Promise<Map<string, string>>;
   summarizeWorkspaceDelta: (before: Map<string, string>, after: Map<string, string>) => { changed: number };
@@ -174,7 +174,7 @@ export const runSemanticRepairLoop = async (opts: {
     });
     await showToast(ctx, `Run: verifier response received for ${task.id}`, "info");
 
-    if (!(await heartbeatRunLock(repoRoot))) {
+    if (!(await heartbeatRunLock())) {
       await blockForHeartbeatFailure("after-judge");
       blockedByVerifierFailure = true;
       break;
@@ -218,7 +218,7 @@ export const runSemanticRepairLoop = async (opts: {
       "info",
     );
 
-    if (!(await heartbeatRunLock(repoRoot))) {
+    if (!(await heartbeatRunLock())) {
       await blockForHeartbeatFailure("during-semantic-repair");
       blockedByVerifierFailure = true;
       break;

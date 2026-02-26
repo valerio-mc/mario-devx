@@ -141,11 +141,12 @@ export const createRunTool = (opts: {
           return previousRun.lastRunResult;
         }
 
-        const lock = await acquireRunLock(repoRoot, context.sessionID, async (event) => {
-          if (event.type === "stale-pid-removed") {
-            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_STALE_PID, "Removed stale run lock owned by dead process", {
+        const lock = await acquireRunLock(repoRoot, runId, context.sessionID, async (event) => {
+          if (event.type === "stale-lock-removed") {
+            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_STALE_PID, "Removed stale run lock during acquire", {
               lockPath: event.lockPath,
-              stalePid: event.stalePid,
+              reason: event.reason,
+              ...(typeof event.stalePid === "number" ? { stalePid: event.stalePid } : {}),
             }, { runId, reasonCode: RUN_REASON.STALE_LOCK_REMOVED });
           }
         });
@@ -157,12 +158,23 @@ export const createRunTool = (opts: {
           return lock.message;
         }
 
+        await writeRunState(repoRoot, {
+          ...(await readRunState(repoRoot)),
+          status: "DOING",
+          phase: "run",
+          runId,
+          ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
+          startedAt: nowIso(),
+          updatedAt: nowIso(),
+        });
+
         try {
-          if (!(await heartbeatRunLock(repoRoot))) {
+          if (!(await heartbeatRunLock(repoRoot, runId))) {
             await writeRunState(repoRoot, {
               iteration: (await readRunState(repoRoot)).iteration,
               status: "BLOCKED",
               phase: "run",
+              runId: null,
               ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
               updatedAt: nowIso(),
             });
@@ -172,23 +184,6 @@ export const createRunTool = (opts: {
             }, { runId, reasonCode: RUN_REASON.HEARTBEAT_FAILED });
             return `Failed to update run.lock heartbeat during run preflight (${runLockPath(repoRoot)}). Check disk space/permissions, then rerun /mario-devx:run 1.`;
           }
-          const currentRun = await readRunState(repoRoot);
-          if (currentRun.status === "DOING") {
-            const recoveredState = {
-              ...currentRun,
-              status: "BLOCKED" as const,
-              updatedAt: nowIso(),
-            };
-            await writeRunState(repoRoot, recoveredState);
-            await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.STATE_STALE_DOING_RECOVERED, "Recovered stale in-progress run state", {
-              previousPhase: currentRun.phase,
-              previousCurrentPI: currentRun.currentPI ?? null,
-              previousStartedAt: currentRun.startedAt ?? null,
-              previousControlSessionId: currentRun.controlSessionId ?? null,
-            }, { runId, reasonCode: RUN_REASON.STALE_DOING_RECOVERED });
-            await showToast(ctx, "Run: recovered stale in-progress state from interrupted session", "warning");
-          }
-
           const preflight = await runPreflightStep({
             ctx,
             repoRoot,
@@ -204,6 +199,14 @@ export const createRunTool = (opts: {
             buildCapabilitySummary,
           });
           if (preflight.blocked) {
+            await writeRunState(repoRoot, {
+              ...(await readRunState(repoRoot)),
+              status: "BLOCKED",
+              phase: "run",
+              runId: null,
+              ...(context.sessionID ? { controlSessionId: context.sessionID } : {}),
+              updatedAt: nowIso(),
+            });
             return preflight.message;
           }
 
