@@ -81,7 +81,7 @@ The PRD wizard is LLM-driven and asks one high-leverage question at a time. You 
 - Tasks complete only on verifier `PASS`; otherwise they are blocked with concrete next actions instead of motivational poetry.
 - Progress streams back to your control session as throttled toasts (text + tool lifecycle + patch updates).
 - Toast streaming is on by default; set `STREAM_WORK=0` and/or `STREAM_VERIFY=0` in `.mario/AGENTS.md` to disable.
-- `run.lock` heartbeats in `.mario/state/` guard against stale/abandoned runs and make interrupted runs recoverable instead of cursed.
+- `run.lock` heartbeats in `.mario/state/` use runId ownership and state reconciliation, so stale locks are reclaimed instead of wedging future runs.
 
 ## Agent knobs
 
@@ -139,6 +139,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | Issue | Quick fix |
 |-------|-----------|
 | **Run blocked before coding starts** | Check `.mario/prd.json` for missing `tasks` or `qualityGates`, fix reality, then rerun `/mario-devx:run 1`. |
+| **Run says another run is in progress (`run.lock`)** | Run `/mario-devx:doctor` to auto-clear stale locks, then rerun `/mario-devx:run 1`. |
 | **UI verification fails to start** | Ensure `UI_VERIFY=1`; if runtime is missing, run `CI=1 npm_config_yes=true npx --yes playwright install chromium` and let automation do its dramatic entrance. |
 | **Anything weird / stuck / transport-y** | Run `/mario-devx:doctor` and attach `.mario/state/mario-devx.log`, `.mario/state/state.json`, `.mario/prd.json` so we debug facts, not folklore. |
 
