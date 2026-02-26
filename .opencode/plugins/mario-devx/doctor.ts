@@ -1,12 +1,19 @@
 import path from "path";
+import { unlink } from "fs/promises";
 import { readTextIfExists } from "./fs";
 import { assetsDir } from "./paths";
 import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { redactForLog } from "./logging";
-import { pidLooksAlive } from "./process";
 import { readPrdJsonIfExists } from "./prd";
 import { readRunState, readUiVerifyState } from "./state";
+import { runLockPath } from "./run-lock";
 import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
+
+const parseIsoMs = (value: unknown): number | null => {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+};
 
 export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => {
   const issues: string[] = [];
@@ -43,23 +50,52 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
 
   const runState = await readRunState(repoRoot);
   const uiVerifyState = await readUiVerifyState(repoRoot);
-  if (runState.status === "DOING") {
-    const lockPath = path.join(repoRoot, ".mario", "state", "run.lock");
-    const lockRaw = await readTextIfExists(lockPath);
-    if (!lockRaw) {
+  const lockPath = runLockPath(repoRoot);
+  const lockRaw = await readTextIfExists(lockPath);
+  if (!lockRaw) {
+    if (runState.status === "DOING") {
       issues.push("Run state is DOING but run.lock is missing (stale interrupted run).");
-      fixes.push("Rerun /mario-devx:run 1 (plugin now auto-recovers stale DOING state).");
-    } else {
-      try {
-        const lock = JSON.parse(lockRaw) as { pid?: unknown; heartbeatAt?: string };
-        const pidAlive = pidLooksAlive(lock.pid);
-        if (pidAlive === false) {
-          issues.push(`Run state is DOING but lock pid is dead (${String(lock.pid)}).`);
-          fixes.push("Rerun /mario-devx:run 1 (plugin now auto-recovers stale DOING state).");
-        }
-      } catch {
+      fixes.push("Rerun /mario-devx:run 1.");
+    }
+  } else {
+    try {
+      const lock = JSON.parse(lockRaw) as { runId?: unknown; at?: unknown; heartbeatAt?: unknown };
+      const lockRefMs = parseIsoMs(lock.heartbeatAt) ?? parseIsoMs(lock.at);
+      const stateUpdatedMs = parseIsoMs(runState.updatedAt);
+      const staleByState = (
+        runState.status !== "DOING"
+        && lockRefMs !== null
+        && stateUpdatedMs !== null
+        && stateUpdatedMs >= lockRefMs
+      );
+      const staleByRunIdMismatch = (
+        runState.status === "DOING"
+        && typeof runState.runId === "string"
+        && runState.runId.length > 0
+        && typeof lock.runId === "string"
+        && lock.runId.length > 0
+        && runState.runId !== lock.runId
+      );
+      if (staleByState || staleByRunIdMismatch) {
+        await unlink(lockPath).catch(() => undefined);
+        issues.push(
+          staleByRunIdMismatch
+            ? "Stale run.lock detected (runId mismatch) and cleared automatically."
+            : "Stale run.lock detected (run state is not DOING) and cleared automatically.",
+        );
+        fixes.push("Retry /mario-devx:run 1.");
+      } else if (runState.status === "DOING" && runState.runId && lock.runId !== runState.runId) {
+        issues.push("Run state is DOING but run.lock ownership does not match run state runId.");
+        fixes.push("Retry /mario-devx:run 1.");
+      }
+    } catch {
+      if (runState.status !== "DOING") {
+        await unlink(lockPath).catch(() => undefined);
+        issues.push("Malformed stale run.lock detected and cleared automatically.");
+        fixes.push("Retry /mario-devx:run 1.");
+      } else {
         issues.push("Run state is DOING but run.lock is malformed (stale interrupted run).");
-        fixes.push("Rerun /mario-devx:run 1 (plugin now auto-recovers stale DOING state).");
+        fixes.push("Rerun /mario-devx:run 1.");
       }
     }
   }
