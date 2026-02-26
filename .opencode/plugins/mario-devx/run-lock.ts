@@ -3,6 +3,7 @@ import path from "path";
 import { TIMEOUTS } from "./config";
 import { logError } from "./errors";
 import { writeTextAtomic } from "./fs";
+import { pidLooksAlive } from "./process";
 import { readRunState } from "./state";
 
 const nowIso = (): string => new Date().toISOString();
@@ -70,13 +71,22 @@ export const acquireRunLock = async (
         && parsed.runId.length > 0
         && runState.runId !== parsed.runId
       );
+      const staleByDeadPid = (
+        typeof parsed.pid === "number"
+        && Number.isFinite(parsed.pid)
+        && pidLooksAlive(parsed.pid) === false
+      );
 
-      if (staleByState || staleByRunIdMismatch) {
+      if (staleByState || staleByRunIdMismatch || staleByDeadPid) {
         await unlink(lockPath);
         await onEvent?.({
           type: "stale-lock-removed",
           lockPath,
-          reason: staleByRunIdMismatch ? "run-id-mismatch" : "state-not-doing-updated-after-lock",
+          reason: staleByRunIdMismatch
+            ? "run-id-mismatch"
+            : staleByState
+              ? "state-not-doing-updated-after-lock"
+              : "dead-pid",
           ...(typeof parsed.pid === "number" && Number.isFinite(parsed.pid) ? { stalePid: parsed.pid } : {}),
         });
       } else if (lockIsOld && (refMs === null || stateUpdatedMs === null)) {
