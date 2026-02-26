@@ -12,17 +12,7 @@ type MarioState = {
   uiVerify?: UiVerifyState;
 };
 
-type LegacySessionCache = {
-  sessionId?: unknown;
-  baselineMessageId?: unknown;
-  createdAt?: unknown;
-  updatedAt?: unknown;
-};
-
-type RawMarioState = Partial<MarioState> & {
-  workSession?: LegacySessionCache;
-  verifierSession?: LegacySessionCache;
-};
+type RawMarioState = Partial<MarioState>;
 
 const logFile = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "mario-devx.log");
 
@@ -34,25 +24,6 @@ const defaultRunState = (): RunState => ({
   updatedAt: new Date().toISOString(),
 });
 
-const asRecord = (value: unknown): Record<string, unknown> | null => {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
-};
-
-const readLegacySessionRun = (value: unknown): RunState | undefined => {
-  const cache = asRecord(value) as LegacySessionCache | null;
-  if (!cache || typeof cache.sessionId !== "string" || cache.sessionId.length === 0) {
-    return undefined;
-  }
-  return {
-    ...defaultRunState(),
-    status: "BLOCKED",
-    workSessionId: cache.sessionId,
-    ...(typeof cache.baselineMessageId === "string" && cache.baselineMessageId.length > 0 ? { baselineMessageId: cache.baselineMessageId } : {}),
-    ...(typeof cache.createdAt === "string" && cache.createdAt.length > 0 ? { startedAt: cache.createdAt } : {}),
-    updatedAt: typeof cache.updatedAt === "string" && cache.updatedAt.length > 0 ? cache.updatedAt : new Date().toISOString(),
-  };
-};
-
 const sanitizeState = (parsed: RawMarioState): MarioState => {
   const next: MarioState = { version: 1 };
 
@@ -63,11 +34,6 @@ const sanitizeState = (parsed: RawMarioState): MarioState => {
       ...rawRun,
       runId: typeof rawRun.runId === "string" ? rawRun.runId : null,
     };
-  } else {
-    const migratedRun = readLegacySessionRun(parsed.workSession);
-    if (migratedRun) {
-      next.run = migratedRun;
-    }
   }
 
   if (parsed.uiVerify && typeof parsed.uiVerify === "object") {
@@ -134,11 +100,7 @@ export const ensureMario = async (repoRoot: string, force = false): Promise<void
 };
 
 export const clearSessionCaches = async (repoRoot: string): Promise<void> => {
-  const current = await readState(repoRoot);
-  const copy = { ...current } as Record<string, unknown>;
-  delete copy.workSession;
-  delete copy.verifierSession;
-  await writeState(repoRoot, copy as MarioState);
+  void repoRoot;
 };
 
 export const readRunState = async (repoRoot: string): Promise<RunState> => {
