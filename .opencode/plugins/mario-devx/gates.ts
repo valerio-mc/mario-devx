@@ -56,6 +56,26 @@ export const buildGateFailureOutputExcerpt = (
   return clipText(excerpt, maxChars);
 };
 
+const normalizeFingerprintText = (value: string): string => {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+export const buildGateFailureFingerprint = (
+  failed: GateRunItem | null,
+  opts?: { outputMaxChars?: number },
+): string | null => {
+  if (!failed) return null;
+  const output = buildGateFailureOutputExcerpt(failed, { maxChars: opts?.outputMaxChars ?? 600 }) ?? "";
+  return [
+    failed.command,
+    String(failed.exitCode),
+    normalizeFingerprintText(output),
+  ].join("|");
+};
+
 export const extractScriptFromCommand = (command: string): string | null => {
   const trimmed = command.trim();
   const npm = trimmed.match(/^npm\s+run\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);

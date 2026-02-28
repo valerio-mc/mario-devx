@@ -1,4 +1,5 @@
 import {
+  buildGateFailureFingerprint,
   buildGateFailureOutputExcerpt,
   ensureT0002QualityBootstrap,
   findFailedGateRunItem,
@@ -142,6 +143,7 @@ export const runGateRepairLoop = async (opts: {
     const failedGate = gateResult.failed ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})` : "(unknown command)";
     const failedGateRunItem = findFailedGateRunItem(gateResult.results);
     const gateOutputExcerpt = buildGateFailureOutputExcerpt(failedGateRunItem);
+    const failureFingerprintBeforeRepair = buildGateFailureFingerprint(failedGateRunItem);
     const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
     const missingScript = gateResult.failed ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command) : null;
 
@@ -194,8 +196,26 @@ export const runGateRepairLoop = async (opts: {
 
     const repairSnapshotAfter = await captureWorkspaceSnapshot(repoRoot);
     const repairDelta = summarizeWorkspaceDelta(repairSnapshotBefore, repairSnapshotAfter);
-    if (repairDelta.changed === 0) {
-      noChangeStreak += 1;
+    const noSourceChanges = repairDelta.changed === 0;
+
+    repairAttempts += 1;
+    totalRepairAttempts += 1;
+    gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+    await logGateRunResults("repair", task.id, gateResult.results);
+
+    if (noSourceChanges) {
+      const failedAfterRepair = findFailedGateRunItem(gateResult.results);
+      const failureFingerprintAfterRepair = buildGateFailureFingerprint(failedAfterRepair);
+      const sameFailure = Boolean(
+        failureFingerprintBeforeRepair
+        && failureFingerprintAfterRepair
+        && failureFingerprintBeforeRepair === failureFingerprintAfterRepair,
+      );
+      if (sameFailure) {
+        noChangeStreak += 1;
+      } else {
+        noChangeStreak = 0;
+      }
       lastNoChangeGate = failedGate;
       if (noChangeStreak >= 2) {
         stoppedForNoChanges = true;
@@ -204,11 +224,6 @@ export const runGateRepairLoop = async (opts: {
     } else {
       noChangeStreak = 0;
     }
-
-    repairAttempts += 1;
-    totalRepairAttempts += 1;
-    gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
-    await logGateRunResults("repair", task.id, gateResult.results);
   }
 
   return {
