@@ -425,6 +425,7 @@ export const runEngine = async (opts: {
       heartbeatRunLock: () => heartbeatRunLock(repoRoot, runId),
       blockForHeartbeatFailure,
       showToast,
+      logRunEvent: runLog,
       buildGateRepairPrompt,
       captureWorkspaceSnapshot,
       summarizeWorkspaceDelta,

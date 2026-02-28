@@ -31,6 +31,13 @@ export const runGateRepairLoop = async (opts: {
   heartbeatRunLock: () => Promise<boolean>;
   blockForHeartbeatFailure: (phase: string) => Promise<void>;
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
+  logRunEvent: (
+    level: "info" | "warn" | "error",
+    event: string,
+    message: string,
+    extra?: Record<string, unknown>,
+    runCtx?: { runId?: string; taskId?: string; reasonCode?: string },
+  ) => Promise<void>;
   buildGateRepairPrompt: (opts: {
     taskId: string;
     failedGate: string;
@@ -81,6 +88,7 @@ export const runGateRepairLoop = async (opts: {
     heartbeatRunLock,
     blockForHeartbeatFailure,
     showToast,
+    logRunEvent,
     buildGateRepairPrompt,
     captureWorkspaceSnapshot,
     summarizeWorkspaceDelta,
@@ -124,13 +132,8 @@ export const runGateRepairLoop = async (opts: {
     }
   }
 
-  const failSigFromGate = (): string => {
-    const failed = gateResult.failed;
-    return failed ? `${failed.command}:${failed.exitCode}` : "unknown";
-  };
-
   while (!gateResult.ok) {
-    const currentSig = failSigFromGate();
+    const currentSig = buildGateFailureFingerprint(findFailedGateRunItem(gateResult.results), { outputMaxChars: 300 }) ?? "unknown";
     const elapsedMs = Date.now() - taskRepairStartedAt;
     if (lastGateFailureSig === currentSig) noProgressStreak += 1;
     else noProgressStreak = 0;
@@ -144,6 +147,20 @@ export const runGateRepairLoop = async (opts: {
     const failedGateRunItem = findFailedGateRunItem(gateResult.results);
     const gateOutputExcerpt = buildGateFailureOutputExcerpt(failedGateRunItem);
     const failureFingerprintBeforeRepair = buildGateFailureFingerprint(failedGateRunItem);
+    await logRunEvent(
+      "info",
+      "run.repair.backpressure",
+      "Prepared repair backpressure context",
+      {
+        taskId: task.id,
+        failedGate,
+        failureFingerprint: failureFingerprintBeforeRepair ? failureFingerprintBeforeRepair.slice(0, 240) : null,
+        failureFingerprintChars: failureFingerprintBeforeRepair ? failureFingerprintBeforeRepair.length : 0,
+        gateOutputExcerptChars: gateOutputExcerpt ? gateOutputExcerpt.length : 0,
+        hasGateOutputExcerpt: Boolean(gateOutputExcerpt),
+      },
+      { runId, taskId: task.id },
+    );
     const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
     const missingScript = gateResult.failed ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command) : null;
 
