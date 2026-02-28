@@ -1,5 +1,6 @@
 import { RUN_REASON } from "./run-contracts";
 import type { PrdJudgeAttempt, PrdTask } from "./prd";
+import { buildGateFailureOutputExcerpt, findFailedGateRunItem } from "./gates";
 
 export const runSemanticRepairLoop = async (opts: {
   ctx: any;
@@ -254,9 +255,12 @@ export const runSemanticRepairLoop = async (opts: {
     ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
     if (!latestGateResult.ok) {
+      const failedGateRunItem = findFailedGateRunItem(latestGateResult.results);
+      const gateOutputExcerpt = buildGateFailureOutputExcerpt(failedGateRunItem, { maxChars: 1400 });
       await failEarly([
         `ReasonCode: ${RUN_REASON.SEMANTIC_REPAIR_GATE_REGRESSION}`,
         `Deterministic gate failed after semantic repair: ${latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)"}.`,
+        ...(gateOutputExcerpt ? [`Last failing gate output (clipped):\n${gateOutputExcerpt}`] : []),
       ]);
       blockedByVerifierFailure = true;
       break;
