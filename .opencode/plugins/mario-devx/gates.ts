@@ -14,6 +14,48 @@ export type GateRunItem = {
   stderr?: string;
 };
 
+export const findFailedGateRunItem = (results: GateRunItem[]): GateRunItem | null => {
+  for (const result of results) {
+    if (!result.ok) return result;
+  }
+  return null;
+};
+
+const normalizeGateOutput = (value: string): string => {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim();
+};
+
+const clipText = (value: string, maxChars: number): string => {
+  if (value.length <= maxChars) return value;
+  const slice = value.slice(0, Math.max(0, maxChars - 19)).trimEnd();
+  return `${slice}\n\n[output clipped]`;
+};
+
+export const buildGateFailureOutputExcerpt = (
+  failed: GateRunItem | null,
+  opts?: { maxChars?: number },
+): string | null => {
+  if (!failed) return null;
+
+  const parts: string[] = [];
+  const stderr = typeof failed.stderr === "string" ? normalizeGateOutput(failed.stderr) : "";
+  const stdout = typeof failed.stdout === "string" ? normalizeGateOutput(failed.stdout) : "";
+  if (stderr) {
+    parts.push(`stderr:\n${stderr}`);
+  }
+  if (stdout) {
+    parts.push(`stdout:\n${stdout}`);
+  }
+  if (parts.length === 0) return null;
+
+  const excerpt = parts.join("\n\n");
+  const maxChars = opts?.maxChars ?? 2200;
+  return clipText(excerpt, maxChars);
+};
+
 export const extractScriptFromCommand = (command: string): string | null => {
   const trimmed = command.trim();
   const npm = trimmed.match(/^npm\s+run\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);
