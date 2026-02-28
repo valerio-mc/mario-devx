@@ -40,14 +40,18 @@ export const buildIterationTaskPlan = (opts: {
 export const buildGateRepairPrompt = (opts: {
   taskId: string;
   failedGate: string;
+  gateOutputExcerpt: string | null;
   carryForwardIssues: string[];
   missingScript: string | null;
   scaffoldHint: string | null;
   scaffoldGateFailure: boolean;
 }): string => {
-  const { taskId, failedGate, carryForwardIssues, missingScript, scaffoldHint, scaffoldGateFailure } = opts;
+  const { taskId, failedGate, gateOutputExcerpt, carryForwardIssues, missingScript, scaffoldHint, scaffoldGateFailure } = opts;
   return [
     `Task ${taskId} failed deterministic gate: ${failedGate}.`,
+    gateOutputExcerpt
+      ? `Latest failing gate output (clipped):\n${gateOutputExcerpt}`
+      : "",
     carryForwardIssues.length > 0
       ? `Carry-forward findings from previous verifier attempt:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
       : "",

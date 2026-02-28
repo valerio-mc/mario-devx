@@ -1,5 +1,7 @@
 import {
+  buildGateFailureOutputExcerpt,
   ensureT0002QualityBootstrap,
+  findFailedGateRunItem,
   hasNodeModules,
   missingPackageScriptForCommand,
   runGateCommands,
@@ -31,6 +33,7 @@ export const runGateRepairLoop = async (opts: {
   buildGateRepairPrompt: (opts: {
     taskId: string;
     failedGate: string;
+    gateOutputExcerpt: string | null;
     carryForwardIssues: string[];
     missingScript: string | null;
     scaffoldHint: string | null;
@@ -137,6 +140,8 @@ export const runGateRepairLoop = async (opts: {
     }
 
     const failedGate = gateResult.failed ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})` : "(unknown command)";
+    const failedGateRunItem = findFailedGateRunItem(gateResult.results);
+    const gateOutputExcerpt = buildGateFailureOutputExcerpt(failedGateRunItem);
     const scaffoldHint = firstScaffoldHintFromNotes(task.notes);
     const missingScript = gateResult.failed ? await missingPackageScriptForCommand(repoRoot, workspaceRoot, gateResult.failed.command) : null;
 
@@ -162,6 +167,7 @@ export const runGateRepairLoop = async (opts: {
     const repairPrompt = buildGateRepairPrompt({
       taskId: task.id,
       failedGate,
+      gateOutputExcerpt,
       carryForwardIssues,
       missingScript,
       scaffoldHint,
