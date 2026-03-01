@@ -397,6 +397,8 @@ const isMetaCarryForwardLine = (line: string): boolean => {
   const text = String(line ?? "").trim();
   if (!text) return true;
   if (/^ReasonCode:\s*[A-Z0-9_]+/i.test(text)) return true;
+  if (/^Last failing gate output \(clipped\):/i.test(text)) return true;
+  if (/^Latest failing gate output \(clipped\):/i.test(text)) return true;
   if (/^rubric:/i.test(text)) return true;
   if (isPassEvidenceLine(text)) return true;
   if (/Task evidence indicates/i.test(text)) return true;

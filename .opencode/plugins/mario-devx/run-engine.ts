@@ -15,7 +15,7 @@ import { runGateRepairLoop } from "./run-gate-repair";
 import { runSemanticRepairLoop } from "./run-semantic-repair";
 import { finalizeRunSuccess } from "./run-finalize";
 import { buildVerifierContextText } from "./run-verifier";
-import { buildGateFailureOutputExcerpt, findFailedGateRunItem, runGateCommands } from "./gates";
+import { runGateCommands } from "./gates";
 
 export type RunContext = {
   ctx: any;
@@ -458,23 +458,17 @@ export const runEngine = async (opts: {
     };
 
     if (!latestGateResult.ok && stoppedForNoChanges) {
-      const failedGateRunItem = findFailedGateRunItem(latestGateResult.results);
-      const gateOutputExcerpt = buildGateFailureOutputExcerpt(failedGateRunItem, { maxChars: 1400 });
       await failEarly([
         formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
         `Repair loop produced no source-file changes across consecutive attempts (last failing gate: ${lastNoChangeGate ?? "unknown"}).`,
-        ...(gateOutputExcerpt ? [`Last failing gate output (clipped):\n${gateOutputExcerpt}`] : []),
       ]);
       break;
     }
     if (!latestGateResult.ok) {
       const failed = latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)";
-      const failedGateRunItem = findFailedGateRunItem(latestGateResult.results);
-      const gateOutputExcerpt = buildGateFailureOutputExcerpt(failedGateRunItem, { maxChars: 1400 });
       await failEarly([
         `Deterministic gate failed: ${failed}.`,
         `Auto-repair stopped across ${repairAttempts} attempt(s) (total repair turns: ${totalRepairAttempts}/${maxTotalRepairAttempts}; no-progress or time budget reached).`,
-        ...(gateOutputExcerpt ? [`Last failing gate output (clipped):\n${gateOutputExcerpt}`] : []),
       ]);
       break;
     }
