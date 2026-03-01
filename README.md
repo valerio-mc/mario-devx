@@ -78,7 +78,7 @@ The PRD wizard is LLM-driven and asks one high-leverage question at a time. You 
 
 - `/mario-devx:run` executes in two ephemeral phases: **work** (build/repair) then **verify**.
 - Verification pipeline is strict: deterministic gates -> UI verification (when enabled) -> LLM verifier.
-- Repair prompts include clipped failing gate output (stdout/stderr) so the model gets concrete failure receipts, not just exit codes.
+- Repair prompts include a deterministic backpressure payload from `tasks[].lastAttempt.gates.failure` (command, exit code, fingerprint, clipped output) so the model gets concrete failure receipts, not just exit codes.
 - Tasks complete only on verifier `PASS`; otherwise they are blocked with concrete next actions instead of motivational poetry.
 - Progress streams back to your control session as throttled toasts (text + tool lifecycle + patch updates).
 - Toast streaming is on by default; set `STREAM_WORK=0` and/or `STREAM_VERIFY=0` in `.mario/AGENTS.md` to disable.
@@ -106,6 +106,7 @@ When `frontend: true`, mario-devx auto-syncs `.mario/AGENTS.md` to enable UI ver
 UI evidence includes accessibility snapshots, console/errors, and an optional screenshot saved under `.mario/state/ui-evidence/<taskId>/` (repo-local, so the verifier can `Read` it without external directory permissions).
 
 Verifier output is stored under `tasks[].lastAttempt.judge` as structured JSON (`status`, `reason`, `nextActions`).
+Deterministic gate failure receipts are stored under `tasks[].lastAttempt.gates.failure` (`command`, `exitCode`, `fingerprint`, `outputExcerpt`).
 
 ## What gets created
 
@@ -141,7 +142,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 |-------|-----------|
 | **Run blocked before coding starts** | Check `.mario/prd.json` for missing `tasks` or `qualityGates`, fix reality, then rerun `/mario-devx:run 1`. |
 | **Run says another run is in progress (`run.lock`)** | Run `/mario-devx:doctor` to auto-clear stale locks, then rerun `/mario-devx:run 1`. |
-| **Run blocked with `WORK_SESSION_NO_PROGRESS`** | The same gate failure repeated while tracked source/config files did not change. Read the clipped failing gate output in `tasks[].lastAttempt.judge.reason` (`.mario/prd.json`) and `run.repair.backpressure` entries in `.mario/state/mario-devx.log`, then rerun `/mario-devx:run 1`. |
+| **Run blocked with `WORK_SESSION_NO_PROGRESS`** | The same gate failure repeated while tracked source/config files did not change. Read `tasks[].lastAttempt.gates.failure.outputExcerpt` in `.mario/prd.json` and `run.repair.backpressure` entries in `.mario/state/mario-devx.log`, then rerun `/mario-devx:run 1`. |
 | **UI verification fails to start** | Ensure `UI_VERIFY=1`; if runtime is missing, run `CI=1 npm_config_yes=true npx --yes playwright install chromium` and let automation do its dramatic entrance. |
 | **Anything weird / stuck / transport-y** | Run `/mario-devx:doctor` and attach `.mario/state/mario-devx.log`, `.mario/state/state.json`, `.mario/prd.json` so we debug facts, not folklore. |
 
