@@ -1,5 +1,5 @@
 import { RUN_REASON } from "./run-contracts";
-import type { PrdJudgeAttempt, PrdTask } from "./prd";
+import type { PrdGateFailure, PrdJudgeAttempt, PrdTask } from "./prd";
 import { buildGateFailureOutputExcerpt, findFailedGateRunItem } from "./gates";
 
 export const runSemanticRepairLoop = async (opts: {
@@ -61,6 +61,7 @@ export const runSemanticRepairLoop = async (opts: {
     judge: PrdJudgeAttempt;
     carryForwardIssues: string[];
     strictChecklist: string;
+    gateFailure?: PrdGateFailure | null;
   }) => string;
   promptWorkSessionWithTimeout: (phase: "semantic-repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
   waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "semantic-repair") => Promise<boolean>;
@@ -205,7 +206,15 @@ export const runSemanticRepairLoop = async (opts: {
     const strictChecklist = semanticNoProgressStreak > 0
       ? "Repeated finding detected with no clear progress. Make explicit file edits that directly satisfy acceptance criteria; avoid generic refinements."
       : "";
-    const semanticRepairPrompt = buildSemanticRepairPrompt({ taskId: task.id, acceptance: task.acceptance ?? [], actionableReason, judge, carryForwardIssues, strictChecklist });
+    const semanticRepairPrompt = buildSemanticRepairPrompt({
+      taskId: task.id,
+      acceptance: task.acceptance ?? [],
+      actionableReason,
+      judge,
+      carryForwardIssues,
+      strictChecklist,
+      gateFailure: task.lastAttempt?.gates?.failure ?? null,
+    });
 
     const semanticSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
     const semanticPromptDispatch = await promptWorkSessionWithTimeout("semantic-repair", semanticRepairPrompt);

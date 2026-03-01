@@ -1,4 +1,15 @@
-import type { PrdJson, PrdJudgeAttempt, PrdTask } from "./prd";
+import type { PrdGateFailure, PrdJson, PrdJudgeAttempt, PrdTask } from "./prd";
+
+export const formatGateFailureBackpressure = (failure: PrdGateFailure | null | undefined): string => {
+  if (!failure) return "";
+  return [
+    "Backpressure payload (deterministic gate failure):",
+    `- command: ${failure.command}`,
+    `- exitCode: ${failure.exitCode}`,
+    ...(failure.fingerprint ? [`- fingerprint: ${failure.fingerprint}`] : []),
+    ...(failure.outputExcerpt ? [`- output (clipped):\n${failure.outputExcerpt}`] : []),
+  ].join("\n");
+};
 
 export const buildIterationTaskPlan = (opts: {
   task: PrdTask;
@@ -7,12 +18,16 @@ export const buildIterationTaskPlan = (opts: {
   carryForwardIssues: string[];
 }): string => {
   const { task, prd, effectiveDoneWhen, carryForwardIssues } = opts;
+  const gateBackpressure = task.status === "blocked"
+    ? formatGateFailureBackpressure(task.lastAttempt?.gates?.failure)
+    : "";
   return [
     `# Iteration Task (${task.id})`,
     "",
     `Title: ${task.title}`,
     "",
     `Status: ${task.status}`,
+    gateBackpressure,
     task.scope.length > 0 ? `Scope: ${task.scope.join(", ")}` : "",
     task.acceptance && task.acceptance.length > 0 ? `Acceptance:\n${task.acceptance.map((a) => `- ${a}`).join("\n")}` : "Acceptance: (none)",
     effectiveDoneWhen.length > 0 ? `Done when:\n${effectiveDoneWhen.map((d) => `- ${d}`).join("\n")}` : "Done when: (none)",
@@ -39,19 +54,20 @@ export const buildIterationTaskPlan = (opts: {
 
 export const buildGateRepairPrompt = (opts: {
   taskId: string;
-  failedGate: string;
-  gateOutputExcerpt: string | null;
+  gateFailure: PrdGateFailure | null;
   carryForwardIssues: string[];
   missingScript: string | null;
   scaffoldHint: string | null;
   scaffoldGateFailure: boolean;
 }): string => {
-  const { taskId, failedGate, gateOutputExcerpt, carryForwardIssues, missingScript, scaffoldHint, scaffoldGateFailure } = opts;
+  const { taskId, gateFailure, carryForwardIssues, missingScript, scaffoldHint, scaffoldGateFailure } = opts;
+  const failedGate = gateFailure
+    ? `${gateFailure.command} (exit ${gateFailure.exitCode})`
+    : "(unknown command)";
+  const gateBackpressure = formatGateFailureBackpressure(gateFailure);
   return [
     `Task ${taskId} failed deterministic gate: ${failedGate}.`,
-    gateOutputExcerpt
-      ? `Latest failing gate output (clipped):\n${gateOutputExcerpt}`
-      : "",
+    gateBackpressure,
     carryForwardIssues.length > 0
       ? `Carry-forward findings from previous verifier attempt:\n${carryForwardIssues.map((x) => `- ${x}`).join("\n")}`
       : "",
@@ -77,14 +93,17 @@ export const buildSemanticRepairPrompt = (opts: {
   judge: PrdJudgeAttempt;
   carryForwardIssues: string[];
   strictChecklist: string;
+  gateFailure?: PrdGateFailure | null;
 }): string => {
-  const { taskId, acceptance, actionableReason, judge, carryForwardIssues, strictChecklist } = opts;
+  const { taskId, acceptance, actionableReason, judge, carryForwardIssues, strictChecklist, gateFailure } = opts;
+  const gateBackpressure = formatGateFailureBackpressure(gateFailure);
   return [
     `Verifier failed for ${taskId}. Apply a focused semantic repair and stop when acceptance is clearly satisfied.`,
     acceptance.length > 0
       ? `Acceptance checklist:\n${acceptance.map((a) => `- ${a}`).join("\n")}`
       : "Acceptance checklist: (none)",
     `Primary failing reason: ${actionableReason}`,
+    gateBackpressure,
     judge.reason && judge.reason.length > 0
       ? `Verifier reasons:\n${judge.reason.map((r) => `- ${r}`).join("\n")}`
       : "",

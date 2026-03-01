@@ -1,6 +1,6 @@
 import {
   buildGateFailureFingerprint,
-  buildGateFailureOutputExcerpt,
+  buildPrdGateFailure,
   ensureT0002QualityBootstrap,
   findFailedGateRunItem,
   hasNodeModules,
@@ -10,7 +10,7 @@ import {
   type GateRunItem,
 } from "./gates";
 import { firstScaffoldHintFromNotes, isScaffoldMissingGateCommand } from "./planner";
-import type { PrdTask } from "./prd";
+import type { PrdGateFailure, PrdTask } from "./prd";
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
 
 type GateResult = Awaited<ReturnType<typeof runGateCommands>>;
@@ -40,8 +40,7 @@ export const runGateRepairLoop = async (opts: {
   ) => Promise<void>;
   buildGateRepairPrompt: (opts: {
     taskId: string;
-    failedGate: string;
-    gateOutputExcerpt: string | null;
+    gateFailure: PrdGateFailure | null;
     carryForwardIssues: string[];
     missingScript: string | null;
     scaffoldHint: string | null;
@@ -145,8 +144,8 @@ export const runGateRepairLoop = async (opts: {
 
     const failedGate = gateResult.failed ? `${gateResult.failed.command} (exit ${gateResult.failed.exitCode})` : "(unknown command)";
     const failedGateRunItem = findFailedGateRunItem(gateResult.results);
-    const gateOutputExcerpt = buildGateFailureOutputExcerpt(failedGateRunItem);
-    const failureFingerprintBeforeRepair = buildGateFailureFingerprint(failedGateRunItem);
+    const gateFailure = buildPrdGateFailure(failedGateRunItem);
+    const failureFingerprintBeforeRepair = gateFailure?.fingerprint ?? buildGateFailureFingerprint(failedGateRunItem);
     await logRunEvent(
       "info",
       "run.repair.backpressure",
@@ -156,8 +155,8 @@ export const runGateRepairLoop = async (opts: {
         failedGate,
         failureFingerprint: failureFingerprintBeforeRepair ? failureFingerprintBeforeRepair.slice(0, 240) : null,
         failureFingerprintChars: failureFingerprintBeforeRepair ? failureFingerprintBeforeRepair.length : 0,
-        gateOutputExcerptChars: gateOutputExcerpt ? gateOutputExcerpt.length : 0,
-        hasGateOutputExcerpt: Boolean(gateOutputExcerpt),
+        gateOutputExcerptChars: gateFailure?.outputExcerpt ? gateFailure.outputExcerpt.length : 0,
+        hasGateOutputExcerpt: Boolean(gateFailure?.outputExcerpt),
       },
       { runId, taskId: task.id },
     );
@@ -185,8 +184,7 @@ export const runGateRepairLoop = async (opts: {
 
     const repairPrompt = buildGateRepairPrompt({
       taskId: task.id,
-      failedGate,
-      gateOutputExcerpt,
+      gateFailure,
       carryForwardIssues,
       missingScript,
       scaffoldHint,
@@ -222,7 +220,8 @@ export const runGateRepairLoop = async (opts: {
 
     if (noSourceChanges) {
       const failedAfterRepair = findFailedGateRunItem(gateResult.results);
-      const failureFingerprintAfterRepair = buildGateFailureFingerprint(failedAfterRepair);
+      const failureFingerprintAfterRepair = buildPrdGateFailure(failedAfterRepair)?.fingerprint
+        ?? buildGateFailureFingerprint(failedAfterRepair);
       const sameFailure = Boolean(
         failureFingerprintBeforeRepair
         && failureFingerprintAfterRepair
