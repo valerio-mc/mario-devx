@@ -1,6 +1,7 @@
 import path from "path";
 import { readTextIfExists, writeTextAtomic } from "./fs";
 import { runShellCommand } from "./shell";
+import type { PrdGateFailure } from "./prd";
 
 export type GateCommand = { name: string; command: string };
 
@@ -74,6 +75,21 @@ export const buildGateFailureFingerprint = (
     String(failed.exitCode),
     normalizeFingerprintText(output),
   ].join("|");
+};
+
+export const buildPrdGateFailure = (
+  failed: GateRunItem | null,
+  opts?: { excerptMaxChars?: number; fingerprintOutputMaxChars?: number },
+): PrdGateFailure | null => {
+  if (!failed) return null;
+  const outputExcerpt = buildGateFailureOutputExcerpt(failed, { maxChars: opts?.excerptMaxChars ?? 1400 });
+  const fingerprint = buildGateFailureFingerprint(failed, { outputMaxChars: opts?.fingerprintOutputMaxChars ?? 600 });
+  return {
+    command: failed.command,
+    exitCode: failed.exitCode,
+    ...(fingerprint ? { fingerprint } : {}),
+    ...(outputExcerpt ? { outputExcerpt } : {}),
+  };
 };
 
 export const extractScriptFromCommand = (command: string): string | null => {

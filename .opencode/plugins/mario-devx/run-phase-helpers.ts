@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import { runUiVerification, type UiVerificationResult } from "./ui-verify";
-import type { GateRunItem } from "./gates";
+import { buildPrdGateFailure, findFailedGateRunItem, type GateRunItem } from "./gates";
 import type { PrdGatesAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
 import type { RunExecutionContext, RunLogMeta, RunPhaseName } from "./run-types";
 import { RUN_EVENT } from "./run-contracts";
@@ -24,15 +24,20 @@ export const toGateCommands = (doneWhen: string[]): Array<{ name: string; comman
   }));
 };
 
-export const toGatesAttempt = (result: { ok: boolean; results: GateRunItem[] }): PrdGatesAttempt => ({
-  ok: result.ok,
-  commands: result.results.map((r) => ({
-    command: r.command,
-    ok: r.ok,
-    exitCode: r.exitCode,
-    durationMs: r.durationMs,
-  })),
-});
+export const toGatesAttempt = (result: { ok: boolean; results: GateRunItem[] }): PrdGatesAttempt => {
+  const failed = findFailedGateRunItem(result.results);
+  const failure = !result.ok ? buildPrdGateFailure(failed) : null;
+  return {
+    ok: result.ok,
+    commands: result.results.map((r) => ({
+      command: r.command,
+      ok: r.ok,
+      exitCode: r.exitCode,
+      durationMs: r.durationMs,
+    })),
+    ...(failure ? { failure } : {}),
+  };
+};
 
 export const toUiAttempt = (opts: {
   gateOk: boolean;

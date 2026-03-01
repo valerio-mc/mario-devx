@@ -10,9 +10,17 @@ export type PrdGateAttempt = {
   durationMs: number;
 };
 
+export type PrdGateFailure = {
+  command: string;
+  exitCode: number;
+  fingerprint?: string;
+  outputExcerpt?: string;
+};
+
 export type PrdGatesAttempt = {
   ok: boolean;
   commands: PrdGateAttempt[];
+  failure?: PrdGateFailure;
 };
 
 export type PrdUiAttempt = {
