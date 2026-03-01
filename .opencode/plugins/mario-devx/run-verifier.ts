@@ -12,7 +12,7 @@ export const buildVerifierContextText = (opts: {
   task: PrdTask;
   doneWhen: string[];
   gates: PrdGateAttempt[];
-  uiResult: { ok: boolean; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null;
+  uiResult: { ok: boolean; evidence?: PrdUiAttempt["evidence"] } | null;
   uiNote?: string;
   visualDirection?: string | null;
   uxRequirements?: string[];

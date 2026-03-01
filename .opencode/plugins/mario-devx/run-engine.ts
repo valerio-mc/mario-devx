@@ -152,7 +152,7 @@ export const runEngine = async (opts: {
     });
   };
 
-  const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null> => {
+  const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string; evidence?: PrdUiAttempt["evidence"] } | null> => {
     return runUiVerifyForTaskPhase({
       shouldRunUiVerify,
       taskId,

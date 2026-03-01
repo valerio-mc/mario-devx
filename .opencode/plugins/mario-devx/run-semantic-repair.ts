@@ -1,5 +1,11 @@
 import { RUN_REASON } from "./run-contracts";
-import type { PrdGateFailure, PrdJudgeAttempt, PrdTask } from "./prd";
+import type { PrdGateFailure, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
+
+type UiVerificationReceipt = {
+  ok: boolean;
+  note?: string;
+  evidence?: PrdUiAttempt["evidence"];
+};
 
 export const runSemanticRepairLoop = async (opts: {
   ctx: any;
@@ -13,7 +19,7 @@ export const runSemanticRepairLoop = async (opts: {
   maxTotalRepairAttempts: number;
   totalRepairAttempts: number;
   latestGateResult: Awaited<ReturnType<any>>;
-  latestUiResult: { ok: boolean; note?: string; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null;
+  latestUiResult: UiVerificationReceipt | null;
   uiVerifyEnabled: boolean;
   isWebApp: boolean;
   cliOk: boolean;
@@ -61,6 +67,8 @@ export const runSemanticRepairLoop = async (opts: {
     carryForwardIssues: string[];
     strictChecklist: string;
     gateFailure?: PrdGateFailure | null;
+    uiUrl?: string | null;
+    uiEvidence?: PrdUiAttempt["evidence"] | null;
   }) => string;
   promptWorkSessionWithTimeout: (phase: "semantic-repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
   waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "semantic-repair") => Promise<boolean>;
@@ -69,11 +77,11 @@ export const runSemanticRepairLoop = async (opts: {
   captureWorkspaceSnapshot: (repoRoot: string) => Promise<Map<string, string>>;
   summarizeWorkspaceDelta: (before: Map<string, string>, after: Map<string, string>) => { changed: number };
   runGateCommands: (commands: Array<{ name: string; command: string }>, $: any, workdirAbs?: string) => Promise<any>;
-  runUiVerifyForTask: (taskId: string) => Promise<{ ok: boolean; note?: string; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null>;
+  runUiVerifyForTask: (taskId: string) => Promise<UiVerificationReceipt | null>;
   toGatesAttempt: (result: any) => any;
   toUiAttempt: (opts: {
     gateOk: boolean;
-    uiResult: { ok: boolean; note?: string; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null;
+    uiResult: UiVerificationReceipt | null;
     uiVerifyEnabled: boolean;
     isWebApp: boolean;
     cliOk: boolean;
@@ -87,7 +95,7 @@ export const runSemanticRepairLoop = async (opts: {
   judge: PrdJudgeAttempt | null;
   totalRepairAttempts: number;
   latestGateResult: any;
-  latestUiResult: { ok: boolean; note?: string; evidence?: { snapshot?: string; snapshotInteractive?: string; console?: string; errors?: string } } | null;
+  latestUiResult: UiVerificationReceipt | null;
   gates: any;
   ui: any;
 }> => {
@@ -213,6 +221,8 @@ export const runSemanticRepairLoop = async (opts: {
       carryForwardIssues,
       strictChecklist,
       gateFailure: task.lastAttempt?.gates?.failure ?? null,
+      uiUrl: uiVerifyUrl,
+      uiEvidence: latestUiResult?.evidence ?? task.lastAttempt?.ui?.evidence ?? null,
     });
 
     const semanticSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
