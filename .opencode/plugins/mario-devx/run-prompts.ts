@@ -1,4 +1,12 @@
-import type { PrdGateFailure, PrdJson, PrdJudgeAttempt, PrdTask } from "./prd";
+import type { PrdGateFailure, PrdJson, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
+
+const clipPromptEvidence = (value: string, maxChars: number): string => {
+  const normalized = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  const clipped = normalized.slice(0, Math.max(0, maxChars - 19)).trimEnd();
+  return `${clipped}\n\n[output clipped]`;
+};
 
 export const formatGateFailureBackpressure = (failure: PrdGateFailure | null | undefined): string => {
   if (!failure) return "";
@@ -9,6 +17,23 @@ export const formatGateFailureBackpressure = (failure: PrdGateFailure | null | u
     ...(failure.fingerprint ? [`- fingerprint: ${failure.fingerprint}`] : []),
     ...(failure.outputExcerpt ? [`- output (clipped):\n${failure.outputExcerpt}`] : []),
   ].join("\n");
+};
+
+export const formatUiEvidenceBackpressure = (opts: {
+  uiUrl?: string | null;
+  uiEvidence?: PrdUiAttempt["evidence"] | null;
+}): string => {
+  const { uiUrl, uiEvidence } = opts;
+  if (!uiUrl && !uiEvidence) return "";
+
+  const lines: string[] = ["Backpressure payload (latest UI verification evidence):"];
+  if (uiUrl) lines.push(`- uiUrl: ${uiUrl}`);
+  if (uiEvidence?.snapshot) lines.push(`- snapshot (clipped):\n${clipPromptEvidence(uiEvidence.snapshot, 1400)}`);
+  if (uiEvidence?.snapshotInteractive) lines.push(`- snapshotInteractive (clipped):\n${clipPromptEvidence(uiEvidence.snapshotInteractive, 1200)}`);
+  if (uiEvidence?.screenshot) lines.push(`- screenshot: ${uiEvidence.screenshot}`);
+  if (uiEvidence?.console) lines.push(`- console (clipped):\n${clipPromptEvidence(uiEvidence.console, 1000)}`);
+  if (uiEvidence?.errors) lines.push(`- errors (clipped):\n${clipPromptEvidence(uiEvidence.errors, 1000)}`);
+  return lines.join("\n");
 };
 
 export const buildIterationTaskPlan = (opts: {
@@ -94,9 +119,12 @@ export const buildSemanticRepairPrompt = (opts: {
   carryForwardIssues: string[];
   strictChecklist: string;
   gateFailure?: PrdGateFailure | null;
+  uiUrl?: string | null;
+  uiEvidence?: PrdUiAttempt["evidence"] | null;
 }): string => {
-  const { taskId, acceptance, actionableReason, judge, carryForwardIssues, strictChecklist, gateFailure } = opts;
+  const { taskId, acceptance, actionableReason, judge, carryForwardIssues, strictChecklist, gateFailure, uiUrl, uiEvidence } = opts;
   const gateBackpressure = formatGateFailureBackpressure(gateFailure);
+  const uiBackpressure = formatUiEvidenceBackpressure({ uiUrl, uiEvidence });
   return [
     `Verifier failed for ${taskId}. Apply a focused semantic repair and stop when acceptance is clearly satisfied.`,
     acceptance.length > 0
@@ -104,6 +132,10 @@ export const buildSemanticRepairPrompt = (opts: {
       : "Acceptance checklist: (none)",
     `Primary failing reason: ${actionableReason}`,
     gateBackpressure,
+    uiBackpressure,
+    uiBackpressure
+      ? "Use the UI evidence block above as source-of-truth for unmet acceptance and implement the missing behavior in repository code."
+      : "",
     judge.reason && judge.reason.length > 0
       ? `Verifier reasons:\n${judge.reason.map((r) => `- ${r}`).join("\n")}`
       : "",
