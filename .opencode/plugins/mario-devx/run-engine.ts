@@ -508,65 +508,133 @@ export const runEngine = async (opts: {
       await showToast(ctx, `Run: verify phase started for ${task.id}`, "info");
     }
 
-    const semanticResult = await runSemanticRepairLoop({
-      ctx,
-      repoRoot,
-      workspaceAbs,
-      task,
-      doneWhen: effectiveDoneWhen,
-      runId,
-      gateCommands,
-      carryForwardIssues,
-      maxTotalRepairAttempts,
-      totalRepairAttempts,
-      latestGateResult,
-      latestUiResult,
-      uiVerifyEnabled,
-      isWebApp,
-      cliOk,
-      skillOk,
-      browserOk,
-      uiVerifyUrl,
-      uiVerifyCmd,
-      visualDirection: prd.ui.visualDirection,
-      uxRequirements: prd.ui.uxRequirements,
-      styleReferences: prd.ui.styleReferences,
-      agentBrowserCaps,
-      verifyAgent: sessionAgents.verifyAgent,
-      limits: { maxVerifierRepairAttempts: LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS },
-      buildPrompt,
-      buildVerifierContextText,
-      buildCapabilitySummary,
-      resolveVerifierJudge,
-      applyRepeatedFailureBackpressure,
-      firstActionableJudgeReason,
-      buildSemanticRepairPrompt,
-      promptWorkSessionWithTimeout: (phase, text) => promptWorkSessionWithTimeout(phase, text),
-      waitForWorkIdleAfterPrompt,
-      heartbeatRunLock: () => heartbeatRunLock(repoRoot, runId),
-      blockForHeartbeatFailure,
-      captureWorkspaceSnapshot,
-      summarizeWorkspaceDelta,
-      runGateCommands,
-      runUiVerifyForTask,
-      toGatesAttempt,
-      toUiAttempt,
-      failEarly,
-      showToast,
-    });
+    let blockedByVerifierFailure = false;
+    let judge: PrdJudgeAttempt | null = null;
+
+    while (true) {
+      const semanticResult = await runSemanticRepairLoop({
+        ctx,
+        repoRoot,
+        workspaceAbs,
+        task,
+        doneWhen: effectiveDoneWhen,
+        runId,
+        gateCommands,
+        carryForwardIssues,
+        maxTotalRepairAttempts,
+        totalRepairAttempts,
+        latestGateResult,
+        latestUiResult,
+        uiVerifyEnabled,
+        isWebApp,
+        cliOk,
+        skillOk,
+        browserOk,
+        uiVerifyUrl,
+        uiVerifyCmd,
+        visualDirection: prd.ui.visualDirection,
+        uxRequirements: prd.ui.uxRequirements,
+        styleReferences: prd.ui.styleReferences,
+        agentBrowserCaps,
+        verifyAgent: sessionAgents.verifyAgent,
+        limits: { maxVerifierRepairAttempts: LIMITS.MAX_VERIFIER_REPAIR_ATTEMPTS },
+        buildPrompt,
+        buildVerifierContextText,
+        buildCapabilitySummary,
+        resolveVerifierJudge,
+        applyRepeatedFailureBackpressure,
+        firstActionableJudgeReason,
+        buildSemanticRepairPrompt,
+        promptWorkSessionWithTimeout: (phase, text) => promptWorkSessionWithTimeout(phase, text),
+        waitForWorkIdleAfterPrompt,
+        heartbeatRunLock: () => heartbeatRunLock(repoRoot, runId),
+        blockForHeartbeatFailure,
+        captureWorkspaceSnapshot,
+        summarizeWorkspaceDelta,
+        runGateCommands,
+        logGateRunResults: (_phase, taskId, gateResults) => logGateRunResults(RUN_PHASE.REPAIR, taskId, gateResults),
+        runUiVerifyForTask,
+        toGatesAttempt,
+        toUiAttempt,
+        failEarly,
+        showToast,
+      });
+
+      blockedByVerifierFailure = semanticResult.blockedByVerifierFailure;
+      judge = semanticResult.judge;
+      totalRepairAttempts = semanticResult.totalRepairAttempts;
+      latestGateResult = semanticResult.latestGateResult;
+      latestUiResult = semanticResult.latestUiResult;
+      gates = semanticResult.gates;
+      ui = semanticResult.ui;
+
+      if (!(semanticResult.semanticGateRegression && !latestGateResult.ok)) {
+        break;
+      }
+
+      await showToast(ctx, `Run: semantic repair regressed gates for ${task.id}; entering gate auto-repair`, "warning");
+      const semanticGateRepair = await runGateRepairLoop({
+        ctx,
+        repoRoot,
+        workspaceRoot,
+        workspaceAbs,
+        task,
+        gateCommands,
+        carryForwardIssues,
+        runId,
+        maxTotalRepairAttempts,
+        initialTotalRepairAttempts: totalRepairAttempts,
+        initialGateResult: latestGateResult,
+        initialWorkIdleAnnounced: workIdleAnnounced,
+        promptWorkSessionWithTimeout: (phase, text) => promptWorkSessionWithTimeout(phase, text),
+        waitForWorkIdleAfterPrompt,
+        heartbeatRunLock: () => heartbeatRunLock(repoRoot, runId),
+        blockForHeartbeatFailure,
+        showToast,
+        logRunEvent: runLog,
+        buildGateRepairPrompt,
+        captureWorkspaceSnapshot,
+        summarizeWorkspaceDelta,
+        logGateRunResults: (_phase, taskId, gateResults) => logGateRunResults(RUN_PHASE.REPAIR, taskId, gateResults),
+        runShellWithFailureLog,
+        timeouts: { maxTaskRepairMs: TIMEOUTS.MAX_TASK_REPAIR_MS },
+        limits: { maxNoProgressStreak: LIMITS.MAX_NO_PROGRESS_STREAK },
+      });
+
+      workIdleAnnounced = semanticGateRepair.workIdleAnnounced;
+      repairAttempts += semanticGateRepair.repairAttempts;
+      totalRepairAttempts = semanticGateRepair.totalRepairAttempts;
+      latestGateResult = semanticGateRepair.gateResult;
+      latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
+      gates = toGatesAttempt(latestGateResult);
+      ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+
+      if (!latestGateResult.ok && semanticGateRepair.stoppedForNoChanges) {
+        await failEarly([
+          formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
+          `Gate auto-repair after semantic regression produced no source-file changes across consecutive attempts (last failing gate: ${semanticGateRepair.lastNoChangeGate ?? "unknown"}).`,
+        ]);
+        blockedByVerifierFailure = true;
+        judge = null;
+        break;
+      }
+
+      if (!latestGateResult.ok) {
+        const failed = latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)";
+        await failEarly([
+          `ReasonCode: ${RUN_REASON.SEMANTIC_REPAIR_GATE_REGRESSION}`,
+          `Deterministic gate failed after semantic repair and gate auto-repair: ${failed}.`,
+        ]);
+        blockedByVerifierFailure = true;
+        judge = null;
+        break;
+      }
+    }
 
     if (!verifyIdleAnnounced) {
       verifyIdleAnnounced = true;
       await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
     }
-
-    const blockedByVerifierFailure = semanticResult.blockedByVerifierFailure;
-    const judge = semanticResult.judge;
-    totalRepairAttempts = semanticResult.totalRepairAttempts;
-    latestGateResult = semanticResult.latestGateResult;
-    latestUiResult = semanticResult.latestUiResult;
-    gates = semanticResult.gates;
-    ui = semanticResult.ui;
 
     if (blockedByVerifierFailure || !judge) {
       break;
