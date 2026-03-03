@@ -77,6 +77,7 @@ export const runSemanticRepairLoop = async (opts: {
   captureWorkspaceSnapshot: (repoRoot: string) => Promise<Map<string, string>>;
   summarizeWorkspaceDelta: (before: Map<string, string>, after: Map<string, string>) => { changed: number };
   runGateCommands: (commands: Array<{ name: string; command: string }>, $: any, workdirAbs?: string) => Promise<any>;
+  logGateRunResults: (phase: "repair", taskId: string, gateResults: any[]) => Promise<void>;
   runUiVerifyForTask: (taskId: string) => Promise<UiVerificationReceipt | null>;
   toGatesAttempt: (result: any) => any;
   toUiAttempt: (opts: {
@@ -92,6 +93,7 @@ export const runSemanticRepairLoop = async (opts: {
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
 }): Promise<{
   blockedByVerifierFailure: boolean;
+  semanticGateRegression: boolean;
   judge: PrdJudgeAttempt | null;
   totalRepairAttempts: number;
   latestGateResult: any;
@@ -136,6 +138,7 @@ export const runSemanticRepairLoop = async (opts: {
     captureWorkspaceSnapshot,
     summarizeWorkspaceDelta,
     runGateCommands,
+    logGateRunResults,
     runUiVerifyForTask,
     toGatesAttempt,
     toUiAttempt,
@@ -144,6 +147,7 @@ export const runSemanticRepairLoop = async (opts: {
   } = opts;
 
   let blockedByVerifierFailure = false;
+  let semanticGateRegression = false;
   let judge: PrdJudgeAttempt | null = null;
   let semanticRepairAttempts = 0;
   let semanticNoProgressStreak = 0;
@@ -268,22 +272,20 @@ export const runSemanticRepairLoop = async (opts: {
     }
 
     latestGateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+    await logGateRunResults("repair", task.id, latestGateResult.results);
     latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
     gates = toGatesAttempt(latestGateResult);
     ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
     if (!latestGateResult.ok) {
-      await failEarly([
-        `ReasonCode: ${RUN_REASON.SEMANTIC_REPAIR_GATE_REGRESSION}`,
-        `Deterministic gate failed after semantic repair: ${latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)"}.`,
-      ]);
-      blockedByVerifierFailure = true;
+      semanticGateRegression = true;
       break;
     }
   }
 
   return {
     blockedByVerifierFailure,
+    semanticGateRegression,
     judge,
     totalRepairAttempts,
     latestGateResult,

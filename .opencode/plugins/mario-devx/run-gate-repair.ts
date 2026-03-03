@@ -25,6 +25,8 @@ export const runGateRepairLoop = async (opts: {
   carryForwardIssues: string[];
   runId: string;
   maxTotalRepairAttempts: number;
+  initialTotalRepairAttempts?: number;
+  initialGateResult?: GateResult;
   initialWorkIdleAnnounced: boolean;
   promptWorkSessionWithTimeout: (phase: "repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
   waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "repair") => Promise<boolean>;
@@ -98,12 +100,12 @@ export const runGateRepairLoop = async (opts: {
   } = opts;
 
   let workIdleAnnounced = opts.initialWorkIdleAnnounced;
-  let gateResult = await runGateCommands(gateCommands, ctx.$, workspaceAbs);
+  let gateResult = opts.initialGateResult ?? await runGateCommands(gateCommands, ctx.$, workspaceAbs);
   await logGateRunResults("repair", task.id, gateResult.results);
 
   const taskRepairStartedAt = Date.now();
   let repairAttempts = 0;
-  let totalRepairAttempts = 0;
+  let totalRepairAttempts = opts.initialTotalRepairAttempts ?? 0;
   let noProgressStreak = 0;
   let noChangeStreak = 0;
   let stoppedForNoChanges = false;
