@@ -36,6 +36,10 @@ export type RunContext = {
     skillOk: boolean;
     browserOk: boolean;
     autoInstallAttempted: string[];
+    prereqInstalling: boolean;
+    prereqInstallPid?: number;
+    prereqLogPath?: string;
+    prereqNote?: string;
     shouldRunUiVerify: boolean;
   };
   agentBrowserCaps: { available: boolean; version: string | null; commands: string[]; openUsage: string | null; notes: string[] };

@@ -13,6 +13,10 @@ export type UiRunSetup = {
   skillOk: boolean;
   browserOk: boolean;
   autoInstallAttempted: string[];
+  prereqInstalling: boolean;
+  prereqInstallPid?: number;
+  prereqLogPath?: string;
+  prereqNote?: string;
   shouldRunUiVerify: boolean;
 };
 
@@ -32,6 +36,7 @@ type ResolveUiRunSetupOptions = {
 
 export const resolveUiRunSetup = async (opts: ResolveUiRunSetupOptions): Promise<UiRunSetup> => {
   const { ctx, repoRoot, workspaceRoot, onWarnings, onPrereqLog } = opts;
+  const isWebApp = await isLikelyWebApp(repoRoot);
   const agentsPath = path.join(repoRoot, ".mario", "AGENTS.md");
   const agentsRaw = await readTextIfExists(agentsPath);
   const agentsParsed = agentsRaw ? parseAgentsEnv(agentsRaw) : { env: {}, warnings: [] };
@@ -40,23 +45,34 @@ export const resolveUiRunSetup = async (opts: ResolveUiRunSetupOptions): Promise
     await onWarnings?.(agentsParsed.warnings.length);
   }
 
-  const uiVerifyEnabled = agentsEnv.UI_VERIFY === "1";
+  const uiVerifyRaw = (agentsEnv.UI_VERIFY ?? "").trim();
+  const uiVerifyEnabled = uiVerifyRaw.length > 0 ? uiVerifyRaw === "1" : isWebApp;
   const uiVerifyCmd = agentsEnv.UI_VERIFY_CMD || (workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
   const uiVerifyUrl = agentsEnv.UI_VERIFY_URL || "http://localhost:3000";
-  const uiVerifyRequired = agentsEnv.UI_VERIFY_REQUIRED === "1";
+  const uiVerifyRequiredRaw = (agentsEnv.UI_VERIFY_REQUIRED ?? "").trim();
+  const uiVerifyRequired = uiVerifyEnabled
+    ? (uiVerifyRequiredRaw.length > 0 ? uiVerifyRequiredRaw === "1" : isWebApp)
+    : false;
   const agentBrowserRepo = agentsEnv.AGENT_BROWSER_REPO || "https://github.com/vercel-labs/agent-browser";
 
-  const isWebApp = await isLikelyWebApp(repoRoot);
   let cliOk = await hasAgentBrowserCli(ctx);
   let skillOk = await hasAgentBrowserSkill(repoRoot);
   let browserOk = true;
   let autoInstallAttempted: string[] = [];
+  let prereqInstalling = false;
+  let prereqInstallPid: number | undefined;
+  let prereqLogPath: string | undefined;
+  let prereqNote: string | undefined;
   if (uiVerifyEnabled && isWebApp) {
     const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot, onPrereqLog);
     cliOk = ensured.cliOk;
     skillOk = ensured.skillOk;
     browserOk = ensured.browserOk;
     autoInstallAttempted = ensured.attempted;
+    prereqInstalling = ensured.installing;
+    prereqInstallPid = ensured.installPid;
+    prereqLogPath = ensured.installLogPath;
+    prereqNote = ensured.note;
   }
 
   return {
@@ -70,6 +86,10 @@ export const resolveUiRunSetup = async (opts: ResolveUiRunSetupOptions): Promise
     skillOk,
     browserOk,
     autoInstallAttempted,
+    prereqInstalling,
+    ...(typeof prereqInstallPid === "number" ? { prereqInstallPid } : {}),
+    ...(prereqLogPath ? { prereqLogPath } : {}),
+    ...(prereqNote ? { prereqNote } : {}),
     shouldRunUiVerify: uiVerifyEnabled && isWebApp && cliOk && skillOk && browserOk,
   };
 };
