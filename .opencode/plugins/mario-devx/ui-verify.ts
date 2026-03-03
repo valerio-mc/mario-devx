@@ -637,35 +637,57 @@ export const ensureAgentBrowserPrereqs = async (
   if (needsSkill) planCommands.push("npx skills add vercel-labs/agent-browser");
   attempted.push(...planCommands);
 
-  const started = await startAgentBrowserPrereqInstallJob({
-    repoRoot,
-    needsCli,
-    needsBrowserRuntime,
-    needsSkill,
-    previousAttemptCount: priorJob?.attemptCount ?? 0,
-  });
+  try {
+    const started = await startAgentBrowserPrereqInstallJob({
+      repoRoot,
+      needsCli,
+      needsBrowserRuntime,
+      needsSkill,
+      previousAttemptCount: priorJob?.attemptCount ?? 0,
+    });
 
-  await log?.({
-    level: "info",
-    event: "ui.prereq.install-job.start",
-    message: "Started background installer for agent-browser prerequisites",
-    extra: {
-      pid: started.pid,
-      logPath: started.logPath,
-      commands: started.commands,
-    },
-  });
+    await log?.({
+      level: "info",
+      event: "ui.prereq.install-job.start",
+      message: "Started background installer for agent-browser prerequisites",
+      extra: {
+        pid: started.pid,
+        logPath: started.logPath,
+        commands: started.commands,
+      },
+    });
 
-  return {
-    cliOk,
-    skillOk,
-    browserOk,
-    attempted,
-    installing: true,
-    installPid: started.pid,
-    installLogPath: started.logPath,
-    note: `Installing agent-browser prerequisites in background (pid ${started.pid}).`,
-  };
+    return {
+      cliOk,
+      skillOk,
+      browserOk,
+      attempted,
+      installing: true,
+      installPid: started.pid,
+      installLogPath: started.logPath,
+      note: `Installing agent-browser prerequisites in background (pid ${started.pid}).`,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await log?.({
+      level: "error",
+      event: "ui.prereq.install-job.failed-start",
+      message: "Failed to start background installer for agent-browser prerequisites",
+      reasonCode: "UI_PREREQ_INSTALL_START_FAILED",
+      extra: {
+        detail,
+        commands: planCommands,
+      },
+    });
+    return {
+      cliOk,
+      skillOk,
+      browserOk,
+      attempted,
+      installing: false,
+      note: `Failed to start background installer: ${detail}`,
+    };
+  }
 };
 
 export const runUiVerification = async (opts: {

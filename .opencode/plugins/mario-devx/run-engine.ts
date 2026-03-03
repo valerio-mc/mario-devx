@@ -136,7 +136,23 @@ export const runEngine = async (opts: {
     deleteSessionBestEffort,
   } = opts;
   const { ctx, repoRoot, runId, controlSessionId, workspaceRoot, workspaceAbs, sessionAgents, uiSetup, agentBrowserCaps, nowIso, runStartIteration, abortSignal } = runCtx;
-  const { uiVerifyEnabled, uiVerifyCmd, uiVerifyUrl, uiVerifyRequired, agentBrowserRepo, isWebApp, cliOk, skillOk, browserOk, autoInstallAttempted, shouldRunUiVerify } = uiSetup;
+  const {
+    uiVerifyEnabled,
+    uiVerifyCmd,
+    uiVerifyUrl,
+    uiVerifyRequired,
+    agentBrowserRepo,
+    isWebApp,
+    cliOk,
+    skillOk,
+    browserOk,
+    autoInstallAttempted,
+    prereqInstalling,
+    prereqInstallPid,
+    prereqLogPath,
+    prereqNote,
+    shouldRunUiVerify,
+  } = uiSetup;
 
   let prd = preflightPrd;
   let attempted = 0;
@@ -477,16 +493,20 @@ export const runEngine = async (opts: {
       break;
     }
 
-    if (uiVerifyEnabled && isWebApp && uiVerifyRequired && (!cliOk || !skillOk || !browserOk)) {
+    if (uiVerifyEnabled && isWebApp && (prereqInstalling || !cliOk || !skillOk || !browserOk)) {
       await failEarly(
         [
-          "UI verification is required but agent-browser prerequisites are missing.",
+          prereqInstalling
+            ? "UI verification prerequisites are currently installing in the background."
+            : "UI verification is enabled but agent-browser prerequisites are still missing.",
+          ...(prereqNote ? [prereqNote] : []),
           ...(autoInstallAttempted.length > 0 ? [`Auto-install attempted: ${autoInstallAttempted.join("; ")}`] : []),
+          ...(typeof prereqInstallPid === "number" ? [`Installer PID: ${prereqInstallPid}`] : []),
+          ...(prereqLogPath ? [`Installer log: ${prereqLogPath}`] : []),
           `Repo: ${agentBrowserRepo}`,
         ],
         [
-          "Install prerequisites, then rerun /mario-devx:run 1.",
-          "Or set UI_VERIFY_REQUIRED=0 in .mario/AGENTS.md to make UI verification best-effort.",
+          "Wait for prerequisite installation to finish, then rerun /mario-devx:run 1.",
         ],
       );
       break;
