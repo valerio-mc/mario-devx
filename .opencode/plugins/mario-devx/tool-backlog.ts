@@ -91,6 +91,18 @@ export const createBacklogTools = (opts: {
         }
         await ensureMario(repoRoot, false);
         let prd = await ensurePrd(repoRoot);
+        if (prd.wizard.status !== "completed") {
+          await logToolEvent(ctx, repoRoot, "warn", "add.blocked.wizard-incomplete", "Feature add blocked: PRD wizard incomplete", {
+            wizardStatus: prd.wizard.status,
+            wizardStep: prd.wizard.step,
+            wizardTotalSteps: prd.wizard.totalSteps,
+          });
+          return [
+            "Feature add blocked: PRD interview is not complete.",
+            "Run /mario-devx:new until completion.",
+            "Then rerun /mario-devx:add <feature request>.",
+          ].join("\n");
+        }
         const feature = (args.feature ?? "").trim();
         const pendingAddInterview = parseAddInterviewState(prd.wizard.answers?.[ADD_INTERVIEW_STATE_KEY]);
         const originalFeatureRequest = pendingAddInterview?.originalRequest ?? feature;
