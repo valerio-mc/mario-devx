@@ -47,6 +47,28 @@ const writeAddInterviewState = (prd: PrdJson, state: AddInterviewState | null): 
   };
 };
 
+const normalizeScalarText = (value: unknown): string => {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+};
+
+const normalizeStringList = (value: unknown, maxItems: number): string[] => {
+  if (!Array.isArray(value) || maxItems <= 0) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    const text = normalizeScalarText(entry);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+};
+
 export const createBacklogTools = (opts: {
   ctx: PluginContext;
   repoRoot: string;
@@ -185,14 +207,21 @@ export const createBacklogTools = (opts: {
         const startN = nextTaskOrdinal(prd.tasks ?? []);
         let n = startN;
 
-        const taskAtoms = envelope.tasks?.length ? envelope.tasks : [originalFeatureRequest];
+        const normalizedTasks = normalizeStringList(envelope.tasks, 5);
+        const normalizedAcceptanceCriteria = normalizeStringList(envelope.acceptanceCriteria, 12);
+        const normalizedConstraints = normalizeStringList(envelope.constraints, 12);
+        const normalizedUxNotes = normalizeScalarText(envelope.uxNotes);
+
+        const taskAtoms = normalizedTasks.length > 0
+          ? normalizedTasks
+          : [normalizeScalarText(originalFeatureRequest) || "Implement feature request"];
         const newTasks = taskAtoms.map((item) => makeTask({
           id: normalizeTaskId(n++),
           title: `Implement: ${item}`,
           doneWhen: gates,
           labels: ["feature", "backlog", backlogTaskLabel],
-          acceptance: envelope.acceptanceCriteria?.length ? envelope.acceptanceCriteria : [item],
-          ...(envelope.uxNotes ? { notes: [envelope.uxNotes] } : {}),
+          acceptance: normalizedAcceptanceCriteria.length > 0 ? normalizedAcceptanceCriteria : [item],
+          ...(normalizedUxNotes ? { notes: [normalizedUxNotes] } : {}),
         }));
 
         const request = [
@@ -200,9 +229,9 @@ export const createBacklogTools = (opts: {
           clarificationAnswers.length > 0
             ? `\nClarifications:\n${clarificationAnswers.map((a) => `- ${a}`).join("\n")}`
             : "",
-          envelope.acceptanceCriteria?.length ? `\nAcceptance:\n${envelope.acceptanceCriteria.map((a) => `- ${a}`).join("\n")}` : "",
-          envelope.constraints?.length ? `\nConstraints:\n${envelope.constraints.map((c) => `- ${c}`).join("\n")}` : "",
-          envelope.uxNotes ? `\nUX notes:\n${envelope.uxNotes}` : "",
+          normalizedAcceptanceCriteria.length > 0 ? `\nAcceptance:\n${normalizedAcceptanceCriteria.map((a) => `- ${a}`).join("\n")}` : "",
+          normalizedConstraints.length > 0 ? `\nConstraints:\n${normalizedConstraints.map((c) => `- ${c}`).join("\n")}` : "",
+          normalizedUxNotes ? `\nUX notes:\n${normalizedUxNotes}` : "",
         ]
           .join("\n")
           .trim();
