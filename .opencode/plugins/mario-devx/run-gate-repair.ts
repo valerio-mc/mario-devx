@@ -1,9 +1,7 @@
 import {
   buildGateFailureFingerprint,
   buildPrdGateFailure,
-  ensureT0002QualityBootstrap,
   findFailedGateRunItem,
-  hasNodeModules,
   missingPackageScriptForCommand,
   runGateCommands,
   type GateCommand,
@@ -112,26 +110,6 @@ export const runGateRepairLoop = async (opts: {
   let lastNoChangeGate: string | null = null;
   let lastGateFailureSig: string | null = null;
   let deterministicScaffoldTried = false;
-
-  const usesNodePackageScripts = gateCommands.some((g) => {
-    const c = g.command.trim();
-    return /^npm\s+run\s+/i.test(c) || /^pnpm\s+/i.test(c) || /^yarn\s+/i.test(c) || /^bun\s+run\s+/i.test(c);
-  });
-
-  if (task.id === "T-0002" && usesNodePackageScripts) {
-    const bootstrap = await ensureT0002QualityBootstrap(repoRoot, workspaceRoot, gateCommands);
-    if (ctx.$ && (!(await hasNodeModules(repoRoot, workspaceRoot)) || bootstrap.changed)) {
-      const installCmd = workspaceRoot === "." ? "npm install" : `npm --prefix ${workspaceRoot} install`;
-      await runShellWithFailureLog(ctx, repoRoot, installCmd, {
-        event: RUN_EVENT.BOOTSTRAP_INSTALL_FAILED,
-        message: `Dependency install failed while bootstrapping ${task.id}`,
-        reasonCode: RUN_REASON.BOOTSTRAP_INSTALL_FAILED,
-        runId,
-        taskId: task.id,
-        extra: { workspaceRoot },
-      });
-    }
-  }
 
   while (!gateResult.ok) {
     const currentSig = buildGateFailureFingerprint(findFailedGateRunItem(gateResult.results), { outputMaxChars: 300 }) ?? "unknown";
