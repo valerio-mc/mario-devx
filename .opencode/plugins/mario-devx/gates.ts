@@ -96,10 +96,14 @@ export const extractScriptFromCommand = (command: string): string | null => {
   const trimmed = command.trim();
   const npm = trimmed.match(/^npm\s+run\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);
   if (npm?.[1]) return npm[1];
+  const pnpmRun = trimmed.match(/^pnpm\s+run\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);
+  if (pnpmRun?.[1]) return pnpmRun[1];
   const pnpm = trimmed.match(/^pnpm\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);
-  if (pnpm?.[1] && !["install", "i", "add", "dlx", "exec"].includes(pnpm[1].toLowerCase())) return pnpm[1];
+  if (pnpm?.[1] && !["install", "i", "add", "dlx", "exec", "run"].includes(pnpm[1].toLowerCase())) return pnpm[1];
+  const yarnRun = trimmed.match(/^yarn\s+run\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);
+  if (yarnRun?.[1]) return yarnRun[1];
   const yarn = trimmed.match(/^yarn\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);
-  if (yarn?.[1] && !["install", "add", "dlx", "create"].includes(yarn[1].toLowerCase())) return yarn[1];
+  if (yarn?.[1] && !["install", "add", "dlx", "create", "run"].includes(yarn[1].toLowerCase())) return yarn[1];
   const bun = trimmed.match(/^bun\s+run\s+([A-Za-z0-9:_-]+)(?:\s+|$)/i);
   if (bun?.[1]) return bun[1];
   return null;
