@@ -503,7 +503,10 @@ export const runEngine = async (opts: {
     }
 
     if (uiVerifyEnabled && isWebApp && uiVerifyRequired && latestUiResult && !latestUiResult.ok) {
-      await failEarly(["UI verification failed."]);
+      await failEarly([
+        formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
+        latestUiResult.note?.trim() || "UI verification failed.",
+      ]);
       break;
     }
 
