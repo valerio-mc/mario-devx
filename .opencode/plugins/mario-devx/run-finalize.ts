@@ -152,7 +152,6 @@ export const finalizeRunCleanup = async (opts: {
   repoRoot: string;
   runId: string;
   controlSessionId?: string;
-  clearSessionCaches: (repoRoot: string) => Promise<void>;
   readRunState: (repoRoot: string) => Promise<any>;
   updateRunState: (repoRoot: string, patch: Record<string, unknown>) => Promise<unknown>;
   deleteSessionBestEffort: (ctx: any, sessionId: string | undefined, controlSessionId?: string) => Promise<"deleted" | "not-found" | "skipped-control" | "failed" | "none">;
@@ -172,7 +171,6 @@ export const finalizeRunCleanup = async (opts: {
     repoRoot,
     runId,
     controlSessionId,
-    clearSessionCaches,
     readRunState,
     updateRunState,
     deleteSessionBestEffort,
@@ -209,7 +207,6 @@ export const finalizeRunCleanup = async (opts: {
       }
     }
 
-    await clearSessionCaches(repoRoot);
     await updateRunState(repoRoot, {
       workSessionId: undefined,
       verifierSessionId: undefined,

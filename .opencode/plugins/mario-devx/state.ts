@@ -99,10 +99,6 @@ export const ensureMario = async (repoRoot: string, force = false): Promise<void
   }
 };
 
-export const clearSessionCaches = async (repoRoot: string): Promise<void> => {
-  void repoRoot;
-};
-
 export const readRunState = async (repoRoot: string): Promise<RunState> => {
   const state = await readState(repoRoot);
   return state.run ?? defaultRunState();

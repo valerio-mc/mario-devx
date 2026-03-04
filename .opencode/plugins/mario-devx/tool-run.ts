@@ -6,7 +6,7 @@ import {
   resetWorkSession,
   updateRunState,
 } from "./runner";
-import { clearSessionCaches, ensureMario, readRunState, writeRunState } from "./state";
+import { ensureMario, readRunState, writeRunState } from "./state";
 import { createRunId, logTaskBlocked, logTaskComplete } from "./logging";
 import { acquireRunLock, heartbeatRunLock, releaseRunLock, runLockPath } from "./run-lock";
 import type { RunLogMeta } from "./run-types";
@@ -264,7 +264,6 @@ export const createRunTool = (opts: {
             repoRoot,
             runId,
             controlSessionId: context.sessionID,
-            clearSessionCaches,
             readRunState,
             updateRunState,
             deleteSessionBestEffort,
