@@ -21,6 +21,7 @@ export const runSemanticRepairLoop = async (opts: {
   latestGateResult: Awaited<ReturnType<any>>;
   latestUiResult: UiVerificationReceipt | null;
   uiVerifyEnabled: boolean;
+  uiVerifyRequired: boolean;
   isWebApp: boolean;
   cliOk: boolean;
   skillOk: boolean;
@@ -112,6 +113,7 @@ export const runSemanticRepairLoop = async (opts: {
     carryForwardIssues,
     maxTotalRepairAttempts,
     uiVerifyEnabled,
+    uiVerifyRequired,
     isWebApp,
     cliOk,
     skillOk,
@@ -277,6 +279,19 @@ export const runSemanticRepairLoop = async (opts: {
     latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
     gates = toGatesAttempt(latestGateResult);
     ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+
+    if (uiVerifyEnabled && isWebApp && uiVerifyRequired) {
+      const uiFailed = latestUiResult ? !latestUiResult.ok : true;
+      if (uiFailed) {
+        await failEarly([
+          `ReasonCode: ${RUN_REASON.UI_VERIFY_FAILED}`,
+          latestUiResult?.note?.trim() || "UI verification failed.",
+        ]);
+        blockedByVerifierFailure = true;
+        judge = null;
+        break;
+      }
+    }
 
     if (!latestGateResult.ok) {
       semanticGateRegression = true;

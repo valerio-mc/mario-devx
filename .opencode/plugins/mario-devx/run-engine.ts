@@ -543,6 +543,7 @@ export const runEngine = async (opts: {
         latestGateResult,
         latestUiResult,
         uiVerifyEnabled,
+        uiVerifyRequired,
         isWebApp,
         cliOk,
         skillOk,
@@ -651,6 +652,16 @@ export const runEngine = async (opts: {
     if (!verifyIdleAnnounced) {
       verifyIdleAnnounced = true;
       await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
+    }
+
+    if (uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok !== true) {
+      await failEarly([
+        formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
+        typeof ui.note === "string" && ui.note.trim().length > 0
+          ? ui.note.trim()
+          : latestUiResult?.note?.trim() || "UI verification failed.",
+      ]);
+      break;
     }
 
     if (blockedByVerifierFailure || !judge) {
