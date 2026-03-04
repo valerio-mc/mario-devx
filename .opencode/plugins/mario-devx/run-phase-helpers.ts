@@ -1,4 +1,5 @@
 import { readdir, readFile, stat } from "fs/promises";
+import { spawn } from "child_process";
 import path from "path";
 import { runUiVerification, type UiVerificationResult } from "./ui-verify";
 import { buildPrdGateFailure, findFailedGateRunItem, type GateRunItem } from "./gates";
@@ -150,22 +151,151 @@ const SNAPSHOT_EXCLUDED_DIRS = new Set([
   ".next",
   ".mario",
   ".opencode",
+  "dist",
+  "build",
+  "coverage",
+  ".turbo",
+  ".cache",
 ]);
 
-const shouldIncludeSnapshotFile = (relativePath: string): boolean => {
-  if (!relativePath) return false;
-  if (relativePath.startsWith("public/")) return true;
-  if (relativePath.startsWith("src/")) return true;
-  if (relativePath.startsWith("app/")) return true;
-  if (/^README\.md$/i.test(relativePath)) return true;
-  if (/^(package|pnpm-workspace)\.json$/i.test(relativePath)) return true;
-  if (/^(pnpm-lock\.yaml|tsconfig\.json|next\.config\.(js|mjs|ts))$/i.test(relativePath)) return true;
-  return false;
+const SNAPSHOT_EXCLUDED_PREFIXES = [
+  ".git/",
+  "node_modules/",
+  ".next/",
+  ".mario/",
+  ".opencode/",
+  "dist/",
+  "build/",
+  "coverage/",
+  ".turbo/",
+  ".cache/",
+];
+
+const SNAPSHOT_BINARY_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".ico",
+  ".pdf",
+  ".zip",
+  ".gz",
+  ".tgz",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".eot",
+  ".mp4",
+  ".mp3",
+  ".mov",
+  ".avi",
+]);
+
+const shouldTrackSnapshotPath = (relativePath: string): boolean => {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!normalized) return false;
+  if (normalized === "." || normalized === "..") return false;
+  for (const prefix of SNAPSHOT_EXCLUDED_PREFIXES) {
+    if (normalized === prefix.slice(0, -1) || normalized.startsWith(prefix)) {
+      return false;
+    }
+  }
+  const ext = path.extname(normalized).toLowerCase();
+  if (SNAPSHOT_BINARY_EXTENSIONS.has(ext)) return false;
+  return true;
 };
 
 export type WorkspaceSnapshot = Map<string, string>;
 
+const runCommandCapture = async (opts: {
+  cwd: string;
+  command: string;
+  args: string[];
+  timeoutMs: number;
+}): Promise<{ ok: boolean; stdout: string }> => {
+  const { cwd, command, args, timeoutMs } = opts;
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve({ ok: false, stdout: "" });
+    }, Math.max(1000, timeoutMs));
+    child.stdout.on("data", (chunk) => {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve({ ok: false, stdout: "" });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({
+        ok: code === 0,
+        stdout: Buffer.concat(chunks).toString("utf8"),
+      });
+    });
+  });
+};
+
+const parseGitStatusPath = (line: string): { code: string; file: string } | null => {
+  if (line.length < 4) return null;
+  const code = line.slice(0, 2);
+  const rest = line.slice(3).trim();
+  if (!rest) return null;
+  const file = rest.includes(" -> ") ? rest.split(" -> ").pop() ?? "" : rest;
+  const normalized = file.replace(/^"|"$/g, "").trim();
+  if (!normalized) return null;
+  return { code, file: normalized };
+};
+
+const captureGitWorkspaceSnapshot = async (repoRoot: string): Promise<WorkspaceSnapshot | null> => {
+  const inside = await runCommandCapture({
+    cwd: repoRoot,
+    command: "git",
+    args: ["rev-parse", "--is-inside-work-tree"],
+    timeoutMs: 4000,
+  });
+  if (!inside.ok || !/true/i.test(inside.stdout)) {
+    return null;
+  }
+
+  const status = await runCommandCapture({
+    cwd: repoRoot,
+    command: "git",
+    args: ["status", "--porcelain=v1", "--untracked-files=all", "--ignored=no"],
+    timeoutMs: 10000,
+  });
+  if (!status.ok) return null;
+
+  const snapshot: WorkspaceSnapshot = new Map();
+  const lines = status.stdout.split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean);
+  for (const line of lines) {
+    const parsed = parseGitStatusPath(line);
+    if (!parsed) continue;
+    const file = parsed.file.replace(/\\/g, "/");
+    if (!shouldTrackSnapshotPath(file)) continue;
+    try {
+      const fileStat = await stat(path.join(repoRoot, file));
+      snapshot.set(file, `${parsed.code}:${fileStat.size}:${Math.round(fileStat.mtimeMs)}`);
+    } catch {
+      snapshot.set(file, `${parsed.code}:deleted`);
+    }
+  }
+  return snapshot;
+};
+
 export const captureWorkspaceSnapshot = async (repoRoot: string): Promise<WorkspaceSnapshot> => {
+  const gitSnapshot = await captureGitWorkspaceSnapshot(repoRoot);
+  if (gitSnapshot) {
+    return gitSnapshot;
+  }
+
   const snapshot: WorkspaceSnapshot = new Map();
 
   const walk = async (dirAbs: string): Promise<void> => {
@@ -184,7 +314,7 @@ export const captureWorkspaceSnapshot = async (repoRoot: string): Promise<Worksp
         continue;
       }
       if (!entry.isFile()) continue;
-      if (!shouldIncludeSnapshotFile(rel)) continue;
+      if (!shouldTrackSnapshotPath(rel)) continue;
       try {
         const s = await stat(abs);
         snapshot.set(rel, `${s.size}:${Math.round(s.mtimeMs)}`);
