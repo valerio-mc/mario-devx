@@ -16,6 +16,7 @@ import { runSemanticRepairLoop } from "./run-semantic-repair";
 import { finalizeRunSuccess } from "./run-finalize";
 import { buildVerifierContextText } from "./run-verifier";
 import { runGateCommands } from "./gates";
+import { handleHeartbeatFailure, handlePromptDispatchFailure, persistTaskFailureAttempt } from "./run-failure-helpers";
 
 export type RunContext = {
   ctx: any;
@@ -235,20 +236,19 @@ export const runEngine = async (opts: {
     await showToast(ctx, `Run: started ${task.id} (${attempted}/${maxItems})`, "info");
 
     const blockForHeartbeatFailure = async (phase: string): Promise<void> => {
-      const gates: PrdGatesAttempt = { ok: false, commands: [] };
-      const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-      const judge: PrdJudgeAttempt = {
-        status: "FAIL",
-        exitSignal: false,
-        reason: [`Failed to update run.lock heartbeat during ${phase} (${runLockPath(repoRoot)}).`],
-        nextActions: ["Check disk space/permissions for .mario/state/run.lock, then rerun /mario-devx:run 1."],
-      };
-      prd = await persistBlockedTaskAttempt({ ctx, repoRoot, prd, task, attemptAt, iteration: state.iteration, gates, ui, judge, runId });
-      await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_HEARTBEAT, `Run blocked: lock heartbeat failed during ${phase}`, {
-        taskId: task.id,
+      prd = await handleHeartbeatFailure({
+        ctx,
+        repoRoot,
+        prd,
+        task,
+        attemptAt,
+        iteration: state.iteration,
+        runId,
         phase,
         lockPath: runLockPath(repoRoot),
-      }, { runId, taskId: task.id, reasonCode: RUN_REASON.HEARTBEAT_FAILED });
+        persistBlockedTaskAttempt,
+        logRunEvent,
+      });
     };
 
     const blockForPromptDispatchFailure = async (
@@ -256,39 +256,22 @@ export const runEngine = async (opts: {
       errorMessage: string,
       reasonCode: typeof RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT | typeof RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR,
     ): Promise<void> => {
-      const isTimeout = reasonCode === RUN_REASON.WORK_PROMPT_DISPATCH_TIMEOUT;
-      const gates: PrdGatesAttempt = { ok: false, commands: [] };
-      const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-      const judge: PrdJudgeAttempt = {
-        status: "FAIL",
-        exitSignal: false,
-        reason: [
-          formatReasonCode(reasonCode),
-          isTimeout
-            ? `Work-session prompt dispatch timed out during ${phase} (${TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS}ms).`
-            : `Work-session prompt dispatch failed during ${phase} (transport parse failure).`,
-          errorMessage,
-        ],
-        nextActions: [
-          "Retry /mario-devx:run 1.",
-          "If it repeats, restart OpenCode to refresh session RPC state.",
-        ],
-      };
-      prd = await persistBlockedTaskAttempt({ ctx, repoRoot, prd, task, attemptAt, iteration: state.iteration, gates, ui, judge, runId });
-      await logRunEvent(
+      prd = await handlePromptDispatchFailure({
         ctx,
         repoRoot,
-        "error",
-        isTimeout ? RUN_EVENT.BLOCKED_WORK_PROMPT_TIMEOUT : RUN_EVENT.BLOCKED_WORK_PROMPT_TRANSPORT,
-        isTimeout ? "Run blocked: work-session prompt dispatch timed out" : "Run blocked: work-session prompt transport failed",
-        {
-          taskId: task.id,
-          phase,
-          timeoutMs: TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS,
-          error: errorMessage,
-        },
-        { runId, taskId: task.id, reasonCode },
-      );
+        prd,
+        task,
+        attemptAt,
+        iteration: state.iteration,
+        runId,
+        phase,
+        errorMessage,
+        reasonCode,
+        timeoutMs: TIMEOUTS.PROMPT_DISPATCH_TIMEOUT_MS,
+        formatReasonCode,
+        persistBlockedTaskAttempt,
+        logRunEvent,
+      });
     };
 
     let ws: { sessionId: string; baselineMessageId: string } | null = null;
@@ -468,13 +451,20 @@ export const runEngine = async (opts: {
     let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
     const failEarly = async (reasonLines: string[], nextActions?: string[]): Promise<void> => {
-      const judge: PrdJudgeAttempt = {
-        status: "FAIL",
-        exitSignal: false,
-        reason: reasonLines,
-        nextActions: nextActions && nextActions.length > 0 ? nextActions : ["Fix the failing checks, then rerun /mario-devx:run 1."],
-      };
-      prd = await persistBlockedTaskAttempt({ ctx, repoRoot, prd, task, attemptAt, iteration: state.iteration, gates, ui, judge, runId });
+      prd = await persistTaskFailureAttempt({
+        ctx,
+        repoRoot,
+        prd,
+        task,
+        attemptAt,
+        iteration: state.iteration,
+        runId,
+        gates,
+        ui,
+        reasonLines,
+        nextActions,
+        persistBlockedTaskAttempt,
+      });
     };
 
     if (!latestGateResult.ok && stoppedForNoChanges) {
