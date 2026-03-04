@@ -10,9 +10,7 @@ import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common"
 
 type PrdLike = any;
 
-export const createNewTool = (opts: {
-  ctx: PluginContext;
-  repoRoot: string;
+export type NewToolDeps = {
   ensurePrd: (repoRoot: string) => Promise<PrdLike>;
   logToolEvent: ToolEventLogger;
   hasNonEmpty: (value: string | null | undefined) => boolean;
@@ -42,10 +40,15 @@ export const createNewTool = (opts: {
   INTERVIEW_ANSWER_PREFIX: string;
   QUALITY_GATES_STATE_KEY: string;
   STYLE_REFS_REQUIRED_QUESTION: string;
+};
+
+export const createNewTool = (opts: {
+  ctx: PluginContext;
+  repoRoot: string;
+  deps: NewToolDeps;
 }) => {
+  const { ctx, repoRoot, deps } = opts;
   const {
-    ctx,
-    repoRoot,
     ensurePrd,
     logToolEvent,
     hasNonEmpty,
@@ -75,7 +78,7 @@ export const createNewTool = (opts: {
     INTERVIEW_ANSWER_PREFIX,
     QUALITY_GATES_STATE_KEY,
     STYLE_REFS_REQUIRED_QUESTION,
-  } = opts;
+  } = deps;
 
   return {
     mario_devx_new: tool({

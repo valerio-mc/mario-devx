@@ -1159,9 +1159,7 @@ export const createTools = (ctx: PluginContext) => {
     ensurePrd,
     logToolEvent,
   });
-  const newTool = createNewTool({
-    ctx,
-    repoRoot,
+  const newToolDeps = {
     ensurePrd,
     logToolEvent,
     hasNonEmpty,
@@ -1191,6 +1189,22 @@ export const createTools = (ctx: PluginContext) => {
     INTERVIEW_ANSWER_PREFIX,
     QUALITY_GATES_STATE_KEY,
     STYLE_REFS_REQUIRED_QUESTION,
+  };
+  const runToolEngineDeps = {
+    ensurePrd,
+    formatReasonCode,
+    firstActionableJudgeReason,
+    collectCarryForwardIssues,
+    applyRepeatedFailureBackpressure,
+    resolveVerifierJudge,
+    persistBlockedTaskAttempt,
+    runShellWithFailureLog,
+    buildCapabilitySummary,
+  };
+  const newTool = createNewTool({
+    ctx,
+    repoRoot,
+    deps: newToolDeps,
   });
 
   return {
@@ -1199,18 +1213,10 @@ export const createTools = (ctx: PluginContext) => {
     ...createRunTool({
       ctx,
       repoRoot,
-      ensurePrd,
       nowIso,
-      formatReasonCode,
-      firstActionableJudgeReason,
-      collectCarryForwardIssues,
-      applyRepeatedFailureBackpressure,
-      resolveVerifierJudge,
-      persistBlockedTaskAttempt,
       showToast,
       logRunEvent,
-      runShellWithFailureLog,
-      buildCapabilitySummary,
+      engine: runToolEngineDeps,
     }),
 
     ...backlogTools,

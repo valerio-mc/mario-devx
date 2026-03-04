@@ -21,11 +21,8 @@ import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt
 import type { ToolContext } from "./tool-common";
 import type { PluginContext } from "./tool-common";
 
-export const createRunTool = (opts: {
-  ctx: PluginContext;
-  repoRoot: string;
+export type RunToolEngineDeps = {
   ensurePrd: (repoRoot: string) => Promise<PrdJson>;
-  nowIso: () => string;
   formatReasonCode: (code: string) => string;
   firstActionableJudgeReason: (judge: PrdJudgeAttempt | undefined) => string | null;
   collectCarryForwardIssues: (task: PrdTask) => string[];
@@ -81,23 +78,43 @@ export const createRunTool = (opts: {
     commands: string[];
     notes: string[];
   }) => string;
+};
+
+export const createRunTool = (opts: {
+  ctx: PluginContext;
+  repoRoot: string;
+  nowIso: () => string;
+  showToast: (ctx: PluginContext, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
+  logRunEvent: (
+    ctx: PluginContext,
+    repoRoot: string,
+    level: "info" | "warn" | "error",
+    event: string,
+    message: string,
+    extra?: Record<string, unknown>,
+    runCtx?: RunLogMeta,
+  ) => Promise<void>;
+  engine: RunToolEngineDeps;
 }) => {
   const {
     ctx,
     repoRoot,
-    ensurePrd,
     nowIso,
+    showToast,
+    logRunEvent,
+    engine,
+  } = opts;
+  const {
+    ensurePrd,
     formatReasonCode,
     firstActionableJudgeReason,
     collectCarryForwardIssues,
     applyRepeatedFailureBackpressure,
     resolveVerifierJudge,
     persistBlockedTaskAttempt,
-    showToast,
-    logRunEvent,
     runShellWithFailureLog,
     buildCapabilitySummary,
-  } = opts;
+  } = engine;
 
   return {
     mario_devx_run: tool({
