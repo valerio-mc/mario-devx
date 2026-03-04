@@ -1,3 +1,4 @@
+import path from "path";
 import type { AgentBrowserCapabilities } from "./agent-browser-capabilities";
 import type { PrdGateAttempt, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
 
@@ -9,6 +10,7 @@ const sanitizeForPrompt = (text: string): string => {
 };
 
 export const buildVerifierContextText = (opts: {
+  repoRoot: string;
   task: PrdTask;
   doneWhen: string[];
   gates: PrdGateAttempt[];
@@ -22,6 +24,7 @@ export const buildVerifierContextText = (opts: {
   uiCmd?: string;
 }): string => {
   const {
+    repoRoot,
     task,
     doneWhen,
     gates,
@@ -34,6 +37,12 @@ export const buildVerifierContextText = (opts: {
     uiUrl,
     uiCmd,
   } = opts;
+
+  const configHome = process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "~", ".config");
+  const skillPathHints = [
+    path.join(repoRoot, ".opencode", "skills", "agent-browser", "SKILL.md"),
+    path.join(configHome, "opencode", "skills", "agent-browser", "SKILL.md"),
+  ];
 
   const uiEvidenceLines = uiResult?.evidence
     ? [
@@ -67,6 +76,9 @@ export const buildVerifierContextText = (opts: {
     `- Open usage: ${caps.openUsage ?? "unknown"}`,
     `- Commands: ${caps.commands.join(", ") || "none"}`,
     ...(caps.notes.length > 0 ? [`- Notes: ${caps.notes.join("; ")}`] : []),
+    "- Skill grounding (required): read the first existing agent-browser SKILL.md path below at least once per verifier phase before interactive UI exploration.",
+    ...skillPathHints.map((p) => `  - ${p}`),
+    "- If SKILL.md is unavailable, run `agent-browser --help` and treat that as fallback command contract.",
     "",
     "Autonomous UI check policy:",
     `- UI URL: ${uiUrl}`,

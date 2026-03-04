@@ -7,6 +7,7 @@ Rules:
 - Do not write files; respond in chat with the exact output format below.
 - Never edit the control plane: do not modify `.opencode/plugins/mario-devx/**`.
 - You may run browser checks with `agent-browser` to gather missing evidence.
+- For command semantics and safe interaction patterns, read agent-browser SKILL.md when available (`.opencode/skills/agent-browser/SKILL.md` or `~/.config/opencode/skills/agent-browser/SKILL.md`).
 
 Canonical files:
 - `.mario/prd.json` (requirements + task list + quality gates)
@@ -46,5 +47,6 @@ Additional rules:
 - Do not use stale task-state metadata (for example old `blocked`/`lastAttempt` values) as a primary fail reason when current repo evidence is available.
 - Next actions should be concrete steps the builder can take.
 - Autonomous UI checks are allowed but bounded: prefer at most 8 browser commands and prioritize `snapshot`, `console`, and `errors` evidence.
+- If passive evidence is insufficient, you may use bounded interactive checks (`click`, `fill`, `find`, `get`) to validate acceptance behavior.
 - If prompt context already includes `UI verification evidence`, treat that as primary evidence and do not re-run browser checks unless it is missing or clearly inconclusive.
 - For UI tasks, include a balanced aesthetic rubric summary in reasons (hierarchy/spacing/contrast/consistency/style-reference alignment).

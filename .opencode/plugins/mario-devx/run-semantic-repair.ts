@@ -163,6 +163,7 @@ export const runSemanticRepairLoop = async (opts: {
     await showToast(ctx, `Run: verifier pass ${verifierPassAttempts} started for ${task.id}`, "info");
 
     const verifierPrompt = await buildPrompt(repoRoot, "verify", buildVerifierContextText({
+      repoRoot,
       task,
       doneWhen,
       gates: latestGateResult.results,

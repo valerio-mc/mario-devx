@@ -12,14 +12,24 @@ This playbook defines how to autonomously verify website UI with `agent-browser`
 
 Do not assume unsupported flags. If uncertain, run `agent-browser --help` first.
 
+## Skill-grounded command usage (required)
+
+- Before interactive exploration, read the first existing file from:
+  - `.opencode/skills/agent-browser/SKILL.md`
+  - `~/.config/opencode/skills/agent-browser/SKILL.md`
+- Treat that SKILL.md as command/safety reference for this verifier phase.
+- If neither path exists, fall back to `agent-browser --help`.
+
 ## Autonomous verification workflow
 
-0. If `UI verification evidence` is already present in prompt context, use it first and only run fresh browser commands when that evidence is missing or clearly inconclusive.
-1. Open the UI URL.
-2. Collect one full snapshot and at least one interactive snapshot (`snapshot -i`) when available.
-3. Validate PRD scope for the current task using concrete evidence from snapshot/text.
-4. Check console and runtime errors.
-5. Evaluate aesthetics using the balanced rubric below.
+0. Read agent-browser SKILL.md once for this verifier phase (or `agent-browser --help` fallback).
+1. If `UI verification evidence` is already present in prompt context, use it first and only run fresh browser commands when that evidence is missing or clearly inconclusive.
+2. Open the UI URL.
+3. Collect one full snapshot and at least one interactive snapshot (`snapshot -i`) when available.
+4. If needed, interact with the UI (click/fill/find/get) to validate acceptance behaviors.
+5. Validate PRD scope for the current task using concrete evidence from snapshot/text.
+6. Check console and runtime errors.
+7. Evaluate aesthetics using the balanced rubric below.
 
 ## Balanced aesthetic rubric
 
