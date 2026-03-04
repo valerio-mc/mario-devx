@@ -178,6 +178,7 @@ export const createBacklogTools = (opts: {
         }
 
         const backlogId = nextBacklogId(prd.backlog.featureRequests);
+        const backlogTaskLabel = `backlog:${backlogId}`;
         const gates = prd.verificationPolicy?.globalGates?.length
           ? prd.verificationPolicy.globalGates
           : prd.qualityGates;
@@ -189,7 +190,7 @@ export const createBacklogTools = (opts: {
           id: normalizeTaskId(n++),
           title: `Implement: ${item}`,
           doneWhen: gates,
-          labels: ["feature", "backlog"],
+          labels: ["feature", "backlog", backlogTaskLabel],
           acceptance: envelope.acceptanceCriteria?.length ? envelope.acceptanceCriteria : [item],
           ...(envelope.uxNotes ? { notes: [envelope.uxNotes] } : {}),
         }));
