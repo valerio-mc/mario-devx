@@ -113,15 +113,8 @@ const repairProduct = (existing: PrdJson) => ({
   constraints: Array.isArray(existing.product?.constraints) ? existing.product!.constraints : [],
 });
 
-const repairTasks = (existing: PrdJson) => 
-  Array.isArray(existing.tasks)
-    ? existing.tasks.map((task) => ({
-        ...task,
-        notes: Array.isArray(task.notes)
-          ? task.notes.map((note) => note.replaceAll("__tmp_next", "tmp-next").replaceAll("__tmp_vite", "tmp-vite"))
-          : task.notes,
-      }))
-    : [];
+const repairTasks = (existing: PrdJson) =>
+  Array.isArray(existing.tasks) ? existing.tasks : [];
 
 const ensurePrd = async (repoRoot: string): Promise<PrdJson> => {
   const existing = await readPrdJsonIfExists(repoRoot);
@@ -783,89 +776,53 @@ const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | undefin
   return next;
 };
 
-/**
- * Parses verifier output from the LLM.
- * 
- * ARCHITECTURE: Previously used 100+ lines of regex/state machine to parse
- * text format like "Status: PASS\nEXIT_SIGNAL: true\nReason:\n- ...".
- * 
- * Now expects structured JSON:
- * <VERIFIER_JSON>
- * {"status": "PASS|FAIL", "reason": [...], "nextActions": [...]}
- * </VERIFIER_JSON>
- * 
- * This is more reliable and eliminates complex text parsing.
- */
-const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt => {
-  // Try JSON format first
+const parseJudgeAttemptFromText = (text: string): PrdJudgeAttempt | null => {
   const jsonMatch = text.match(/<VERIFIER_JSON>([\s\S]*?)<\/VERIFIER_JSON>/i);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[1].trim());
-      if (parsed.status && (parsed.status === "PASS" || parsed.status === "FAIL")) {
-        return {
-          status: parsed.status,
-          exitSignal: parsed.status === "PASS",
-          reason: Array.isArray(parsed.reason) ? parsed.reason : [String(parsed.reason || "No reason provided")],
-          nextActions: Array.isArray(parsed.nextActions) ? parsed.nextActions : ["Fix issues and rerun /mario-devx:run 1."],
-          rawText: text,
-        };
-      }
-    } catch (err) {
-      logError("verifier", `JSON parse error: ${err instanceof Error ? err.message : String(err)}`);
-      // Fall through to text parsing
-    }
+  if (!jsonMatch) {
+    return null;
   }
-  
-  // Fallback: simple text parsing for backwards compatibility
-  const lines = text.split(/\r?\n/);
-  let status: "PASS" | "FAIL" = "FAIL";
-  let statusExplicit = false;
-  const reason: string[] = [];
-  const nextActions: string[] = [];
-  let section: "reason" | "next" = "reason";
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    
-    const statusMatch = trimmed.match(/^Status:\s*(PASS|FAIL)/i);
-    if (statusMatch) {
-      status = statusMatch[1].toUpperCase() as "PASS" | "FAIL";
-      statusExplicit = true;
-      continue;
+  try {
+    const parsed = JSON.parse(jsonMatch[1].trim()) as {
+      status?: unknown;
+      reason?: unknown;
+      nextActions?: unknown;
+    };
+    const status = parsed.status === "PASS" || parsed.status === "FAIL"
+      ? parsed.status
+      : null;
+    if (!status) {
+      return null;
     }
-    
-    if (trimmed.match(/^(Reason|Reasons):/i)) {
-      section = "reason";
-      continue;
-    }
-    if (trimmed.match(/^(Next|Next actions|Next steps):/i)) {
-      section = "next";
-      continue;
-    }
-    
-    const content = trimmed.replace(/^[-\s]+/, "").trim();
-    if (!content) continue;
-    
-    if (trimmed.startsWith("-") && section === "reason") {
-      reason.push(content);
-    } else if (trimmed.startsWith("-") && section === "next") {
-      nextActions.push(content);
-    } else if (section === "next") {
-      nextActions.push(content);
-    } else {
-      reason.push(content);
-    }
+    const reason = Array.isArray(parsed.reason)
+      ? parsed.reason.map((line) => String(line).trim()).filter(Boolean)
+      : [String(parsed.reason ?? "No reason provided").trim()].filter(Boolean);
+    const nextActions = Array.isArray(parsed.nextActions)
+      ? parsed.nextActions.map((line) => String(line).trim()).filter(Boolean)
+      : [String(parsed.nextActions ?? "Fix issues and rerun /mario-devx:run 1.").trim()].filter(Boolean);
+    return {
+      status,
+      exitSignal: status === "PASS",
+      reason: reason.length > 0 ? reason : ["No reason provided"],
+      nextActions: nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."],
+      rawText: text,
+    };
+  } catch (err) {
+    logError("verifier", `JSON parse error: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
   }
-  
-  return {
-    status,
-    exitSignal: status === "PASS",
-    reason: reason.length > 0 ? reason : [statusExplicit ? "Task completed" : "Could not parse verifier output"],
-    nextActions: nextActions.length > 0 ? nextActions : ["Fix issues and rerun /mario-devx:run 1."],
-    rawText: text,
-  };
+};
+
+const buildVerifierOutputRepairPrompt = (invalidResponse: string): string => {
+  return [
+    "Your previous verifier output was invalid.",
+    "Re-output using ONLY this exact format:",
+    "<VERIFIER_JSON>",
+    '{"status":"PASS|FAIL","reason":["<reason>"],"nextActions":["<action>"]}',
+    "</VERIFIER_JSON>",
+    "No markdown. No prose outside the XML block.",
+    "Previous invalid output:",
+    invalidResponse,
+  ].join("\n");
 };
 
 const showToast = async (
@@ -1110,7 +1067,30 @@ const resolveVerifierJudge = async (opts: {
       ...(agent ? { agent } : {}),
       capabilitySummary,
     });
-    return { judge: enforceJudgeOutputQuality(parseJudgeAttemptFromText(verifierText)) };
+    const parsedJudge = parseJudgeAttemptFromText(verifierText);
+    if (!parsedJudge) {
+      const repairedText = await promptAndResolveWithRetry({
+        ctx,
+        repoRoot,
+        promptText: buildVerifierOutputRepairPrompt(verifierText),
+        runId,
+        taskId,
+        ...(agent ? { agent } : {}),
+        capabilitySummary,
+      });
+      const repairedJudge = parseJudgeAttemptFromText(repairedText);
+      if (!repairedJudge) {
+        return {
+          transportFailure: buildVerifierTransportFailureJudge(
+            "VERIFIER_OUTPUT_INVALID_FORMAT",
+            "Verifier response did not match <VERIFIER_JSON> format after repair request.",
+          ),
+          errorMessage: "Verifier output format invalid",
+        };
+      }
+      return { judge: enforceJudgeOutputQuality(repairedJudge) };
+    }
+    return { judge: enforceJudgeOutputQuality(parsedJudge) };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
     return {

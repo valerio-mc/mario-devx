@@ -168,10 +168,7 @@ const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(
 
 const getGlobalSkillPaths = (skillName: string): string[] => {
   const base = path.join(getXdgConfigHome(), "opencode");
-  return [
-    path.join(base, "skills", skillName, "SKILL.md"),
-    path.join(base, "skill", skillName, "SKILL.md"),
-  ];
+  return [path.join(base, "skills", skillName, "SKILL.md")];
 };
 
 export const parseEnvValue = (raw: string): string => {
@@ -276,7 +273,6 @@ export const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
 
 export const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
   const localSkillPaths = [
-    path.join(repoRoot, ".opencode", "skill", "agent-browser", "SKILL.md"),
     path.join(repoRoot, ".opencode", "skills", "agent-browser", "SKILL.md"),
   ];
   for (const skillPath of localSkillPaths) {
