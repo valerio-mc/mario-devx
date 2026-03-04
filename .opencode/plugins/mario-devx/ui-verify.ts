@@ -5,7 +5,6 @@ import { copyFile, mkdir, stat } from "fs/promises";
 import { ensureDir, readTextIfExists, writeTextAtomic } from "./fs";
 import { redactForLog } from "./logging";
 import { runShellCommand } from "./shell";
-import { readUiVerifyState } from "./state";
 import { marioStateDir } from "./paths";
 
 export type LoggedShellResult = {
@@ -113,17 +112,6 @@ const runShellLogged = async (
     });
   }
   return payload;
-};
-
-const getAgentBrowserVersion = async (ctx: any, log?: UiLog): Promise<string | null> => {
-  if (!ctx.$) return null;
-  const version = await runShellLogged(ctx, "agent-browser --version", log, {
-    eventPrefix: "ui.prereq.version",
-    reasonCode: "UI_PREREQ_VERSION_CHECK_FAILED",
-  });
-  if (version.exitCode !== 0) return null;
-  const value = (version.stdout || version.stderr || "").trim();
-  return value.length > 0 ? value : null;
 };
 
 const waitForUrlReady = async (url: string, timeoutMs: number): Promise<boolean> => {
@@ -359,12 +347,11 @@ const startAgentBrowserPrereqInstallJob = async (opts: {
   });
 
   const workerScript = String.raw`
-const { spawn, execSync } = require("child_process");
+const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
 const statePath = process.env.MARIO_UI_PREREQ_STATE_PATH;
-const runStatePath = process.env.MARIO_UI_VERIFY_STATE_PATH;
 const repoRoot = process.env.MARIO_UI_PREREQ_REPO_ROOT || process.cwd();
 const needsCli = process.env.MARIO_UI_NEEDS_CLI === "1";
 const needsBrowserRuntime = process.env.MARIO_UI_NEEDS_BROWSER === "1";
@@ -392,20 +379,6 @@ const updateJob = (patch) => {
     ...patch,
     updatedAt: nowIso(),
   });
-};
-
-const patchUiVerifyState = (patch) => {
-  if (!runStatePath) return;
-  const current = readJson(runStatePath);
-  const next = {
-    ...current,
-    version: 1,
-    uiVerify: {
-      ...((current && current.uiVerify) || {}),
-      ...patch,
-    },
-  };
-  writeJson(runStatePath, next);
 };
 
 const runCommand = (command) => {
@@ -440,14 +413,8 @@ const fail = (summary) => {
       "CI=1 npm_config_yes=true npx --yes playwright install",
       "CI=1 npm_config_yes=true agent-browser install",
     ];
-    let lastCommand = browserInstallCommands[0];
     let installed = false;
     for (const command of browserInstallCommands) {
-      lastCommand = command;
-      patchUiVerifyState({
-        lastInstallAttemptAt: nowIso(),
-        lastInstallCommand: command,
-      });
       const code = await runCommand(command);
       if (code === 0) {
         installed = true;
@@ -455,33 +422,9 @@ const fail = (summary) => {
       }
     }
     if (!installed) {
-      patchUiVerifyState({
-        lastInstallExitCode: 1,
-        lastInstallReasonCode: "UI_PREREQ_BROWSER_INSTALL_FAILED",
-        lastInstallNote: "Failed to install browser runtime prerequisites.",
-      });
       fail("browser runtime install failed");
       return;
     }
-
-    let version = "";
-    try {
-      version = execSync("agent-browser --version", {
-        cwd: repoRoot,
-        stdio: ["ignore", "pipe", "pipe"],
-      }).toString().trim();
-    } catch {
-      version = "";
-    }
-
-    patchUiVerifyState({
-      ...(version ? { agentBrowserVersion: version } : {}),
-      lastInstallAttemptAt: nowIso(),
-      lastInstallExitCode: 0,
-      lastInstallReasonCode: "",
-      lastInstallNote: "",
-      browserInstallOkAt: nowIso(),
-    });
   }
 
   if (needsSkill) {
@@ -510,7 +453,6 @@ const fail = (summary) => {
       env: {
         ...process.env,
         MARIO_UI_PREREQ_STATE_PATH: statePath,
-        MARIO_UI_VERIFY_STATE_PATH: path.join(marioStateDir(repoRoot), "state.json"),
         MARIO_UI_PREREQ_REPO_ROOT: repoRoot,
         MARIO_UI_NEEDS_CLI: needsCli ? "1" : "0",
         MARIO_UI_NEEDS_BROWSER: needsBrowserRuntime ? "1" : "0",
@@ -575,15 +517,10 @@ export const ensureAgentBrowserPrereqs = async (
 
   const cliOk = await hasAgentBrowserCli(ctx);
   const skillOk = await hasAgentBrowserSkill(repoRoot);
-  const version = cliOk ? await getAgentBrowserVersion(ctx, log) : null;
-  const cached = await readUiVerifyState(repoRoot);
-  const browserOk = Boolean(
-    cliOk
-    && version
-    && cached.lastInstallExitCode === 0
-    && cached.browserInstallOkAt
-    && cached.agentBrowserVersion === version,
-  );
+  const runtime = cliOk
+    ? await hasAgentBrowserRuntime(ctx)
+    : { ok: false as const, note: "agent-browser CLI is not installed." };
+  const browserOk = runtime.ok;
 
   const allReady = cliOk && skillOk && browserOk;
   if (allReady) {
@@ -603,6 +540,16 @@ export const ensureAgentBrowserPrereqs = async (
       attempted,
       installing: false,
     };
+  }
+
+  if (priorJob?.status === "ok" && !browserOk) {
+    await writeAgentBrowserPrereqJob(repoRoot, {
+      ...priorJob,
+      status: "failed",
+      pid: null,
+      updatedAt: new Date().toISOString(),
+      lastErrorSummary: runtime.note || "Browser runtime probe failed after install completed.",
+    });
   }
 
   if (priorJob?.status === "installing" && isPidAlive(priorJob.pid)) {
@@ -699,7 +646,9 @@ export const ensureAgentBrowserPrereqs = async (
       browserOk,
       attempted,
       installing: false,
-      note: `Failed to start background installer: ${detail}`,
+      note: runtime.note
+        ? `Failed to start background installer: ${detail}. Runtime detail: ${runtime.note}`
+        : `Failed to start background installer: ${detail}`,
     };
   }
 };
