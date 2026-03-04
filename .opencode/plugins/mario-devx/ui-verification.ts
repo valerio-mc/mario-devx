@@ -59,6 +59,11 @@ const waitForAnyUrlReady = async (urls: string[], timeoutMs: number): Promise<st
   return null;
 };
 
+const isConnectionRefusedOutput = (stderr: string, stdout: string): boolean => {
+  const text = `${stderr}\n${stdout}`.toLowerCase();
+  return text.includes("err_connection_refused") || text.includes("connection refused");
+};
+
 const startDevServer = (command: string): { pid: number | null; stop: () => Promise<void> } => {
   const isWindows = process.platform === "win32";
   const child = spawn("sh", ["-c", command], {
@@ -104,13 +109,6 @@ export const runUiVerification = async (opts: {
 
   const effectiveWait = Number.isFinite(waitMs) ? Math.max(5000, Number(waitMs)) : 60000;
   const urlCandidates = buildUrlCandidates(url);
-  const preferredOpenUrl = urlCandidates.find((candidate) => {
-    try {
-      return new URL(candidate).hostname === "127.0.0.1";
-    } catch {
-      return false;
-    }
-  }) ?? urlCandidates[0];
   await log?.({
     level: "info",
     event: "ui.verify.start",
@@ -152,8 +150,7 @@ export const runUiVerification = async (opts: {
   const screenshotAbs = path.join(evidenceDirAbs, "screenshot.png");
   const screenshotRel = path.relative(repoRoot, screenshotAbs).replace(/\\/g, "/");
 
-  const steps: Array<{ name: "open" | "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
-    { name: "open", command: `agent-browser open ${JSON.stringify(preferredOpenUrl)}` },
+  const steps: Array<{ name: "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
     { name: "snapshot", command: "agent-browser snapshot" },
     { name: "snapshot-interactive", command: "agent-browser snapshot -i", optional: true },
     { name: "screenshot", command: `agent-browser screenshot ${JSON.stringify(screenshotAbs)}`, optional: true },
@@ -165,6 +162,7 @@ export const runUiVerification = async (opts: {
 
   const initialReady = await waitForAnyUrlReady(urlCandidates, 1500);
   let server: { pid: number | null; stop: () => Promise<void> } | null = null;
+  let readyUrl: string | null = initialReady;
   if (!initialReady) {
     server = startDevServer(devCmd);
     await log?.({
@@ -173,8 +171,8 @@ export const runUiVerification = async (opts: {
       message: "Started UI dev server for verification",
       extra: { devCmd, pid: server.pid },
     });
-    const ready = await waitForAnyUrlReady(urlCandidates, effectiveWait);
-    if (!ready) {
+    readyUrl = await waitForAnyUrlReady(urlCandidates, effectiveWait);
+    if (!readyUrl) {
       await log?.({
         level: "error",
         event: "ui.verify.server.timeout",
@@ -188,6 +186,63 @@ export const runUiVerification = async (opts: {
   }
 
   try {
+    const openCandidates = [readyUrl ?? urlCandidates[0], ...urlCandidates].filter((candidate, index, all) => {
+      return Boolean(candidate) && all.indexOf(candidate) === index;
+    });
+    let opened = false;
+    let lastOpenResult: { exitCode: number; stdout: string; stderr: string } | null = null;
+    for (const openUrl of openCandidates) {
+      const openResult = await runShellLogged(ctx, `agent-browser open ${JSON.stringify(openUrl)}`, log, {
+        eventPrefix: "ui.verify.open",
+        reasonCode: "UI_VERIFY_STEP_FAILED",
+      });
+      if (openResult.exitCode === 0) {
+        opened = true;
+        break;
+      }
+      lastOpenResult = openResult;
+      if (!isConnectionRefusedOutput(openResult.stderr, openResult.stdout)) {
+        break;
+      }
+      await log?.({
+        level: "warn",
+        event: "ui.verify.open.retry",
+        message: "UI verify open failed with connection refused; trying next URL candidate",
+        extra: {
+          attemptedUrl: openUrl,
+          exitCode: openResult.exitCode,
+          stderr: summarize(openResult.stderr),
+          stdout: summarize(openResult.stdout),
+        },
+      });
+    }
+    if (!opened) {
+      const openFailure = lastOpenResult ?? { exitCode: 1, stdout: "", stderr: "Unknown open failure" };
+      const stderr = summarize(openFailure.stderr);
+      const stdout = summarize(openFailure.stdout);
+      const details = [
+        `agent-browser open failed (exit ${openFailure.exitCode}).`,
+        stderr ? `stderr: ${stderr}` : "",
+        stdout ? `stdout: ${stdout}` : "",
+      ]
+        .filter((x) => x)
+        .join(" ");
+      await log?.({
+        level: "error",
+        event: "ui.verify.open.failed-note",
+        message: "UI verification step failed with actionable output",
+        reasonCode: "UI_VERIFY_STEP_FAILED",
+        extra: {
+          step: "open",
+          exitCode: openFailure.exitCode,
+          stderr: openFailure.stderr,
+          stdout: openFailure.stdout,
+          urlCandidates: openCandidates,
+        },
+      });
+      return { ok: false, note: details };
+    }
+
     for (const step of steps) {
       if (step.name === "screenshot") {
         try {
