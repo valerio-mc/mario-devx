@@ -1,7 +1,7 @@
 import path from "path";
 import type { PrdJson } from "./prd";
 import { readTextIfExists, writeTextAtomic } from "./fs";
-import { hasAgentsKey, parseAgentsEnv, upsertAgentsKey } from "./ui-verify";
+import { hasAgentsKey, parseAgentsEnv, upsertAgentsKey } from "./agents-env";
 import type { RunReasonCode } from "./run-contracts";
 import { RUN_REASON } from "./run-contracts";
 

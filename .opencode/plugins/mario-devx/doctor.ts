@@ -7,7 +7,8 @@ import { redactForLog } from "./logging";
 import { readPrdJsonIfExists } from "./prd";
 import { readRunState, readUiVerifyState } from "./state";
 import { runLockPath } from "./run-lock";
-import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp, parseAgentsEnv } from "./ui-verify";
+import { parseAgentsEnv } from "./agents-env";
+import { hasAgentBrowserCli, hasAgentBrowserRuntime, hasAgentBrowserSkill, isLikelyWebApp } from "./ui-verify";
 
 const parseIsoMs = (value: unknown): number | null => {
   if (typeof value !== "string" || value.trim().length === 0) return null;

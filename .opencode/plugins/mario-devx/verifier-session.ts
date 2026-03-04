@@ -3,7 +3,7 @@ import path from "path";
 import { assetsDir } from "./paths";
 import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
-import { unwrapSdkData } from "./opencode-sdk";
+import { readSessionMessages } from "./session-messages";
 import { forgetSessionIdle, getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
 import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
 
@@ -120,22 +120,6 @@ export const runVerifierTurn = async (opts: {
     return /unexpected eof|unexpected end of json input|json parse error|empty response/i.test(message);
   };
 
-  const readMessages = async (): Promise<Array<{ info?: { role?: string; id?: string }; parts?: Array<{ text?: string }> }>> => {
-    try {
-      const byId = await ctx.client.session.messages({ path: { id: sessionId } });
-      const unwrapped = unwrapSdkData<Array<{ info?: { role?: string; id?: string }; parts?: Array<{ text?: string }> }>>(byId);
-      return Array.isArray(unwrapped) ? unwrapped : [];
-    } catch {
-      try {
-        const bySessionID = await ctx.client.session.messages({ path: { sessionID: sessionId } });
-        const unwrapped = unwrapSdkData<Array<{ info?: { role?: string; id?: string }; parts?: Array<{ text?: string }> }>>(bySessionID);
-        return Array.isArray(unwrapped) ? unwrapped : [];
-      } catch {
-        return [];
-      }
-    }
-  };
-
   const textFromParts = (parts: Array<{ text?: string }> | undefined): string => {
     const safeParts = Array.isArray(parts) ? parts : [];
     return safeParts
@@ -148,7 +132,7 @@ export const runVerifierTurn = async (opts: {
   const waitForLatestAssistantText = async (baselineAssistantCount: number): Promise<string> => {
     let afterSequence = getSessionIdleSequence(sessionId);
     while (true) {
-      const messages = await readMessages();
+      const messages = await readSessionMessages(ctx, sessionId);
       const assistants = messages.filter((entry) => entry.info?.role === "assistant");
       if (assistants.length > baselineAssistantCount) {
         const latest = assistants[assistants.length - 1];
@@ -179,7 +163,7 @@ export const runVerifierTurn = async (opts: {
       throw error;
     }
 
-    const baselineMessages = await readMessages();
+    const baselineMessages = await readSessionMessages(ctx, sessionId);
     const baselineAssistantCount = baselineMessages.filter((entry) => entry.info?.role === "assistant").length;
     await ctx.client.session.promptAsync({
       path: { id: sessionId },

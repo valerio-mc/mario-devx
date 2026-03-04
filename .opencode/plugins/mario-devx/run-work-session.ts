@@ -1,29 +1,9 @@
 import { RUN_REASON } from "./run-contracts";
 import { TIMEOUTS } from "./config";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
-import { unwrapSdkData } from "./opencode-sdk";
+import { countAssistantMessages } from "./session-messages";
 
 export type WorkSessionInfo = { sessionId: string; baselineMessageId: string };
-
-const readAssistantCount = async (ctx: any, sessionId: string): Promise<number> => {
-  const readMessages = async (): Promise<Array<{ info?: { role?: string } }>> => {
-    try {
-      const byId = await ctx.client.session.messages({ path: { id: sessionId } });
-      const unwrapped = unwrapSdkData<Array<{ info?: { role?: string } }>>(byId);
-      return Array.isArray(unwrapped) ? unwrapped : [];
-    } catch {
-      try {
-        const bySessionID = await ctx.client.session.messages({ path: { sessionID: sessionId } });
-        const unwrapped = unwrapSdkData<Array<{ info?: { role?: string } }>>(bySessionID);
-        return Array.isArray(unwrapped) ? unwrapped : [];
-      } catch {
-        return [];
-      }
-    }
-  };
-  const messages = await readMessages();
-  return messages.reduce((count, entry) => (entry?.info?.role === "assistant" ? count + 1 : count), 0);
-};
 
 export const resetWorkSessionWithTimeout = async (opts: {
   ctx: any;
@@ -202,7 +182,7 @@ export const promptWorkSessionWithTimeout = async (opts: {
           return { ok: false };
         }
         const idleSequenceBeforePrompt = getIdleSequence(ws.sessionId);
-        const baselineAssistantCount = await readAssistantCount(ctx, ws.sessionId);
+        const baselineAssistantCount = await countAssistantMessages(ctx, ws.sessionId);
         await logRunEvent(ctx, repoRoot, "info", "run.work.prompt.send", "Dispatching work prompt", {
           taskId,
           phase,
