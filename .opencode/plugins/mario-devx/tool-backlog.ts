@@ -422,7 +422,13 @@ export const createBacklogTools = (opts: {
         }
 
         const replannedIds = new Set(candidatesToReplan.map((f) => f.id));
+        const replannedTaskIds = new Set(
+          candidatesToReplan.flatMap((f) => (Array.isArray(f.taskIds) ? f.taskIds : [])).filter((id) => typeof id === "string" && id.trim().length > 0),
+        );
         const keptTasks = (prd.tasks ?? []).filter((task) => {
+          if (replannedTaskIds.has(task.id)) {
+            return task.status === "in_progress" || task.status === "completed";
+          }
           const labels = task.labels ?? [];
           const relatedFeatureId = Array.from(replannedIds).find((id) => labels.includes(backlogLabel(id)));
           if (!relatedFeatureId) return true;
