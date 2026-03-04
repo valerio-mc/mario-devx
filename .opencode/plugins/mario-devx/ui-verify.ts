@@ -178,8 +178,12 @@ const startDevServer = (command: string): { pid: number | null; stop: () => Prom
 
 const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config");
 
-const getGlobalSkillPath = (skillName: string): string => {
-  return path.join(getXdgConfigHome(), "opencode", "skill", skillName, "SKILL.md");
+const getGlobalSkillPaths = (skillName: string): string[] => {
+  const base = path.join(getXdgConfigHome(), "opencode");
+  return [
+    path.join(base, "skills", skillName, "SKILL.md"),
+    path.join(base, "skill", skillName, "SKILL.md"),
+  ];
 };
 
 export const parseEnvValue = (raw: string): string => {
@@ -283,10 +287,20 @@ export const isLikelyWebApp = async (repoRoot: string): Promise<boolean> => {
 };
 
 export const hasAgentBrowserSkill = async (repoRoot: string): Promise<boolean> => {
-  const localSkill = await readTextIfExists(path.join(repoRoot, ".opencode", "skill", "agent-browser", "SKILL.md"));
-  if (localSkill) return true;
-  const globalSkill = await readTextIfExists(getGlobalSkillPath("agent-browser"));
-  return !!globalSkill;
+  const localSkillPaths = [
+    path.join(repoRoot, ".opencode", "skill", "agent-browser", "SKILL.md"),
+    path.join(repoRoot, ".opencode", "skills", "agent-browser", "SKILL.md"),
+  ];
+  for (const skillPath of localSkillPaths) {
+    const localSkill = await readTextIfExists(skillPath);
+    if (localSkill) return true;
+  }
+  const globalPaths = getGlobalSkillPaths("agent-browser");
+  for (const skillPath of globalPaths) {
+    const globalSkill = await readTextIfExists(skillPath);
+    if (globalSkill) return true;
+  }
+  return false;
 };
 
 export const hasAgentBrowserCli = async (ctx: any): Promise<boolean> => {
