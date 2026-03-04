@@ -25,6 +25,40 @@ const waitForUrlReady = async (url: string, timeoutMs: number): Promise<boolean>
   return false;
 };
 
+const buildUrlCandidates = (url: string): string[] => {
+  const candidates: string[] = [];
+  const push = (value: string) => {
+    if (!candidates.includes(value)) {
+      candidates.push(value);
+    }
+  };
+  push(url);
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "localhost") {
+      const ipv4 = new URL(url);
+      ipv4.hostname = "127.0.0.1";
+      push(ipv4.toString());
+    } else if (parsed.hostname === "127.0.0.1") {
+      const local = new URL(url);
+      local.hostname = "localhost";
+      push(local.toString());
+    }
+  } catch {
+    // Ignore invalid URLs and keep the original value.
+  }
+  return candidates;
+};
+
+const waitForAnyUrlReady = async (urls: string[], timeoutMs: number): Promise<string | null> => {
+  for (const candidate of urls) {
+    if (await waitForUrlReady(candidate, timeoutMs)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
 const startDevServer = (command: string): { pid: number | null; stop: () => Promise<void> } => {
   const isWindows = process.platform === "win32";
   const child = spawn("sh", ["-c", command], {
@@ -69,11 +103,19 @@ export const runUiVerification = async (opts: {
   }
 
   const effectiveWait = Number.isFinite(waitMs) ? Math.max(5000, Number(waitMs)) : 60000;
+  const urlCandidates = buildUrlCandidates(url);
+  const preferredOpenUrl = urlCandidates.find((candidate) => {
+    try {
+      return new URL(candidate).hostname === "127.0.0.1";
+    } catch {
+      return false;
+    }
+  }) ?? urlCandidates[0];
   await log?.({
     level: "info",
     event: "ui.verify.start",
     message: "UI verification started",
-    extra: { devCmd, url, waitMs: effectiveWait },
+    extra: { devCmd, url, waitMs: effectiveWait, urlCandidates },
   });
 
   const summarize = (value: string): string => {
@@ -111,7 +153,7 @@ export const runUiVerification = async (opts: {
   const screenshotRel = path.relative(repoRoot, screenshotAbs).replace(/\\/g, "/");
 
   const steps: Array<{ name: "open" | "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
-    { name: "open", command: `agent-browser open ${JSON.stringify(url)}` },
+    { name: "open", command: `agent-browser open ${JSON.stringify(preferredOpenUrl)}` },
     { name: "snapshot", command: "agent-browser snapshot" },
     { name: "snapshot-interactive", command: "agent-browser snapshot -i", optional: true },
     { name: "screenshot", command: `agent-browser screenshot ${JSON.stringify(screenshotAbs)}`, optional: true },
@@ -121,7 +163,7 @@ export const runUiVerification = async (opts: {
 
   const evidence: UiVerificationEvidence = {};
 
-  const initialReady = await waitForUrlReady(url, 1500);
+  const initialReady = await waitForAnyUrlReady(urlCandidates, 1500);
   let server: { pid: number | null; stop: () => Promise<void> } | null = null;
   if (!initialReady) {
     server = startDevServer(devCmd);
@@ -131,14 +173,14 @@ export const runUiVerification = async (opts: {
       message: "Started UI dev server for verification",
       extra: { devCmd, pid: server.pid },
     });
-    const ready = await waitForUrlReady(url, effectiveWait);
+    const ready = await waitForAnyUrlReady(urlCandidates, effectiveWait);
     if (!ready) {
       await log?.({
         level: "error",
         event: "ui.verify.server.timeout",
         message: "UI dev server did not become ready before timeout",
         reasonCode: "UI_VERIFY_SERVER_TIMEOUT",
-        extra: { devCmd, url, waitMs: effectiveWait, pid: server.pid },
+        extra: { devCmd, url, urlCandidates, waitMs: effectiveWait, pid: server.pid },
       });
       await server.stop();
       return { ok: false, note: `UI dev server did not become ready within ${effectiveWait}ms for ${url}.` };
