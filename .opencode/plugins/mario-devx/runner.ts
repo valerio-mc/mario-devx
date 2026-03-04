@@ -6,14 +6,6 @@ import { countAssistantMessages } from "./session-messages";
 
 const nowIso = (): string => new Date().toISOString();
 
-export type SessionIdleWaitResult = {
-  ok: boolean;
-  reason: "idle" | "aborted" | "timeout";
-  unknownChecks: number;
-  activeChecks: number;
-  idleSequence: number;
-};
-
 const DEFAULT_IDLE_WAIT_TIMEOUT_MS = 60_000;
 const DEFAULT_ASSISTANT_PROGRESS_POLL_MS = 2000;
 const DEFAULT_ASSISTANT_QUIET_WINDOW_MS = 7000;
@@ -21,56 +13,22 @@ const DEFAULT_ASSISTANT_QUIET_WINDOW_MS = 7000;
 export const waitForSessionIdle = async (
   _ctx: any,
   sessionId: string,
-  _timeoutMs: number,
+  timeoutMs: number,
   opts?: {
     afterSequence?: number;
     abortSignal?: AbortSignal;
   },
 ): Promise<boolean> => {
-  const result = await waitForSessionIdleStableDetailed(_ctx, sessionId, _timeoutMs, 1, opts);
-  return result.ok;
-};
-
-export const waitForSessionIdleStable = async (
-  _ctx: any,
-  sessionId: string,
-  _timeoutMs: number,
-  consecutiveIdleChecks = 1,
-  opts?: {
-    afterSequence?: number;
-    abortSignal?: AbortSignal;
-  },
-): Promise<boolean> => {
-  const result = await waitForSessionIdleStableDetailed(_ctx, sessionId, _timeoutMs, consecutiveIdleChecks, opts);
-  return result.ok;
-};
-
-export const waitForSessionIdleStableDetailed = async (
-  _ctx: any,
-  sessionId: string,
-  _timeoutMs: number,
-  _consecutiveIdleChecks = 1,
-  opts?: {
-    afterSequence?: number;
-    abortSignal?: AbortSignal;
-  },
-): Promise<SessionIdleWaitResult> => {
   const afterSequence = Number.isFinite(opts?.afterSequence)
     ? Number(opts?.afterSequence)
     : getSessionIdleSequence(sessionId);
   const idleResult = await waitForSessionIdleSignal({
     sessionId,
     afterSequence,
-    timeoutMs: _timeoutMs > 0 ? _timeoutMs : DEFAULT_IDLE_WAIT_TIMEOUT_MS,
+    timeoutMs: timeoutMs > 0 ? timeoutMs : DEFAULT_IDLE_WAIT_TIMEOUT_MS,
     ...(opts?.abortSignal ? { signal: opts.abortSignal } : {}),
   });
-  return {
-    ok: idleResult.ok,
-    reason: idleResult.reason,
-    unknownChecks: 0,
-    activeChecks: 0,
-    idleSequence: idleResult.sequence,
-  };
+  return idleResult.ok;
 };
 
 export type SessionProgressWaitResult = {
