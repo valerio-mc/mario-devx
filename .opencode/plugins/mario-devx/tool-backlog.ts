@@ -389,25 +389,53 @@ export const createBacklogTools = (opts: {
 
         if (replanMatch) {
           try {
-            const parsed = JSON.parse(replanMatch[1].trim());
+            const parsed = JSON.parse(replanMatch[1].trim()) as { breakdowns?: unknown };
+            const rawBreakdowns = Array.isArray(parsed.breakdowns) ? parsed.breakdowns : [];
 
-            for (const breakdown of parsed.breakdowns || []) {
-              const backlogItem = candidatesToReplan.find((f) => f.id === breakdown.backlogId);
+            for (const breakdown of rawBreakdowns) {
+              if (!breakdown || typeof breakdown !== "object") continue;
+              const breakdownPayload = breakdown as { backlogId?: unknown; tasks?: unknown };
+              const backlogId = normalizeScalarText(breakdownPayload.backlogId);
+              if (!backlogId) continue;
+              const backlogItem = candidatesToReplan.find((f) => f.id === backlogId);
               if (!backlogItem) continue;
 
-              const tasks = (breakdown.tasks || []).map((t: any) => makeTask({
-                id: normalizeTaskId(n++),
-                title: t.title,
-                doneWhen: t.doneWhen || gates,
-                labels: [...new Set([...(t.labels || ["feature", "backlog"]), backlogLabel(backlogItem.id)])],
-                acceptance: t.acceptance || [t.title],
-                dependsOn: t.dependsOn,
-              }));
+              const rawTasks = Array.isArray(breakdownPayload.tasks) ? breakdownPayload.tasks : [];
+              const tasks = rawTasks
+                .map((rawTask): PrdTask | null => {
+                  if (!rawTask || typeof rawTask !== "object") return null;
+                  const taskPayload = rawTask as {
+                    title?: unknown;
+                    labels?: unknown;
+                    doneWhen?: unknown;
+                    dependsOn?: unknown;
+                    acceptance?: unknown;
+                  };
+                  const title = normalizeScalarText(taskPayload.title);
+                  if (!title) return null;
+                  const doneWhen = normalizeStringList(taskPayload.doneWhen, 8);
+                  const labels = normalizeStringList(taskPayload.labels, 8);
+                  const dependsOn = normalizeStringList(taskPayload.dependsOn, 12);
+                  const acceptance = normalizeStringList(taskPayload.acceptance, 12);
+                  return makeTask({
+                    id: normalizeTaskId(n++),
+                    title,
+                    doneWhen: doneWhen.length > 0 ? doneWhen : gates,
+                    labels: [...new Set([...(labels.length > 0 ? labels : ["feature", "backlog"]), backlogLabel(backlogItem.id)])],
+                    acceptance: acceptance.length > 0 ? acceptance : [title],
+                    ...(dependsOn.length > 0 ? { dependsOn } : {}),
+                  });
+                })
+                .filter((task): task is PrdTask => Boolean(task));
+
+              if (tasks.length === 0) {
+                continue;
+              }
 
               generated.push(...tasks);
 
               updatedBacklog = updatedBacklog.map((f) =>
-                f.id === breakdown.backlogId
+                f.id === backlogId
                   ? { ...f, status: "planned" as const, taskIds: tasks.map((t: PrdTask) => t.id) }
                   : f,
               );
@@ -415,7 +443,7 @@ export const createBacklogTools = (opts: {
 
             await logToolEvent(ctx, repoRoot, "info", "replan.llm.complete", "LLM generated replanned tasks", {
               generated: generated.length,
-              breakdowns: parsed.breakdowns?.length || 0,
+              breakdowns: rawBreakdowns.length,
             });
           } catch (err) {
             await logToolEvent(ctx, repoRoot, "error", "replan.parse.invalid-json", "Failed to parse REPLAN_JSON", {
