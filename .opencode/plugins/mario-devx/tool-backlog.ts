@@ -126,6 +126,13 @@ export const createBacklogTools = (opts: {
                 ...clarificationAnswers.map((a, i) => `${i + 1}. ${a}`),
               ]
             : []),
+          ...(pendingAddInterview?.lastQuestion
+            ? [
+                "",
+                "Last follow-up question asked:",
+                pendingAddInterview.lastQuestion,
+              ]
+            : []),
           "",
           "Quality gates for this project:",
           JSON.stringify(prd.qualityGates ?? []),
@@ -195,7 +202,6 @@ export const createBacklogTools = (opts: {
           return [
             "Feature interview",
             envelope.next_question || "Please provide more detail about this feature.",
-            "Reply with your answer in natural language.",
           ].join("\n");
         }
 
