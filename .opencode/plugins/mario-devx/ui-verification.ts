@@ -1,5 +1,6 @@
 import path from "path";
 import { spawn } from "child_process";
+import { closeSync, openSync } from "fs";
 import { copyFile, mkdir, stat } from "fs/promises";
 import { runShellLogged } from "./ui-shell";
 import type { UiLog, UiVerificationEvidence, UiVerificationResult } from "./ui-types";
@@ -64,17 +65,61 @@ const isConnectionRefusedOutput = (stderr: string, stdout: string): boolean => {
   return text.includes("err_connection_refused") || text.includes("connection refused");
 };
 
-const startDevServer = (command: string): { pid: number | null; stop: () => Promise<void> } => {
+const startDevServer = (opts: {
+  command: string;
+  cwd: string;
+  logPath: string;
+}): {
+  pid: number | null;
+  stop: () => Promise<void>;
+  waitForEarlyExit: (timeoutMs: number) => Promise<{ exited: boolean; exitCode: number | null; signal: string | null }>;
+} => {
+  const { command, cwd, logPath } = opts;
   const isWindows = process.platform === "win32";
+  const logFd = openSync(logPath, "a");
   const child = spawn("sh", ["-c", command], {
-    stdio: "ignore",
+    cwd,
+    stdio: ["ignore", logFd, logFd],
     env: { ...process.env, CI: "1", npm_config_yes: "true" },
     detached: !isWindows,
   });
+  closeSync(logFd);
   if (!isWindows) {
     child.unref();
   }
   const pid = child.pid ?? null;
+
+  const waitForEarlyExit = async (timeoutMs: number): Promise<{ exited: boolean; exitCode: number | null; signal: string | null }> => {
+    if (child.exitCode !== null) {
+      return {
+        exited: true,
+        exitCode: child.exitCode,
+        signal: child.signalCode ?? null,
+      };
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: { exited: boolean; exitCode: number | null; signal: string | null }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        child.off("exit", onExit);
+        resolve(result);
+      };
+      const onExit = (code: number | null, signal: string | null) => {
+        finish({
+          exited: true,
+          exitCode: typeof code === "number" ? code : null,
+          signal: signal ?? null,
+        });
+      };
+      const timer = setTimeout(() => {
+        finish({ exited: false, exitCode: null, signal: null });
+      }, Math.max(0, timeoutMs));
+      child.once("exit", onExit);
+    });
+  };
+
   const stop = async (): Promise<void> => {
     if (!pid) return;
     const targetPid = isWindows ? pid : -pid;
@@ -90,7 +135,7 @@ const startDevServer = (command: string): { pid: number | null; stop: () => Prom
       // already closed
     }
   };
-  return { pid, stop };
+  return { pid, stop, waitForEarlyExit };
 };
 
 export const runUiVerification = async (opts: {
@@ -149,6 +194,8 @@ export const runUiVerification = async (opts: {
   const evidenceDirAbs = path.join(repoRoot, ".mario", "state", "ui-evidence", taskId);
   const screenshotAbs = path.join(evidenceDirAbs, "screenshot.png");
   const screenshotRel = path.relative(repoRoot, screenshotAbs).replace(/\\/g, "/");
+  const devServerLogAbs = path.join(evidenceDirAbs, "dev-server.log");
+  const devServerLogRel = path.relative(repoRoot, devServerLogAbs).replace(/\\/g, "/");
 
   const steps: Array<{ name: "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
     { name: "snapshot", command: "agent-browser snapshot" },
@@ -161,16 +208,44 @@ export const runUiVerification = async (opts: {
   const evidence: UiVerificationEvidence = {};
 
   const initialReady = await waitForAnyUrlReady(urlCandidates, 1500);
-  let server: { pid: number | null; stop: () => Promise<void> } | null = null;
+  let server: {
+    pid: number | null;
+    stop: () => Promise<void>;
+    waitForEarlyExit: (timeoutMs: number) => Promise<{ exited: boolean; exitCode: number | null; signal: string | null }>;
+  } | null = null;
   let readyUrl: string | null = initialReady;
   if (!initialReady) {
-    server = startDevServer(devCmd);
+    await mkdir(evidenceDirAbs, { recursive: true });
+    server = startDevServer({ command: devCmd, cwd: repoRoot, logPath: devServerLogAbs });
     await log?.({
       level: "info",
       event: "ui.verify.server.start",
       message: "Started UI dev server for verification",
-      extra: { devCmd, pid: server.pid },
+      extra: { devCmd, cwd: repoRoot, pid: server.pid, logPath: devServerLogRel },
     });
+
+    const earlyExit = await server.waitForEarlyExit(1200);
+    if (earlyExit.exited) {
+      await log?.({
+        level: "error",
+        event: "ui.verify.server.exit-early",
+        message: "UI dev server exited before readiness checks completed",
+        reasonCode: "UI_VERIFY_SERVER_START_FAILED",
+        extra: {
+          devCmd,
+          cwd: repoRoot,
+          pid: server.pid,
+          exitCode: earlyExit.exitCode,
+          signal: earlyExit.signal,
+          logPath: devServerLogRel,
+        },
+      });
+      return {
+        ok: false,
+        note: `UI dev server exited early (exit ${earlyExit.exitCode ?? "unknown"}). See ${devServerLogRel}.`,
+      };
+    }
+
     readyUrl = await waitForAnyUrlReady(urlCandidates, effectiveWait);
     if (!readyUrl) {
       await log?.({
@@ -178,10 +253,13 @@ export const runUiVerification = async (opts: {
         event: "ui.verify.server.timeout",
         message: "UI dev server did not become ready before timeout",
         reasonCode: "UI_VERIFY_SERVER_TIMEOUT",
-        extra: { devCmd, url, urlCandidates, waitMs: effectiveWait, pid: server.pid },
+        extra: { devCmd, cwd: repoRoot, url, urlCandidates, waitMs: effectiveWait, pid: server.pid, logPath: devServerLogRel },
       });
       await server.stop();
-      return { ok: false, note: `UI dev server did not become ready within ${effectiveWait}ms for ${url}.` };
+      return {
+        ok: false,
+        note: `UI dev server did not become ready within ${effectiveWait}ms for ${url}. See ${devServerLogRel}.`,
+      };
     }
   }
 
