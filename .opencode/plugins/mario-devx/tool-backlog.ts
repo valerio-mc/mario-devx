@@ -516,7 +516,8 @@ export const createBacklogTools = (opts: {
 
           return [
             "Replan complete.",
-            `Backlog items replanned: ${replanCandidates.length}`,
+            `Backlog items replanned: ${candidatesToReplan.length}`,
+            `Backlog items skipped (locked): ${replanCandidates.length - candidatesToReplan.length}`,
             `New tasks: ${generated.length}`,
             "Next: /mario-devx:run 1",
           ].join("\n");
