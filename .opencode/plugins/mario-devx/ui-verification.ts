@@ -385,6 +385,19 @@ export const runUiVerification = async (opts: {
   const screenshotRel = path.relative(repoRoot, screenshotAbs).replace(/\\/g, "/");
   const devServerLogAbs = path.join(evidenceDirAbs, "dev-server.log");
   const devServerLogRel = path.relative(repoRoot, devServerLogAbs).replace(/\\/g, "/");
+  const uiTranscript: string[] = [];
+
+  const appendTranscript = (entry: string): void => {
+    const normalized = entry.trim();
+    if (!normalized) return;
+    uiTranscript.push(normalized);
+  };
+
+  const transcriptSuffix = (): string => {
+    if (uiTranscript.length === 0) return "";
+    const joined = uiTranscript.join("; ");
+    return ` UI transcript: ${joined}.`;
+  };
 
   const steps: Array<{ name: "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
     { name: "snapshot", command: "agent-browser snapshot" },
@@ -437,7 +450,8 @@ export const runUiVerification = async (opts: {
           note: analysis.note,
         },
       });
-      return { ok: false, note: analysis.note };
+      appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server exited early)`);
+      return { ok: false, note: `${analysis.note}${transcriptSuffix()}` };
     }
 
     readyUrl = await waitForAnyUrlReady(urlCandidates, effectiveWait);
@@ -457,7 +471,8 @@ export const runUiVerification = async (opts: {
         extra: { devCmd, cwd: repoRoot, url, urlCandidates, waitMs: effectiveWait, pid: server.pid, logPath: devServerLogRel, note: analysis.note },
       });
       await server.stop();
-      return { ok: false, note: analysis.note };
+      appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server not ready)`);
+      return { ok: false, note: `${analysis.note}${transcriptSuffix()}` };
     }
   }
 
@@ -473,6 +488,7 @@ export const runUiVerification = async (opts: {
         eventPrefix: "ui.verify.open",
         reasonCode: "UI_VERIFY_STEP_FAILED",
       });
+      appendTranscript(`open(${openUrl}): exit ${openResult.exitCode}`);
       if (openResult.exitCode === 0) {
         opened = true;
         break;
@@ -510,6 +526,9 @@ export const runUiVerification = async (opts: {
     }
     if (!opened) {
       const openFailure = lastOpenResult ?? { exitCode: 1, stdout: "", stderr: "Unknown open failure" };
+      appendTranscript("snapshot: skipped (open failed)");
+      appendTranscript("console: skipped (open failed)");
+      appendTranscript("errors: skipped (open failed)");
       const details = knownServerIssue
         ? knownServerIssue.note
         : server
@@ -540,7 +559,7 @@ export const runUiVerification = async (opts: {
           note: details,
         },
       });
-      return { ok: false, note: details };
+      return { ok: false, note: `${details}${transcriptSuffix()}` };
     }
 
     for (const step of steps) {
@@ -555,6 +574,7 @@ export const runUiVerification = async (opts: {
         eventPrefix: `ui.verify.${step.name}`,
         reasonCode: "UI_VERIFY_STEP_FAILED",
       });
+      appendTranscript(`${step.name}: exit ${result.exitCode}`);
       if (result.exitCode !== 0) {
         if (step.optional) {
           await log?.({
@@ -591,7 +611,7 @@ export const runUiVerification = async (opts: {
             stdout: result.stdout,
           },
         });
-        return { ok: false, note: details };
+        return { ok: false, note: `${details}${transcriptSuffix()}` };
       }
 
       if (step.name === "screenshot" && result.exitCode === 0) {
