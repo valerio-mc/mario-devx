@@ -17,7 +17,7 @@ import { finalizeRunSuccess } from "./run-finalize";
 import { buildVerifierContextText } from "./run-verifier";
 import { runGateCommands } from "./gates";
 import { handleHeartbeatFailure, handlePromptDispatchFailure, persistTaskFailureAttempt } from "./run-failure-helpers";
-import { buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
+import { buildUiVerifyBlockedPayload, buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
 
 export type RunContext = {
   ctx: any;
@@ -174,7 +174,12 @@ export const runEngine = async (opts: {
     });
   };
 
-  const runUiVerifyForTask = async (taskId: string): Promise<{ ok: boolean; note?: string; evidence?: PrdUiAttempt["evidence"] } | null> => {
+  const runUiVerifyForTask = async (taskId: string): Promise<{
+    ok: boolean;
+    note?: string;
+    failure?: PrdUiAttempt["failure"];
+    evidence?: PrdUiAttempt["evidence"];
+  } | null> => {
     return runUiVerifyForTaskPhase({
       shouldRunUiVerify,
       taskId,
@@ -449,7 +454,8 @@ export const runEngine = async (opts: {
     let latestGateResult = gateResult;
     let latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
     let gates = toGatesAttempt(latestGateResult);
-    let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+    let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi: task.lastAttempt?.ui, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+    let uiVerifyBlockedLogged = false;
 
     const failEarly = async (reasonLines: string[], nextActions?: string[]): Promise<void> => {
       prd = await persistTaskFailureAttempt({
@@ -466,6 +472,20 @@ export const runEngine = async (opts: {
         nextActions,
         persistBlockedTaskAttempt,
       });
+    };
+
+    const logUiVerifyBlocked = async (phase: string): Promise<void> => {
+      if (uiVerifyBlockedLogged) {
+        return;
+      }
+      uiVerifyBlockedLogged = true;
+      await runLog(
+        "error",
+        RUN_EVENT.UI_VERIFY_BLOCKED,
+        `Run blocked: required UI verification failed during ${phase}`,
+        buildUiVerifyBlockedPayload(ui, phase),
+        { runId, taskId: task.id, reasonCode: RUN_REASON.UI_VERIFY_FAILED },
+      );
     };
 
     if (!latestGateResult.ok && stoppedForNoChanges) {
@@ -506,10 +526,11 @@ export const runEngine = async (opts: {
     }
 
     if (uiVerifyEnabled && isWebApp && uiVerifyRequired && latestUiResult && !latestUiResult.ok) {
+      await logUiVerifyBlocked("post-gates");
       await failEarly([
         formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
         latestUiResult.note?.trim() || "UI verification failed.",
-      ], buildUiVerifyFailedNextActions(latestUiResult.note));
+      ], buildUiVerifyFailedNextActions(latestUiResult.note, ui.failure));
       break;
     }
 
@@ -628,7 +649,8 @@ export const runEngine = async (opts: {
       latestGateResult = semanticGateRepair.gateResult;
       latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
       gates = toGatesAttempt(latestGateResult);
-      ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+      const previousUi = ui;
+      ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
       if (!latestGateResult.ok && semanticGateRepair.stoppedForNoChanges) {
         await failEarly([
@@ -657,13 +679,18 @@ export const runEngine = async (opts: {
       await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
     }
 
+    if (blockedByVerifierFailure && uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok === false) {
+      await logUiVerifyBlocked("semantic-repair");
+    }
+
     if (uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok !== true) {
+      await logUiVerifyBlocked("post-verifier");
       await failEarly([
         formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
         typeof ui.note === "string" && ui.note.trim().length > 0
           ? ui.note.trim()
           : latestUiResult?.note?.trim() || "UI verification failed.",
-      ], buildUiVerifyFailedNextActions(typeof ui.note === "string" ? ui.note : latestUiResult?.note));
+      ], buildUiVerifyFailedNextActions(typeof ui.note === "string" ? ui.note : latestUiResult?.note, ui.failure));
       break;
     }
 

@@ -61,6 +61,7 @@ export const RUN_EVENT = {
   VERIFY_TRANSPORT_ERROR: "run.verify.transport.error",
   BLOCKED_VERIFY_TRANSPORT: "run.blocked.verifier-transport",
   UI_CAPABILITIES: "run.ui.capabilities",
+  UI_VERIFY_BLOCKED: "run.ui.verify.blocked",
   FEEDBACK_APPLIED: "run.remediation.feedback_applied",
   REPAIR_SEMANTIC_START: "run.repair.semantic.start",
   BLOCKED_BUILD_TIMEOUT: "run.blocked.build-timeout",

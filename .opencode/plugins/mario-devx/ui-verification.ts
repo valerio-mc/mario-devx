@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "child_process";
 import { closeSync, openSync } from "fs";
 import { copyFile, mkdir, readFile, stat } from "fs/promises";
 import { runShellLogged } from "./ui-shell";
-import type { UiLog, UiVerificationEvidence, UiVerificationResult } from "./ui-types";
+import type { UiFailureSubtype, UiLog, UiVerificationEvidence, UiVerificationFailure, UiVerificationResult } from "./ui-types";
 
 const waitForUrlReady = async (url: string, timeoutMs: number): Promise<boolean> => {
   const started = Date.now();
@@ -174,6 +174,14 @@ const withFailureSubtype = (note: string, subtype: string | null | undefined): s
   if (!subtype) return note;
   if (/^Subtype:\s*[A-Z0-9_]+\./.test(note)) return note;
   return `Subtype: ${subtype}. ${note}`;
+};
+
+const buildFailureSignature = (opts: {
+  subtype: UiFailureSubtype;
+  pid?: number;
+  lockPath?: string;
+}): string => {
+  return `${opts.subtype}|${typeof opts.pid === "number" ? opts.pid : ""}|${opts.lockPath ?? ""}`;
 };
 
 const stripAnsi = (text: string): string => {
@@ -370,7 +378,15 @@ export const runUiVerification = async (opts: {
 }): Promise<UiVerificationResult> => {
   const { ctx, repoRoot, taskId, devCmd, url, log, waitMs } = opts;
   if (!ctx.$) {
-    return { ok: false, note: "No shell available for UI verification." };
+    return {
+      ok: false,
+      note: "No shell available for UI verification.",
+      failure: {
+        subtype: "UNKNOWN",
+        transcript: [],
+        signature: buildFailureSignature({ subtype: "UNKNOWN" }),
+      },
+    };
   }
 
   const effectiveWait = Number.isFinite(waitMs) ? Math.max(5000, Number(waitMs)) : 60000;
@@ -431,6 +447,23 @@ export const runUiVerification = async (opts: {
     return ` UI transcript: ${joined}.`;
   };
 
+  const buildFailure = (opts: {
+    subtype?: UiFailureSubtype;
+    pid?: number;
+    lockPath?: string;
+  }): UiVerificationFailure => {
+    const subtype = opts.subtype ?? "UNKNOWN";
+    const pid = typeof opts.pid === "number" && Number.isFinite(opts.pid) && opts.pid > 0 ? opts.pid : undefined;
+    const lockPath = typeof opts.lockPath === "string" && opts.lockPath.trim().length > 0 ? opts.lockPath.trim() : undefined;
+    return {
+      subtype,
+      ...(typeof pid === "number" ? { pid } : {}),
+      ...(lockPath ? { lockPath } : {}),
+      transcript: uiTranscript.slice(0, 12),
+      signature: buildFailureSignature({ subtype, ...(typeof pid === "number" ? { pid } : {}), ...(lockPath ? { lockPath } : {}) }),
+    };
+  };
+
   const steps: Array<{ name: "snapshot" | "snapshot-interactive" | "screenshot" | "console" | "errors"; command: string; optional?: boolean }> = [
     { name: "snapshot", command: "agent-browser snapshot" },
     { name: "snapshot-interactive", command: "agent-browser snapshot -i", optional: true },
@@ -484,7 +517,15 @@ export const runUiVerification = async (opts: {
         },
       });
       appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server exited early)`);
-      return { ok: false, note: `${note}${transcriptSuffix()}` };
+      return {
+        ok: false,
+        note: `${note}${transcriptSuffix()}`,
+        failure: buildFailure({
+          subtype: analysis.subtype ?? "UNKNOWN",
+          ...(typeof analysis.lockPid === "number" ? { pid: analysis.lockPid } : {}),
+          ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
+        }),
+      };
     }
 
     readyUrl = await waitForAnyUrlReady(urlCandidates, effectiveWait);
@@ -506,7 +547,15 @@ export const runUiVerification = async (opts: {
       });
       await server.stop();
       appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server not ready)`);
-      return { ok: false, note: `${note}${transcriptSuffix()}` };
+      return {
+        ok: false,
+        note: `${note}${transcriptSuffix()}`,
+        failure: buildFailure({
+          subtype: analysis.subtype ?? "UNKNOWN",
+          ...(typeof analysis.lockPid === "number" ? { pid: analysis.lockPid } : {}),
+          ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
+        }),
+      };
     }
   }
 
@@ -597,7 +646,16 @@ export const runUiVerification = async (opts: {
           note: detailsWithSubtype,
         },
       });
-      return { ok: false, note: `${detailsWithSubtype}${transcriptSuffix()}` };
+      const resolvedSubtype: UiFailureSubtype = (knownServerIssue?.subtype ?? fallbackSubtype ?? "UNKNOWN") as UiFailureSubtype;
+      return {
+        ok: false,
+        note: `${detailsWithSubtype}${transcriptSuffix()}`,
+        failure: buildFailure({
+          subtype: resolvedSubtype,
+          ...(typeof knownServerIssue?.lockPid === "number" ? { pid: knownServerIssue.lockPid } : {}),
+          ...(knownServerIssue?.lockPathRel ? { lockPath: knownServerIssue.lockPathRel } : {}),
+        }),
+      };
     }
 
     for (const step of steps) {
@@ -649,7 +707,11 @@ export const runUiVerification = async (opts: {
             stdout: result.stdout,
           },
         });
-        return { ok: false, note: `${details}${transcriptSuffix()}` };
+        return {
+          ok: false,
+          note: `${details}${transcriptSuffix()}`,
+          failure: buildFailure({ subtype: "UNKNOWN" }),
+        };
       }
 
       if (step.name === "screenshot" && result.exitCode === 0) {

@@ -22,10 +22,22 @@ export type UiVerificationEvidence = {
   errors?: string;
 };
 
+export type UiFailureSubtype = "NEXT_DEV_LOCK_HELD" | "EADDRINUSE" | "OPEN_CONNECTION_REFUSED" | "UNKNOWN";
+
+export type UiVerificationFailure = {
+  subtype: UiFailureSubtype;
+  pid?: number;
+  lockPath?: string;
+  transcript: string[];
+  signature?: string;
+  repeatCount?: number;
+};
+
 export type UiVerificationResult = {
   ok: boolean;
   note?: string;
   evidence?: UiVerificationEvidence;
+  failure?: UiVerificationFailure;
 };
 
 export type AgentBrowserPrereqStatus = {

@@ -1,10 +1,12 @@
 import { RUN_REASON } from "./run-contracts";
 import type { PrdGateFailure, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
 import { buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
+import type { UiVerificationFailure } from "./ui-types";
 
 type UiVerificationReceipt = {
   ok: boolean;
   note?: string;
+  failure?: UiVerificationFailure;
   evidence?: PrdUiAttempt["evidence"];
 };
 
@@ -85,6 +87,7 @@ export const runSemanticRepairLoop = async (opts: {
   toUiAttempt: (opts: {
     gateOk: boolean;
     uiResult: UiVerificationReceipt | null;
+    previousUi?: PrdUiAttempt;
     uiVerifyEnabled: boolean;
     isWebApp: boolean;
     cliOk: boolean;
@@ -159,7 +162,7 @@ export const runSemanticRepairLoop = async (opts: {
   let latestGateResult = opts.latestGateResult;
   let latestUiResult = opts.latestUiResult;
   let gates = toGatesAttempt(latestGateResult);
-  let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+  let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi: task.lastAttempt?.ui, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
   while (true) {
     verifierPassAttempts += 1;
@@ -279,7 +282,8 @@ export const runSemanticRepairLoop = async (opts: {
     await logGateRunResults("repair", task.id, latestGateResult.results);
     latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
     gates = toGatesAttempt(latestGateResult);
-    ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+    const previousUi = ui;
+    ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
     if (uiVerifyEnabled && isWebApp && uiVerifyRequired) {
       const uiFailed = latestUiResult ? !latestUiResult.ok : true;
@@ -288,7 +292,7 @@ export const runSemanticRepairLoop = async (opts: {
         await failEarly([
           `ReasonCode: ${RUN_REASON.UI_VERIFY_FAILED}`,
           uiFailureNote,
-        ], buildUiVerifyFailedNextActions(uiFailureNote));
+        ], buildUiVerifyFailedNextActions(uiFailureNote, ui.failure));
         blockedByVerifierFailure = true;
         judge = null;
         break;

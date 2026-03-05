@@ -27,6 +27,14 @@ export type PrdUiAttempt = {
   ran: boolean;
   ok: boolean | null;
   note?: string;
+  failure?: {
+    subtype: "NEXT_DEV_LOCK_HELD" | "EADDRINUSE" | "OPEN_CONNECTION_REFUSED" | "UNKNOWN";
+    pid?: number;
+    lockPath?: string;
+    transcript: string[];
+    signature?: string;
+    repeatCount?: number;
+  };
   evidence?: {
     snapshot?: string;
     snapshotInteractive?: string;

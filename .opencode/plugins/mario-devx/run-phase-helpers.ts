@@ -6,6 +6,7 @@ import { buildPrdGateFailure, findFailedGateRunItem, type GateRunItem } from "./
 import type { PrdGatesAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
 import type { RunExecutionContext, RunLogMeta, RunPhaseName } from "./run-types";
 import { RUN_EVENT } from "./run-contracts";
+import { compactUiFailureForAttempt } from "./run-ui-failure-actions";
 
 export const resolveEffectiveDoneWhen = (prd: PrdJson, task: PrdTask): string[] => {
   const taskPolicyGates = prd.verificationPolicy?.taskGates?.[task.id] ?? [];
@@ -43,18 +44,25 @@ export const toGatesAttempt = (result: { ok: boolean; results: GateRunItem[] }):
 export const toUiAttempt = (opts: {
   gateOk: boolean;
   uiResult: UiVerificationResult | null;
+  previousUi?: PrdUiAttempt;
   uiVerifyEnabled: boolean;
   isWebApp: boolean;
   cliOk: boolean;
   skillOk: boolean;
   browserOk: boolean;
 }): PrdUiAttempt => {
-  const { gateOk, uiResult, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk } = opts;
+  const { gateOk, uiResult, previousUi, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk } = opts;
+  const compacted = compactUiFailureForAttempt({
+    note: uiResult?.note,
+    failure: uiResult?.failure,
+    previousUi,
+  });
   return uiResult
     ? {
         ran: true,
         ok: uiResult.ok,
-        ...(uiResult.note ? { note: uiResult.note } : {}),
+        ...(compacted.note ? { note: compacted.note } : {}),
+        ...(compacted.failure ? { failure: compacted.failure } : {}),
         ...(uiResult.evidence ? { evidence: uiResult.evidence } : {}),
       }
     : {
