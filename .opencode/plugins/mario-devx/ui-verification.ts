@@ -65,6 +65,19 @@ const isConnectionRefusedOutput = (stderr: string, stdout: string): boolean => {
   return text.includes("err_connection_refused") || text.includes("connection refused");
 };
 
+const parseNextDevLockPath = (text: string): string | null => {
+  const patterns = [
+    /Unable to acquire lock at\s+([^\s,]+)/i,
+    /lock at\s+([^\s,]+)\s*,\s*is another instance of next dev running/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+    return match[1].trim();
+  }
+  return null;
+};
+
 const parseAddressInUsePort = (text: string): number | null => {
   const patterns = [
     /EADDRINUSE[\s\S]*?:(\d{2,5})/i,
@@ -80,6 +93,52 @@ const parseAddressInUsePort = (text: string): number | null => {
     }
   }
   return null;
+};
+
+const toRepoRelativePath = (repoRoot: string, absOrRelPath: string): string => {
+  try {
+    const normalized = path.resolve(absOrRelPath);
+    const rel = path.relative(repoRoot, normalized).replace(/\\/g, "/");
+    if (!rel.startsWith("..")) {
+      return rel;
+    }
+  } catch {
+    // Ignore and fall through.
+  }
+  return absOrRelPath.replace(/\\/g, "/");
+};
+
+const findLockHolderPid = (lockPath: string): number | null => {
+  if (!lockPath || process.platform === "win32") {
+    return null;
+  }
+  try {
+    const result = spawnSync("lsof", ["-nP", lockPath, "-Fp"], {
+      encoding: "utf8",
+    });
+    const output = `${result.stdout ?? ""}`;
+    const pidLine = output.split(/\r?\n/).find((line) => /^p\d+$/.test(line.trim()));
+    if (!pidLine) return null;
+    const pid = Number.parseInt(pidLine.trim().slice(1), 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+};
+
+const readPidCommand = (pid: number): string | null => {
+  if (!Number.isFinite(pid) || pid <= 0 || process.platform === "win32") {
+    return null;
+  }
+  try {
+    const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf8",
+    });
+    const text = `${result.stdout ?? ""}`.trim();
+    return text.length > 0 ? text : null;
+  } catch {
+    return null;
+  }
 };
 
 const findListeningPidForPort = (port: number): number | null => {
@@ -100,24 +159,98 @@ const findListeningPidForPort = (port: number): number | null => {
   }
 };
 
-const buildDevServerFailureNote = async (opts: {
+type DevServerFailureAnalysis = {
+  note: string;
+  knownIssue: boolean;
+  kind: "next-dev-lock" | "port-in-use" | "generic";
+  lockPathRel?: string;
+  lockPid?: number;
+  lockCommand?: string;
+  portInUse?: number;
+};
+
+const analyzeDevServerFailure = async (opts: {
+  repoRoot: string;
   logPathAbs: string;
   logPathRel: string;
   fallback: string;
-}): Promise<string> => {
-  const { logPathAbs, logPathRel, fallback } = opts;
+}): Promise<DevServerFailureAnalysis> => {
+  const { repoRoot, logPathAbs, logPathRel, fallback } = opts;
   try {
     const text = await readFile(logPathAbs, "utf8");
+    const lockPath = parseNextDevLockPath(text);
+    if (lockPath) {
+      const lockPathRel = toRepoRelativePath(repoRoot, lockPath);
+      const lockPid = findLockHolderPid(lockPath);
+      const lockCommand = typeof lockPid === "number" ? readPidCommand(lockPid) : null;
+      const note = lockPid
+        ? `UI dev server failed to start: Next dev lock is held at ${lockPathRel} by pid ${lockPid}${lockCommand ? ` (${lockCommand})` : ""}. See ${logPathRel}.`
+        : `UI dev server failed to start: Next dev lock is held at ${lockPathRel}. See ${logPathRel}.`;
+      return {
+        note,
+        knownIssue: true,
+        kind: "next-dev-lock",
+        lockPathRel,
+        ...(typeof lockPid === "number" ? { lockPid } : {}),
+        ...(lockCommand ? { lockCommand } : {}),
+      };
+    }
+
     const port = parseAddressInUsePort(text);
     if (port) {
       const pid = findListeningPidForPort(port);
-      return pid
-        ? `UI dev server failed to start: port ${port} is already in use by pid ${pid}. See ${logPathRel}.`
-        : `UI dev server failed to start: port ${port} is already in use. See ${logPathRel}.`;
+      return {
+        note: pid
+          ? `UI dev server failed to start: port ${port} is already in use by pid ${pid}. See ${logPathRel}.`
+          : `UI dev server failed to start: port ${port} is already in use. See ${logPathRel}.`,
+        knownIssue: true,
+        kind: "port-in-use",
+        portInUse: port,
+      };
     }
-    return `${fallback} See ${logPathRel}.`;
+
+    return {
+      note: `${fallback} See ${logPathRel}.`,
+      knownIssue: false,
+      kind: "generic",
+    };
   } catch {
-    return `${fallback} See ${logPathRel}.`;
+    return {
+      note: `${fallback} See ${logPathRel}.`,
+      knownIssue: false,
+      kind: "generic",
+    };
+  }
+};
+
+const logKnownServerFailure = async (log: UiLog | undefined, analysis: DevServerFailureAnalysis): Promise<void> => {
+  if (!log || !analysis.knownIssue) {
+    return;
+  }
+  if (analysis.kind === "next-dev-lock") {
+    await log({
+      level: "error",
+      event: "ui.verify.server.locked",
+      message: "Next dev lock contention detected during UI verification",
+      reasonCode: "UI_VERIFY_STEP_FAILED",
+      extra: {
+        ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
+        ...(typeof analysis.lockPid === "number" ? { lockPid: analysis.lockPid } : {}),
+        ...(analysis.lockCommand ? { lockCommand: analysis.lockCommand } : {}),
+      },
+    });
+    return;
+  }
+  if (analysis.kind === "port-in-use") {
+    await log({
+      level: "error",
+      event: "ui.verify.server.port-in-use",
+      message: "Dev server startup failed because listening port is already in use",
+      reasonCode: "UI_VERIFY_STEP_FAILED",
+      extra: {
+        ...(typeof analysis.portInUse === "number" ? { port: analysis.portInUse } : {}),
+      },
+    });
   }
 };
 
@@ -282,11 +415,13 @@ export const runUiVerification = async (opts: {
 
     const earlyExit = await server.waitForEarlyExit(1200);
     if (earlyExit.exited) {
-      const note = await buildDevServerFailureNote({
+      const analysis = await analyzeDevServerFailure({
+        repoRoot,
         logPathAbs: devServerLogAbs,
         logPathRel: devServerLogRel,
         fallback: `UI dev server exited early (exit ${earlyExit.exitCode ?? "unknown"}).`,
       });
+      await logKnownServerFailure(log, analysis);
       await log?.({
         level: "error",
         event: "ui.verify.server.exit-early",
@@ -299,28 +434,30 @@ export const runUiVerification = async (opts: {
           exitCode: earlyExit.exitCode,
           signal: earlyExit.signal,
           logPath: devServerLogRel,
-          note,
+          note: analysis.note,
         },
       });
-      return { ok: false, note };
+      return { ok: false, note: analysis.note };
     }
 
     readyUrl = await waitForAnyUrlReady(urlCandidates, effectiveWait);
     if (!readyUrl) {
-      const note = await buildDevServerFailureNote({
+      const analysis = await analyzeDevServerFailure({
+        repoRoot,
         logPathAbs: devServerLogAbs,
         logPathRel: devServerLogRel,
         fallback: `UI dev server did not become ready within ${effectiveWait}ms for ${url}.`,
       });
+      await logKnownServerFailure(log, analysis);
       await log?.({
         level: "error",
         event: "ui.verify.server.timeout",
         message: "UI dev server did not become ready before timeout",
         reasonCode: "UI_VERIFY_SERVER_TIMEOUT",
-        extra: { devCmd, cwd: repoRoot, url, urlCandidates, waitMs: effectiveWait, pid: server.pid, logPath: devServerLogRel, note },
+        extra: { devCmd, cwd: repoRoot, url, urlCandidates, waitMs: effectiveWait, pid: server.pid, logPath: devServerLogRel, note: analysis.note },
       });
       await server.stop();
-      return { ok: false, note };
+      return { ok: false, note: analysis.note };
     }
   }
 
@@ -330,6 +467,7 @@ export const runUiVerification = async (opts: {
     });
     let opened = false;
     let lastOpenResult: { exitCode: number; stdout: string; stderr: string } | null = null;
+    let knownServerIssue: DevServerFailureAnalysis | null = null;
     for (const openUrl of openCandidates) {
       const openResult = await runShellLogged(ctx, `agent-browser open ${JSON.stringify(openUrl)}`, log, {
         eventPrefix: "ui.verify.open",
@@ -340,6 +478,21 @@ export const runUiVerification = async (opts: {
         break;
       }
       lastOpenResult = openResult;
+
+      if (server) {
+        const analysis = await analyzeDevServerFailure({
+          repoRoot,
+          logPathAbs: devServerLogAbs,
+          logPathRel: devServerLogRel,
+          fallback: `agent-browser open failed (exit ${openResult.exitCode}).`,
+        });
+        if (analysis.knownIssue) {
+          knownServerIssue = analysis;
+          await logKnownServerFailure(log, analysis);
+          break;
+        }
+      }
+
       if (!isConnectionRefusedOutput(openResult.stderr, openResult.stdout)) {
         break;
       }
@@ -357,12 +510,15 @@ export const runUiVerification = async (opts: {
     }
     if (!opened) {
       const openFailure = lastOpenResult ?? { exitCode: 1, stdout: "", stderr: "Unknown open failure" };
-      const details = server
-        ? await buildDevServerFailureNote({
-            logPathAbs: devServerLogAbs,
-            logPathRel: devServerLogRel,
-            fallback: `agent-browser open failed (exit ${openFailure.exitCode}).`,
-          })
+      const details = knownServerIssue
+        ? knownServerIssue.note
+        : server
+          ? (await analyzeDevServerFailure({
+              repoRoot,
+              logPathAbs: devServerLogAbs,
+              logPathRel: devServerLogRel,
+              fallback: `agent-browser open failed (exit ${openFailure.exitCode}).`,
+            })).note
         : [
             `agent-browser open failed (exit ${openFailure.exitCode}).`,
             openFailure.stderr.trim() ? `stderr: ${summarize(openFailure.stderr)}` : "",
