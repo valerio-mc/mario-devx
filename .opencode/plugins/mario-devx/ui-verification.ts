@@ -169,6 +169,26 @@ type DevServerFailureAnalysis = {
   portInUse?: number;
 };
 
+const stripAnsi = (text: string): string => {
+  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\u001b[@-_]/g, "");
+};
+
+const buildLogTailSnippet = (text: string): string => {
+  const lines = stripAnsi(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  const tailLines = lines.slice(-24);
+  const tail = tailLines.join(" | ");
+  return tail.length > 1000 ? `${tail.slice(0, 1000)}…` : tail;
+};
+
+const appendLogTail = (note: string, logTail: string): string => {
+  if (!logTail) return note;
+  return `${note} Log tail: ${logTail}`;
+};
+
 const analyzeDevServerFailure = async (opts: {
   repoRoot: string;
   logPathAbs: string;
@@ -178,14 +198,16 @@ const analyzeDevServerFailure = async (opts: {
   const { repoRoot, logPathAbs, logPathRel, fallback } = opts;
   try {
     const text = await readFile(logPathAbs, "utf8");
+    const logTail = buildLogTailSnippet(text);
     const lockPath = parseNextDevLockPath(text);
     if (lockPath) {
       const lockPathRel = toRepoRelativePath(repoRoot, lockPath);
       const lockPid = findLockHolderPid(lockPath);
       const lockCommand = typeof lockPid === "number" ? readPidCommand(lockPid) : null;
-      const note = lockPid
+      const baseNote = lockPid
         ? `UI dev server failed to start: Next dev lock is held at ${lockPathRel} by pid ${lockPid}${lockCommand ? ` (${lockCommand})` : ""}. See ${logPathRel}.`
         : `UI dev server failed to start: Next dev lock is held at ${lockPathRel}. See ${logPathRel}.`;
+      const note = appendLogTail(baseNote, logTail);
       return {
         note,
         knownIssue: true,
@@ -199,10 +221,11 @@ const analyzeDevServerFailure = async (opts: {
     const port = parseAddressInUsePort(text);
     if (port) {
       const pid = findListeningPidForPort(port);
+      const baseNote = pid
+        ? `UI dev server failed to start: port ${port} is already in use by pid ${pid}. See ${logPathRel}.`
+        : `UI dev server failed to start: port ${port} is already in use. See ${logPathRel}.`;
       return {
-        note: pid
-          ? `UI dev server failed to start: port ${port} is already in use by pid ${pid}. See ${logPathRel}.`
-          : `UI dev server failed to start: port ${port} is already in use. See ${logPathRel}.`,
+        note: appendLogTail(baseNote, logTail),
         knownIssue: true,
         kind: "port-in-use",
         portInUse: port,
@@ -210,7 +233,7 @@ const analyzeDevServerFailure = async (opts: {
     }
 
     return {
-      note: `${fallback} See ${logPathRel}.`,
+      note: appendLogTail(`${fallback} See ${logPathRel}.`, logTail),
       knownIssue: false,
       kind: "generic",
     };
