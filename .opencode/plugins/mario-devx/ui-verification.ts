@@ -163,10 +163,17 @@ type DevServerFailureAnalysis = {
   note: string;
   knownIssue: boolean;
   kind: "next-dev-lock" | "port-in-use" | "generic";
+  subtype?: "NEXT_DEV_LOCK_HELD" | "EADDRINUSE";
   lockPathRel?: string;
   lockPid?: number;
   lockCommand?: string;
   portInUse?: number;
+};
+
+const withFailureSubtype = (note: string, subtype: string | null | undefined): string => {
+  if (!subtype) return note;
+  if (/^Subtype:\s*[A-Z0-9_]+\./.test(note)) return note;
+  return `Subtype: ${subtype}. ${note}`;
 };
 
 const stripAnsi = (text: string): string => {
@@ -212,6 +219,7 @@ const analyzeDevServerFailure = async (opts: {
         note,
         knownIssue: true,
         kind: "next-dev-lock",
+        subtype: "NEXT_DEV_LOCK_HELD",
         lockPathRel,
         ...(typeof lockPid === "number" ? { lockPid } : {}),
         ...(lockCommand ? { lockCommand } : {}),
@@ -228,6 +236,7 @@ const analyzeDevServerFailure = async (opts: {
         note: appendLogTail(baseNote, logTail),
         knownIssue: true,
         kind: "port-in-use",
+        subtype: "EADDRINUSE",
         portInUse: port,
       };
     }
@@ -457,6 +466,7 @@ export const runUiVerification = async (opts: {
         logPathRel: devServerLogRel,
         fallback: `UI dev server exited early (exit ${earlyExit.exitCode ?? "unknown"}).`,
       });
+      const note = withFailureSubtype(analysis.note, analysis.subtype);
       await logKnownServerFailure(log, analysis);
       await log?.({
         level: "error",
@@ -470,11 +480,11 @@ export const runUiVerification = async (opts: {
           exitCode: earlyExit.exitCode,
           signal: earlyExit.signal,
           logPath: devServerLogRel,
-          note: analysis.note,
+          note,
         },
       });
       appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server exited early)`);
-      return { ok: false, note: `${analysis.note}${transcriptSuffix()}` };
+      return { ok: false, note: `${note}${transcriptSuffix()}` };
     }
 
     readyUrl = await waitForAnyUrlReady(urlCandidates, effectiveWait);
@@ -485,17 +495,18 @@ export const runUiVerification = async (opts: {
         logPathRel: devServerLogRel,
         fallback: `UI dev server did not become ready within ${effectiveWait}ms for ${url}.`,
       });
+      const note = withFailureSubtype(analysis.note, analysis.subtype);
       await logKnownServerFailure(log, analysis);
       await log?.({
         level: "error",
         event: "ui.verify.server.timeout",
         message: "UI dev server did not become ready before timeout",
         reasonCode: "UI_VERIFY_SERVER_TIMEOUT",
-        extra: { devCmd, cwd: repoRoot, url, urlCandidates, waitMs: effectiveWait, pid: server.pid, logPath: devServerLogRel, note: analysis.note },
+        extra: { devCmd, cwd: repoRoot, url, urlCandidates, waitMs: effectiveWait, pid: server.pid, logPath: devServerLogRel, note },
       });
       await server.stop();
       appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server not ready)`);
-      return { ok: false, note: `${analysis.note}${transcriptSuffix()}` };
+      return { ok: false, note: `${note}${transcriptSuffix()}` };
     }
   }
 
@@ -568,6 +579,10 @@ export const runUiVerification = async (opts: {
           ]
             .filter((x) => x)
             .join(" ");
+      const fallbackSubtype = isConnectionRefusedOutput(openFailure.stderr, openFailure.stdout)
+        ? "OPEN_CONNECTION_REFUSED"
+        : null;
+      const detailsWithSubtype = withFailureSubtype(details, knownServerIssue?.subtype ?? fallbackSubtype);
       await log?.({
         level: "error",
         event: "ui.verify.open.failed-note",
@@ -579,10 +594,10 @@ export const runUiVerification = async (opts: {
           stderr: openFailure.stderr,
           stdout: openFailure.stdout,
           urlCandidates: openCandidates,
-          note: details,
+          note: detailsWithSubtype,
         },
       });
-      return { ok: false, note: `${details}${transcriptSuffix()}` };
+      return { ok: false, note: `${detailsWithSubtype}${transcriptSuffix()}` };
     }
 
     for (const step of steps) {
