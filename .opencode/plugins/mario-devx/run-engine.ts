@@ -478,6 +478,7 @@ export const runEngine = async (opts: {
     if (!latestGateResult.ok) {
       const failed = latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)";
       await failEarly([
+        formatReasonCode(RUN_REASON.TASK_FAIL_EARLY),
         `Deterministic gate failed: ${failed}.`,
         `Auto-repair stopped across ${repairAttempts} attempt(s) (total repair turns: ${totalRepairAttempts}/${maxTotalRepairAttempts}; no-progress or time budget reached).`,
       ]);
@@ -487,6 +488,7 @@ export const runEngine = async (opts: {
     if (uiVerifyEnabled && isWebApp && (prereqInstalling || !cliOk || !skillOk || !browserOk)) {
       await failEarly(
         [
+          formatReasonCode(RUN_REASON.UI_PREREQ_MISSING),
           prereqInstalling
             ? "UI verification prerequisites are currently installing in the background."
             : "UI verification is enabled but agent-browser prerequisites are still missing.",
