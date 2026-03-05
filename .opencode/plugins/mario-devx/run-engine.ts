@@ -17,6 +17,7 @@ import { finalizeRunSuccess } from "./run-finalize";
 import { buildVerifierContextText } from "./run-verifier";
 import { runGateCommands } from "./gates";
 import { handleHeartbeatFailure, handlePromptDispatchFailure, persistTaskFailureAttempt } from "./run-failure-helpers";
+import { buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
 
 export type RunContext = {
   ctx: any;
@@ -506,7 +507,7 @@ export const runEngine = async (opts: {
       await failEarly([
         formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
         latestUiResult.note?.trim() || "UI verification failed.",
-      ]);
+      ], buildUiVerifyFailedNextActions(latestUiResult.note));
       break;
     }
 
@@ -660,7 +661,7 @@ export const runEngine = async (opts: {
         typeof ui.note === "string" && ui.note.trim().length > 0
           ? ui.note.trim()
           : latestUiResult?.note?.trim() || "UI verification failed.",
-      ]);
+      ], buildUiVerifyFailedNextActions(typeof ui.note === "string" ? ui.note : latestUiResult?.note));
       break;
     }
 

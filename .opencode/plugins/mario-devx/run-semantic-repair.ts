@@ -1,5 +1,6 @@
 import { RUN_REASON } from "./run-contracts";
 import type { PrdGateFailure, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
+import { buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
 
 type UiVerificationReceipt = {
   ok: boolean;
@@ -283,10 +284,11 @@ export const runSemanticRepairLoop = async (opts: {
     if (uiVerifyEnabled && isWebApp && uiVerifyRequired) {
       const uiFailed = latestUiResult ? !latestUiResult.ok : true;
       if (uiFailed) {
+        const uiFailureNote = latestUiResult?.note?.trim() || "UI verification failed.";
         await failEarly([
           `ReasonCode: ${RUN_REASON.UI_VERIFY_FAILED}`,
-          latestUiResult?.note?.trim() || "UI verification failed.",
-        ]);
+          uiFailureNote,
+        ], buildUiVerifyFailedNextActions(uiFailureNote));
         blockedByVerifierFailure = true;
         judge = null;
         break;
