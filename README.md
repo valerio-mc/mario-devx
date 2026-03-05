@@ -143,7 +143,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **Run blocked before coding starts** | Check `.mario/prd.json` for missing `tasks` or `qualityGates`, fix reality, then rerun `/mario-devx:run 1`. |
 | **Run says another run is in progress (`run.lock`)** | Run `/mario-devx:doctor` to auto-clear stale locks, then rerun `/mario-devx:run 1`. |
 | **Run blocked with `WORK_SESSION_NO_PROGRESS`** | The same gate failure repeated while tracked source/config files did not change. Read `tasks[].lastAttempt.gates.failure.outputExcerpt` in `.mario/prd.json` and `run.repair.backpressure` entries in `.mario/state/mario-devx.log`, then rerun `/mario-devx:run 1`. |
-| **UI verification fails to start** | Ensure `UI_VERIFY=1`; if runtime is missing, run `CI=1 npm_config_yes=true npx --yes playwright install chromium` and let automation do its dramatic entrance. |
+| **UI verification fails to start** | Read `tasks[].lastAttempt.ui.note` and `.mario/state/ui-evidence/<taskId>/dev-server.log`. mario-devx now surfaces subtype/backpressure (for example lock-holder PID) and a direct `kill <pid>` next action when available. |
 | **Anything weird / stuck / transport-y** | Run `/mario-devx:doctor` and attach `.mario/state/mario-devx.log`, `.mario/state/state.json`, `.mario/prd.json` so we debug facts, not folklore. |
 
 ## Acknowledgements
