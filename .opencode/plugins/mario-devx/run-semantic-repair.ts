@@ -285,7 +285,7 @@ export const runSemanticRepairLoop = async (opts: {
     const previousUi = ui;
     ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
-    if (uiVerifyEnabled && isWebApp && uiVerifyRequired) {
+    if (latestGateResult.ok && uiVerifyEnabled && isWebApp && uiVerifyRequired) {
       const uiFailed = latestUiResult ? !latestUiResult.ok : true;
       if (uiFailed) {
         const uiFailureNote = latestUiResult?.note?.trim() || "UI verification failed.";

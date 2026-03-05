@@ -679,11 +679,11 @@ export const runEngine = async (opts: {
       await showToast(ctx, `Run: verify phase idle for ${task.id}`, "success");
     }
 
-    if (blockedByVerifierFailure && uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok === false) {
+    if (blockedByVerifierFailure && latestGateResult.ok && uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok === false) {
       await logUiVerifyBlocked("semantic-repair");
     }
 
-    if (uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok !== true) {
+    if (latestGateResult.ok && uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok !== true) {
       await logUiVerifyBlocked("post-verifier");
       await failEarly([
         formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
