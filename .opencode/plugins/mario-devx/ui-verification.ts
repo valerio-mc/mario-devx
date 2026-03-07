@@ -1,9 +1,34 @@
 import path from "path";
+import { createHash } from "crypto";
 import { spawn, spawnSync } from "child_process";
 import { closeSync, openSync } from "fs";
-import { copyFile, mkdir, readFile, stat } from "fs/promises";
+import { copyFile, mkdir, readFile, realpath, stat } from "fs/promises";
 import { runShellLogged } from "./ui-shell";
 import type { UiFailureSubtype, UiLog, UiVerificationEvidence, UiVerificationFailure, UiVerificationResult } from "./ui-types";
+import { isPathInside, resolvePathInside } from "./paths";
+
+const SAFE_EVIDENCE_TASK_ID = /^[A-Za-z0-9._-]{1,120}$/;
+const TMP_EVIDENCE_ALLOWLIST = ["/tmp", "/private/tmp"];
+const MAX_EVIDENCE_COPY_BYTES = 15 * 1024 * 1024;
+
+const toSafeEvidenceTaskDir = (taskId: string): string => {
+  const trimmed = taskId.trim();
+  if (SAFE_EVIDENCE_TASK_ID.test(trimmed)) {
+    return trimmed;
+  }
+  const slug = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 10);
+  return `${slug || "task"}-${digest}`;
+};
+
+const isAllowedTmpEvidencePath = async (candidatePath: string): Promise<boolean> => {
+  const resolved = await realpath(candidatePath).catch(() => path.resolve(candidatePath));
+  return TMP_EVIDENCE_ALLOWLIST.some((root) => isPathInside(root, resolved));
+};
 
 const waitForUrlReady = async (url: string, timeoutMs: number): Promise<boolean> => {
   const started = Date.now();
@@ -404,6 +429,15 @@ export const runUiVerification = async (opts: {
     return trimmed.length > 1200 ? `${trimmed.slice(-1200)}` : trimmed;
   };
 
+  const evidenceRootAbs = resolvePathInside(repoRoot, ".mario", "state", "ui-evidence");
+  const evidenceTaskDir = toSafeEvidenceTaskDir(taskId);
+  const evidenceDirAbs = resolvePathInside(evidenceRootAbs, evidenceTaskDir);
+  const screenshotAbs = resolvePathInside(evidenceDirAbs, "screenshot.png");
+  const screenshotRel = path.relative(repoRoot, screenshotAbs).replace(/\\/g, "/");
+  const devServerLogAbs = resolvePathInside(evidenceDirAbs, "dev-server.log");
+  const devServerLogRel = path.relative(repoRoot, devServerLogAbs).replace(/\\/g, "/");
+  const uiTranscript: string[] = [];
+
   const extractTmpFilePath = (value: string): string | null => {
     const match = value.match(/\/tmp\/[^\s"']+/);
     return match ? match[0] : null;
@@ -413,13 +447,15 @@ export const runUiVerification = async (opts: {
     const tmpPath = extractTmpFilePath(rawOutput);
     if (!tmpPath) return summarize(rawOutput);
     try {
+      if (!(await isAllowedTmpEvidencePath(tmpPath))) {
+        return summarize(rawOutput);
+      }
       const fileStat = await stat(tmpPath);
-      if (!fileStat.isFile()) return summarize(rawOutput);
+      if (!fileStat.isFile() || fileStat.size > MAX_EVIDENCE_COPY_BYTES) return summarize(rawOutput);
       const ext = path.extname(tmpPath) || ".txt";
-      const evidenceDir = path.join(repoRoot, ".mario", "state", "ui-evidence", taskId);
-      await mkdir(evidenceDir, { recursive: true });
+      await mkdir(evidenceDirAbs, { recursive: true });
       const targetName = `${stepName}${ext}`;
-      const targetAbs = path.join(evidenceDir, targetName);
+      const targetAbs = resolvePathInside(evidenceDirAbs, targetName);
       await copyFile(tmpPath, targetAbs);
       const rel = path.relative(repoRoot, targetAbs).replace(/\\/g, "/");
       return rel;
@@ -427,13 +463,6 @@ export const runUiVerification = async (opts: {
       return summarize(rawOutput);
     }
   };
-
-  const evidenceDirAbs = path.join(repoRoot, ".mario", "state", "ui-evidence", taskId);
-  const screenshotAbs = path.join(evidenceDirAbs, "screenshot.png");
-  const screenshotRel = path.relative(repoRoot, screenshotAbs).replace(/\\/g, "/");
-  const devServerLogAbs = path.join(evidenceDirAbs, "dev-server.log");
-  const devServerLogRel = path.relative(repoRoot, devServerLogAbs).replace(/\\/g, "/");
-  const uiTranscript: string[] = [];
 
   const appendTranscript = (entry: string): void => {
     const normalized = entry.trim();

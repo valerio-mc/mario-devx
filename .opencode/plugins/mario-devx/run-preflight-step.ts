@@ -2,10 +2,21 @@ import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { TIMEOUTS } from "./config";
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
 import { validateTaskGraph, setPrdTaskLastAttempt } from "./planner";
-import { writePrdJson, type PrdGatesAttempt, type PrdJudgeAttempt, type PrdJson, type PrdTask, type PrdTaskAttempt, type PrdUiAttempt } from "./prd";
+import {
+  defaultPrdJson,
+  formatPrdReadErrorMessage,
+  isPrdReadError,
+  writePrdJson,
+  type PrdGatesAttempt,
+  type PrdJudgeAttempt,
+  type PrdJson,
+  type PrdTask,
+  type PrdTaskAttempt,
+  type PrdUiAttempt,
+} from "./prd";
 import { resolveNodeWorkspaceRoot } from "./gates";
 import { validateRunPrerequisites, syncFrontendAgentsConfig, parseMaxItems, resolveSessionAgents } from "./run-preflight";
-import { resolveUiRunSetup } from "./run-ui";
+import { resolveUiRunSetup, shouldBlockRunForUiPrereqs } from "./run-ui";
 import { bumpIteration, readRunState, writeRunState } from "./state";
 
 type DefaultAgentBrowserCaps = {
@@ -89,7 +100,26 @@ export const runPreflightStep = async (opts: {
     logRunEvent,
   } = opts;
 
-  let prd = await ensurePrd(repoRoot);
+  let prd: PrdJson;
+  try {
+    prd = await ensurePrd(repoRoot);
+  } catch (error) {
+    if (isPrdReadError(error)) {
+      await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_PRD_INCOMPLETE, "Run blocked: PRD read failed", {
+        code: error.code,
+        filePath: error.filePath,
+        ...(error.backupPath ? { backupPath: error.backupPath } : {}),
+        ...(Object.prototype.hasOwnProperty.call(error, "detectedVersion") ? { detectedVersion: error.detectedVersion } : {}),
+      }, { runId, reasonCode: RUN_REASON.PRD_INCOMPLETE });
+      await showToast(ctx, "Run blocked: PRD load failed", "warning");
+      return {
+        blocked: true,
+        prd: defaultPrdJson(),
+        message: formatPrdReadErrorMessage(error),
+      };
+    }
+    throw error;
+  }
   const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
   const workspaceAbs = workspaceRoot === "." ? repoRoot : `${repoRoot}/${workspaceRoot}`;
   const prerequisites = validateRunPrerequisites(prd);
@@ -257,7 +287,16 @@ export const runPreflightStep = async (opts: {
     isWebApp,
   } = uiSetup;
 
-  if (uiVerifyEnabled && isWebApp && prereqInstalling) {
+  const blockForUiPrereqs = shouldBlockRunForUiPrereqs({
+    uiVerifyEnabled,
+    isWebApp,
+    prereqInstalling,
+    cliOk,
+    skillOk,
+    browserOk,
+  });
+
+  if (blockForUiPrereqs && prereqInstalling) {
     await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.BLOCKED_UI_PREREQ, "Run blocked while UI prerequisites are installing", {
       uiVerifyEnabled,
       uiVerifyRequired,
@@ -282,7 +321,7 @@ export const runPreflightStep = async (opts: {
     };
   }
 
-  if (uiVerifyEnabled && isWebApp && (!cliOk || !skillOk || !browserOk)) {
+  if (blockForUiPrereqs && (!cliOk || !skillOk || !browserOk)) {
     await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.BLOCKED_UI_PREREQ, "Run blocked: UI prerequisites missing", {
       uiVerifyEnabled,
       uiVerifyRequired,

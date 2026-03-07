@@ -195,6 +195,7 @@ export const finalizeRunCleanup = async (opts: {
     const deletedIds = new Set<string>();
     const sessionsToDelete = [
       { key: "work", id: runForCleanup.workSessionId },
+      { key: "verify", id: runForCleanup.verifierSessionId },
     ];
 
     for (const session of sessionsToDelete) {

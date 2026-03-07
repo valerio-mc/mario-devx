@@ -21,6 +21,18 @@ export type UiRunSetup = {
   shouldRunUiVerify: boolean;
 };
 
+export const shouldBlockRunForUiPrereqs = (opts: {
+  uiVerifyEnabled: boolean;
+  isWebApp: boolean;
+  prereqInstalling: boolean;
+  cliOk: boolean;
+  skillOk: boolean;
+  browserOk: boolean;
+}): boolean => {
+  const { uiVerifyEnabled, isWebApp, prereqInstalling, cliOk, skillOk, browserOk } = opts;
+  return uiVerifyEnabled && isWebApp && (prereqInstalling || !cliOk || !skillOk || !browserOk);
+};
+
 type ResolveUiRunSetupOptions = {
   ctx: any;
   repoRoot: string;

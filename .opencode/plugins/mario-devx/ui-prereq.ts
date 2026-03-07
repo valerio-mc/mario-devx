@@ -5,6 +5,7 @@ import { ensureDir, readTextIfExists, writeTextAtomic } from "./fs";
 import { marioStateDir } from "./paths";
 import { runShellLogged } from "./ui-shell";
 import type { AgentBrowserPrereqStatus, UiLog } from "./ui-types";
+import { pidLooksAlive } from "./process";
 
 type AgentBrowserPrereqJobStatus = "installing" | "ok" | "failed";
 
@@ -52,16 +53,6 @@ const readAgentBrowserPrereqJob = async (repoRoot: string): Promise<AgentBrowser
 const writeAgentBrowserPrereqJob = async (repoRoot: string, state: AgentBrowserPrereqJobState): Promise<void> => {
   await ensureDir(uiPrereqDir(repoRoot));
   await writeTextAtomic(agentBrowserPrereqStatePath(repoRoot), `${JSON.stringify(state, null, 2)}\n`);
-};
-
-const isPidAlive = (pid: number | null | undefined): boolean => {
-  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 };
 
 const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config");
@@ -361,7 +352,7 @@ export const ensureAgentBrowserPrereqs = async (
     });
   }
 
-  if (priorJob?.status === "installing" && isPidAlive(priorJob.pid)) {
+  if (priorJob?.status === "installing" && pidLooksAlive(priorJob.pid) === true) {
     await log?.({
       level: "info",
       event: "ui.prereq.install-job.running",
@@ -384,7 +375,7 @@ export const ensureAgentBrowserPrereqs = async (
     };
   }
 
-  if (priorJob?.status === "installing" && !isPidAlive(priorJob.pid)) {
+  if (priorJob?.status === "installing" && pidLooksAlive(priorJob.pid) !== true) {
     await writeAgentBrowserPrereqJob(repoRoot, {
       ...priorJob,
       status: "failed",

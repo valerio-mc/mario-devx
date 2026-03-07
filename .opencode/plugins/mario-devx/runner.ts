@@ -1,8 +1,13 @@
 import { ensureMario, readRunState, writeRunState } from "./state";
 import type { RunState } from "./types";
 import { forgetSessionIdle, getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
-import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
-import { countAssistantMessages } from "./session-messages";
+import {
+  countAssistantMessages,
+  extractMessageId,
+  extractSessionId,
+  isSessionNotFoundError,
+  readLatestSessionMessageId,
+} from "./session";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -153,7 +158,10 @@ export const ensureWorkSession = async (
       parts: [{ type: "text", text: baseline }],
     },
   });
-  const baselineMessageId = extractMessageId(baselineResp);
+  let baselineMessageId = extractMessageId(baselineResp);
+  if (!baselineMessageId) {
+    baselineMessageId = await readLatestSessionMessageId(ctx, sessionId);
+  }
   if (!baselineMessageId) {
     throw new Error("Failed to create baseline message in work session");
   }

@@ -1,7 +1,7 @@
 import { RUN_REASON } from "./run-contracts";
 import { TIMEOUTS } from "./config";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
-import { countAssistantMessages } from "./session-messages";
+import { countAssistantMessages } from "./session";
 
 export type WorkSessionInfo = { sessionId: string; baselineMessageId: string };
 

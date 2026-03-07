@@ -3,9 +3,14 @@ import path from "path";
 import { assetsDir } from "./paths";
 import { readText } from "./fs";
 import { resolvePromptText } from "./runner";
-import { readSessionMessages } from "./session-messages";
+import {
+  extractMessageId,
+  extractSessionId,
+  isSessionNotFoundError,
+  readLatestSessionMessageId,
+  readSessionMessages,
+} from "./session";
 import { forgetSessionIdle, getSessionIdleSequence, waitForSessionIdleSignal } from "./session-idle-signal";
-import { extractMessageId, extractSessionId, isSessionNotFoundError } from "./session-utils";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -69,7 +74,10 @@ export const createVerifierPhaseSession = async (opts: {
       parts: [{ type: "text", text: baseline.text }],
     },
   });
-  const baselineMessageId = extractMessageId(baselineResp);
+  let baselineMessageId = extractMessageId(baselineResp);
+  if (!baselineMessageId) {
+    baselineMessageId = await readLatestSessionMessageId(ctx, sessionId);
+  }
   if (!baselineMessageId) {
     throw new Error("Failed to create verifier phase baseline message");
   }

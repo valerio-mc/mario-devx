@@ -92,6 +92,11 @@ export const logGateRunResults = async (opts: {
   ) => Promise<void>;
 }): Promise<void> => {
   const { phase, taskId, gateResults, runCtx, logRunEvent } = opts;
+  const clipGateOutput = (value: string, maxChars = 8000): string => {
+    if (value.length <= maxChars) return value;
+    const omitted = value.length - maxChars;
+    return `${value.slice(0, maxChars)}\n...[truncated ${omitted} chars]`;
+  };
   for (const gate of gateResults) {
     await logRunEvent(
       gate.ok ? "info" : "warn",
@@ -104,8 +109,8 @@ export const logGateRunResults = async (opts: {
         exitCode: gate.exitCode,
         durationMs: gate.durationMs,
         ...(gate.ok ? {} : {
-          stdout: gate.stdout ?? "",
-          stderr: gate.stderr ?? "",
+          stdout: clipGateOutput(gate.stdout ?? ""),
+          stderr: clipGateOutput(gate.stderr ?? ""),
         }),
       },
       { runId: runCtx.runId, taskId },
@@ -185,7 +190,6 @@ const SNAPSHOT_BINARY_EXTENSIONS = new Set([
   ".jpeg",
   ".gif",
   ".webp",
-  ".svg",
   ".ico",
   ".pdf",
   ".zip",
