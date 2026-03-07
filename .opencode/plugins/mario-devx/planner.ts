@@ -182,8 +182,28 @@ export const validateTaskGraph = (prd: PrdJson): TaskGraphIssue | null => {
   return null;
 };
 
-export const getNextPrdTask = (prd: PrdJson): PrdTask | null => {
+export type NextTaskSelectionMode = "single" | "batch";
+
+export const getNextPrdTask = (
+  prd: PrdJson,
+  opts?: { mode?: NextTaskSelectionMode },
+): PrdTask | null => {
+  const mode = opts?.mode ?? "single";
   const tasks = prd.tasks ?? [];
+
+  if (mode === "batch") {
+    const priority: PrdTaskStatus[] = ["blocked", "in_progress", "open"];
+    for (const status of priority) {
+      for (const task of tasks) {
+        if (task.status !== status) continue;
+        const blockers = getTaskDependencyBlockers(prd, task);
+        if (blockers.pending.length === 0 && blockers.missing.length === 0) {
+          return task;
+        }
+      }
+    }
+    return null;
+  }
 
   for (const task of tasks) {
     if (!isRunnableCandidateStatus(task.status)) continue;
