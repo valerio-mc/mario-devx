@@ -15,6 +15,7 @@ import { RUN_EVENT, RUN_REASON } from "./run-contracts";
 import { clearToastStreamChannel } from "./toast-stream";
 import { TIMEOUTS } from "./config";
 import { runPreflightStep } from "./run-preflight-step";
+import { parseMaxItems } from "./run-preflight";
 import { finalizeRunCleanup, finalizeRunCrash } from "./run-finalize";
 import { runEngine } from "./run-engine";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
@@ -47,6 +48,8 @@ export type RunToolEngineDeps = {
     ui: PrdUiAttempt;
     judge: PrdJudgeAttempt;
     runId: string;
+    runStateStatus?: "DOING" | "BLOCKED";
+    logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
   showToast: (ctx: PluginContext, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
   logRunEvent: (
@@ -118,7 +121,7 @@ export const createRunTool = (opts: {
 
   return {
     mario_devx_run: tool({
-      description: "Run next tasks (build + verify, stops on failure)",
+      description: "Run up to N iterations (continues on task failures, stops on global blockers)",
       args: {
         max_items: tool.schema.string().optional().describe("Maximum number of tasks to attempt (default: 1)"),
       },
@@ -130,6 +133,7 @@ export const createRunTool = (opts: {
 
         await ensureMario(repoRoot, false);
         const runId = createRunId();
+        const requestedMaxItems = parseMaxItems(args.max_items);
         const controlSessionId = context.sessionID;
         if (controlSessionId) {
           clearToastStreamChannel(controlSessionId);
@@ -144,6 +148,8 @@ export const createRunTool = (opts: {
           ? previousRun.lastRunControlSessionId === context.sessionID
           : !previousRun.lastRunControlSessionId;
         if (
+          requestedMaxItems <= 1
+          &&
           sameControlSession
           && previousRun.lastRunAt
           && previousRun.lastRunResult
