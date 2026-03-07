@@ -10,6 +10,8 @@ export const finalizeRunSuccess = async (opts: {
   maxItems: number;
   prd: { tasks?: any[]; uiVerificationRequired?: boolean };
   runStartIteration: number;
+  runNotes: string[];
+  stopReason: "max_items" | "todo_exhausted" | "task_failure" | "global_blocker";
   controlSessionId?: string;
   updateRunState: (repoRoot: string, patch: Record<string, unknown>) => Promise<unknown>;
   buildRunSummary: (opts: {
@@ -19,6 +21,7 @@ export const finalizeRunSuccess = async (opts: {
     tasks: any[];
     runNotes: string[];
     uiVerifyRequired: boolean;
+    stopReason: "max_items" | "todo_exhausted" | "task_failure" | "global_blocker";
   }) => { result: string; latestTask?: { id: string } | null; judgeTopReason?: string | null };
   logRunEvent: (
     ctx: any,
@@ -42,6 +45,8 @@ export const finalizeRunSuccess = async (opts: {
     maxItems,
     prd,
     runStartIteration,
+    runNotes,
+    stopReason,
     controlSessionId,
     updateRunState,
     buildRunSummary,
@@ -69,8 +74,9 @@ export const finalizeRunSuccess = async (opts: {
     completed,
     maxItems,
     tasks: readTasks(),
-    runNotes: [],
+    runNotes,
     uiVerifyRequired: prd.uiVerificationRequired === true,
+    stopReason,
   });
 
   await updateRunState(repoRoot, {

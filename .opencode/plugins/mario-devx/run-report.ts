@@ -7,6 +7,8 @@ export type RunSummary = {
   judgeTopReason: string;
 };
 
+export type RunStopReason = "max_items" | "todo_exhausted" | "task_failure" | "global_blocker";
+
 type BuildRunSummaryOptions = {
   attempted: number;
   completed: number;
@@ -14,10 +16,11 @@ type BuildRunSummaryOptions = {
   tasks: PrdTask[];
   runNotes: string[];
   uiVerifyRequired: boolean;
+  stopReason: RunStopReason;
 };
 
 export const buildRunSummary = (opts: BuildRunSummaryOptions): RunSummary => {
-  const { attempted, completed, maxItems, tasks, runNotes, uiVerifyRequired } = opts;
+  const { attempted, completed, maxItems, tasks, runNotes, uiVerifyRequired, stopReason } = opts;
   const latestTask = tasks
     .filter((t) => t.lastAttempt)
     .sort((a, b) => (b.lastAttempt?.iteration ?? 0) - (a.lastAttempt?.iteration ?? 0))[0] ?? null;
@@ -47,13 +50,15 @@ export const buildRunSummary = (opts: BuildRunSummaryOptions): RunSummary => {
   const judgeTopReason = selectTopReason(latestAttempt);
 
   const note =
-    attempted === 0 && latestAttempt
-      ? "Stopped before execution. See task.lastAttempt.judge in .mario/prd.json."
-      : completed === attempted && attempted === maxItems
+    stopReason === "max_items"
       ? "Reached max_items limit."
-      : completed === attempted
-        ? "No more open/in_progress tasks found."
-        : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
+      : stopReason === "todo_exhausted"
+        ? "No more runnable tasks found."
+        : stopReason === "global_blocker"
+          ? "Stopped early due to global blocker. See Notes and .mario/state/mario-devx.log."
+          : attempted === 0 && latestAttempt
+            ? "Stopped before execution. See task.lastAttempt.judge in .mario/prd.json."
+            : "Stopped early due to failure. See task.lastAttempt.judge in .mario/prd.json.";
 
   const result = [
     `Run finished. Attempted: ${attempted}. Completed: ${completed}. ${note}`,
