@@ -31,7 +31,7 @@ export const createCommands = (): CommandDefinition[] => [
   ),
   command(
     "run",
-    "Run next tasks (build + verify)",
+    "Run task iterations (build + verify)",
     "Invoke mario_devx_run exactly once with max_items=$ARGUMENTS. Do not invoke any other tool. Return only the tool output.",
   ),
   command(

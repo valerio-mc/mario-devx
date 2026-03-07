@@ -49,7 +49,7 @@ Mario DevX forces the only kind of memory that actually helps:
 
 ```
 /mario-devx:new <idea>    # PRD wizard -> seeds .mario/prd.json (requirements + tasks)
-/mario-devx:run <N>       # build + gates + judge for the next N tasks
+/mario-devx:run <N>       # run up to N iterations (continues across task failures; stops early only on global blockers/exhausted tasks)
 /mario-devx:add <feature> # add a new feature request and decompose into new tasks
 /mario-devx:replan        # regenerate open-task plan from backlog requests
 /mario-devx:status        # what's running + focus task + last verdict + next action
@@ -77,6 +77,8 @@ The PRD wizard is LLM-driven and asks one high-leverage question at a time. You 
 ## How it works
 
 - `/mario-devx:run` executes in two ephemeral phases: **work** (build/repair) then **verify**.
+- For `run N` with `N > 1`, mario-devx executes up to N iterations and continues across per-task BLOCKED outcomes; it stops early only for global blockers or when no runnable tasks remain.
+- Batch-mode task selection priority is `blocked -> in_progress -> open` (while respecting task dependencies).
 - Verification pipeline is strict: deterministic gates -> UI verification (when enabled) -> LLM verifier.
 - Repair prompts include a deterministic backpressure payload from `tasks[].lastAttempt.gates.failure` (command, exit code, fingerprint, clipped output) so the model gets concrete failure receipts, not just exit codes.
 - Tasks complete only on verifier `PASS`; otherwise they are blocked with concrete next actions instead of motivational poetry.
