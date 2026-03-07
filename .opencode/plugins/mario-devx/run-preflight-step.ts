@@ -54,6 +54,8 @@ export const runPreflightStep = async (opts: {
     ui: PrdUiAttempt;
     judge: PrdJudgeAttempt;
     runId: string;
+    runStateStatus?: "DOING" | "BLOCKED";
+    logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
   logRunEvent: (

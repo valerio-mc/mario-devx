@@ -13,6 +13,7 @@ export const persistTaskFailureAttempt = async (opts: {
   ui: PrdUiAttempt;
   reasonLines: string[];
   nextActions?: string[];
+  keepRunActive?: boolean;
   persistBlockedTaskAttempt: (opts: {
     ctx: any;
     repoRoot: string;
@@ -24,6 +25,8 @@ export const persistTaskFailureAttempt = async (opts: {
     ui: PrdUiAttempt;
     judge: PrdJudgeAttempt;
     runId: string;
+    runStateStatus?: "DOING" | "BLOCKED";
+    logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
 }): Promise<PrdJson> => {
   const {
@@ -38,6 +41,7 @@ export const persistTaskFailureAttempt = async (opts: {
     ui,
     reasonLines,
     nextActions,
+    keepRunActive,
     persistBlockedTaskAttempt,
   } = opts;
   const judge: PrdJudgeAttempt = {
@@ -57,6 +61,7 @@ export const persistTaskFailureAttempt = async (opts: {
     ui,
     judge,
     runId,
+    ...(keepRunActive ? { runStateStatus: "DOING" as const, logAsRunBlocked: false } : {}),
   });
 };
 
@@ -81,6 +86,8 @@ export const handleHeartbeatFailure = async (opts: {
     ui: PrdUiAttempt;
     judge: PrdJudgeAttempt;
     runId: string;
+    runStateStatus?: "DOING" | "BLOCKED";
+    logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
   logRunEvent: (
     ctx: any,
@@ -160,6 +167,8 @@ export const handlePromptDispatchFailure = async (opts: {
     ui: PrdUiAttempt;
     judge: PrdJudgeAttempt;
     runId: string;
+    runStateStatus?: "DOING" | "BLOCKED";
+    logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
   logRunEvent: (
     ctx: any,

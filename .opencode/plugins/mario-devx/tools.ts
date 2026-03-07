@@ -1114,8 +1114,23 @@ const persistBlockedTaskAttempt = async (opts: {
   ui: PrdUiAttempt;
   judge: PrdJudgeAttempt;
   runId: string;
+  runStateStatus?: "DOING" | "BLOCKED";
+  logAsRunBlocked?: boolean;
 }): Promise<PrdJson> => {
-  const { ctx, repoRoot, prd, task, attemptAt, iteration, gates, ui, judge, runId } = opts;
+  const {
+    ctx,
+    repoRoot,
+    prd,
+    task,
+    attemptAt,
+    iteration,
+    gates,
+    ui,
+    judge,
+    runId,
+    runStateStatus = "BLOCKED",
+    logAsRunBlocked = true,
+  } = opts;
   const lastAttempt: PrdTaskAttempt = {
     at: attemptAt,
     iteration,
@@ -1127,14 +1142,16 @@ const persistBlockedTaskAttempt = async (opts: {
   nextPrd = setPrdTaskLastAttempt(nextPrd, task.id, lastAttempt);
   await writePrdJson(repoRoot, nextPrd);
   await updateRunState(repoRoot, {
-    status: "BLOCKED",
+    status: runStateStatus,
     phase: "run",
     currentPI: task.id,
   });
-  await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_FAIL_EARLY, `Run blocked on ${task.id}`, {
-    taskId: task.id,
-    reason: judge.reason?.[0] ?? "Unknown failure",
-  }, { runId, taskId: task.id, reasonCode: RUN_REASON.TASK_FAIL_EARLY });
+  if (logAsRunBlocked) {
+    await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_FAIL_EARLY, `Run blocked on ${task.id}`, {
+      taskId: task.id,
+      reason: judge.reason?.[0] ?? "Unknown failure",
+    }, { runId, taskId: task.id, reasonCode: RUN_REASON.TASK_FAIL_EARLY });
+  }
   return nextPrd;
 };
 

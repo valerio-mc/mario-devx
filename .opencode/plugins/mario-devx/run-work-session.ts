@@ -26,6 +26,8 @@ export const resetWorkSessionWithTimeout = async (opts: {
     ui: PrdUiAttempt;
     judge: PrdJudgeAttempt;
     runId: string;
+    runStateStatus?: "DOING" | "BLOCKED";
+    logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
   logRunEvent: (
     ctx: any,
