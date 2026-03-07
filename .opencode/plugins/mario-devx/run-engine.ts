@@ -86,6 +86,8 @@ export const runEngine = async (opts: {
     ui: PrdUiAttempt;
     judge: PrdJudgeAttempt;
     runId: string;
+    runStateStatus?: "DOING" | "BLOCKED";
+    logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
   logRunEvent: (
@@ -111,7 +113,15 @@ export const runEngine = async (opts: {
     },
   ) => Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }>;
   buildCapabilitySummary: (caps: { available: boolean; version: string | null; openUsage: string | null; commands: string[]; notes: string[] }) => string;
-  buildRunSummary: (opts: { attempted: number; completed: number; maxItems: number; tasks: PrdTask[]; runNotes: string[]; uiVerifyRequired: boolean }) => { result: string; latestTask?: { id: string } | null; judgeTopReason?: string | null };
+  buildRunSummary: (opts: {
+    attempted: number;
+    completed: number;
+    maxItems: number;
+    tasks: PrdTask[];
+    runNotes: string[];
+    uiVerifyRequired: boolean;
+    stopReason: "max_items" | "todo_exhausted" | "task_failure" | "global_blocker";
+  }) => { result: string; latestTask?: { id: string } | null; judgeTopReason?: string | null };
   logTaskComplete: (ctx: any, repoRoot: string, taskId: string, completed: number, total: number) => Promise<void>;
   logTaskBlocked: (ctx: any, repoRoot: string, taskId: string, reason: string) => Promise<void>;
   resetWorkSession: (ctx: any, repoRoot: string, agent: string | undefined) => Promise<{ sessionId: string; baselineMessageId: string }>;
@@ -159,6 +169,23 @@ export const runEngine = async (opts: {
   let prd = preflightPrd;
   let attempted = 0;
   let completed = 0;
+  const continueOnTaskFailure = maxItems > 1;
+  const nextTaskMode = continueOnTaskFailure ? "batch" : "single";
+  const runNotes: string[] = [];
+  let stopReason: "max_items" | "todo_exhausted" | "task_failure" | "global_blocker" = "max_items";
+
+  const noteGlobalBlocker = (note: string): void => {
+    stopReason = "global_blocker";
+    if (!runNotes.includes(note)) {
+      runNotes.push(note);
+    }
+  };
+
+  const noteTaskFailureStop = (): void => {
+    if (stopReason !== "global_blocker") {
+      stopReason = "task_failure";
+    }
+  };
 
   const runLog = async (level: "info" | "warn" | "error", event: string, message: string, extra?: Record<string, unknown>, meta?: { runId?: string; taskId?: string; reasonCode?: string }): Promise<void> => {
     await logRunEvent(ctx, repoRoot, level, event, message, extra, meta);
@@ -194,8 +221,18 @@ export const runEngine = async (opts: {
   };
 
   while (attempted < maxItems) {
-    const task = getNextPrdTask(prd);
-    if (!task) break;
+    const task = getNextPrdTask(prd, { mode: nextTaskMode });
+    if (!task) {
+      const hasNonTerminalTasks = (prd.tasks ?? []).some((t) => t.status !== "completed" && t.status !== "cancelled");
+      if (hasNonTerminalTasks) {
+        noteGlobalBlocker("No runnable tasks are currently eligible (all remaining tasks are dependency-blocked).");
+      } else {
+        stopReason = "todo_exhausted";
+      }
+      break;
+    }
+
+    attempted += 1;
 
     const dependencyBlockers = getTaskDependencyBlockers(prd, task);
     if (dependencyBlockers.pending.length > 0 || dependencyBlockers.missing.length > 0) {
@@ -218,14 +255,30 @@ export const runEngine = async (opts: {
             : `Fix missing dependency ${missingDep} in .mario/prd.json, then rerun /mario-devx:run 1.`,
         ],
       };
-      prd = await persistBlockedTaskAttempt({ ctx, repoRoot, prd, task, attemptAt, iteration: state.iteration, gates, ui, judge, runId });
+      prd = await persistBlockedTaskAttempt({
+        ctx,
+        repoRoot,
+        prd,
+        task,
+        attemptAt,
+        iteration: state.iteration,
+        gates,
+        ui,
+        judge,
+        runId,
+        ...(continueOnTaskFailure ? { runStateStatus: "DOING" as const, logAsRunBlocked: false } : {}),
+      });
       await showToast(ctx, blockerTask ? `Run blocked: ${task.id} requires ${blockerTask.id}` : `Run blocked: ${task.id} has missing dependency ${missingDep}`, "warning");
-      break;
+      await logTaskBlocked(ctx, repoRoot, task.id, detail);
+      if (!continueOnTaskFailure) {
+        stopReason = "task_failure";
+        break;
+      }
+      continue;
     }
 
     const effectiveDoneWhen = resolveEffectiveDoneWhen(prd, task);
     const gateCommands = toGateCommands(effectiveDoneWhen);
-    attempted += 1;
 
     prd = setPrdTaskStatus(prd, task.id, "in_progress");
     await writePrdJson(repoRoot, prd);
@@ -334,11 +387,15 @@ export const runEngine = async (opts: {
 
     if (!(await heartbeatRunLock(repoRoot, runId))) {
       await blockForHeartbeatFailure("pre-work-session-reset");
+      noteGlobalBlocker("Failed to update run lock heartbeat before work-session reset.");
       break;
     }
 
     ws = await resetWorkSessionWithTimeout();
-    if (!ws) break;
+    if (!ws) {
+      noteGlobalBlocker("Work session reset failed.");
+      break;
+    }
 
     await setWorkSessionTitle(ctx, ws.sessionId, `mario-devx (work) - ${task.id}`);
     await updateRunState(repoRoot, {
@@ -359,10 +416,14 @@ export const runEngine = async (opts: {
     }
 
     const buildPromptDispatch = await promptWorkSessionWithTimeout("build", buildModePrompt);
-    if (!buildPromptDispatch.ok) break;
+    if (!buildPromptDispatch.ok) {
+      noteGlobalBlocker("Work prompt dispatch failed during build phase.");
+      break;
+    }
 
     if (!(await heartbeatRunLock(repoRoot, runId))) {
       await blockForHeartbeatFailure("after-build-prompt");
+      noteGlobalBlocker("Failed to update run lock heartbeat after build prompt.");
       break;
     }
 
@@ -395,6 +456,13 @@ export const runEngine = async (opts: {
         ],
       };
       prd = await persistBlockedTaskAttempt({ ctx, repoRoot, prd, task, attemptAt, iteration: state.iteration, gates, ui, judge, runId });
+      noteGlobalBlocker(
+        idle.reason === "aborted"
+          ? "Run interrupted while waiting for work-session progress."
+          : idle.reason === "timeout"
+            ? "Work session did not become idle before timeout."
+            : "Work-session idle/progress wait failed before deterministic gates.",
+      );
       break;
     }
     if (!workIdleAnnounced) {
@@ -449,6 +517,7 @@ export const runEngine = async (opts: {
     let repairAttempts = gateRepair.repairAttempts;
     let totalRepairAttempts = gateRepair.totalRepairAttempts;
     const stoppedForNoChanges = gateRepair.stoppedForNoChanges;
+    const stoppedForGlobalBlocker = gateRepair.stoppedForGlobalBlocker;
     const lastNoChangeGate = gateRepair.lastNoChangeGate;
 
     let latestGateResult = gateResult;
@@ -456,8 +525,16 @@ export const runEngine = async (opts: {
     let gates = toGatesAttempt(latestGateResult);
     let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi: task.lastAttempt?.ui, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
     let uiVerifyBlockedLogged = false;
+    let taskFailureRecorded = false;
 
-    const failEarly = async (reasonLines: string[], nextActions?: string[]): Promise<void> => {
+    const failEarly = async (
+      reasonLines: string[],
+      nextActions?: string[],
+      scope: "task" | "global" = "task",
+    ): Promise<void> => {
+      if (scope === "task") {
+        taskFailureRecorded = true;
+      }
       prd = await persistTaskFailureAttempt({
         ctx,
         repoRoot,
@@ -470,8 +547,16 @@ export const runEngine = async (opts: {
         ui,
         reasonLines,
         nextActions,
+        keepRunActive: scope === "task" && continueOnTaskFailure,
         persistBlockedTaskAttempt,
       });
+    };
+
+    const latestBlockedReasonForTask = (): string => {
+      const latestTask = (prd.tasks ?? []).find((candidate) => candidate.id === task.id);
+      return firstActionableJudgeReason(latestTask?.lastAttempt?.judge)
+        ?? latestTask?.lastAttempt?.judge?.reason?.[0]
+        ?? "No reason provided";
     };
 
     const logUiVerifyBlocked = async (phase: string): Promise<void> => {
@@ -488,12 +573,25 @@ export const runEngine = async (opts: {
       );
     };
 
+    if (!latestGateResult.ok && stoppedForGlobalBlocker) {
+      noteGlobalBlocker("Gate auto-repair was interrupted by an infrastructure failure (prompt/heartbeat/idle). See latest task.lastAttempt.");
+      break;
+    }
+
     if (!latestGateResult.ok && stoppedForNoChanges) {
       await failEarly([
         formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
         `Repair loop produced no source-file changes across consecutive attempts (last failing gate: ${lastNoChangeGate ?? "unknown"}).`,
       ]);
-      break;
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        break;
+      }
+      const failureReason = latestGateResult.failed
+        ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})`
+        : "unknown gate";
+      await logTaskBlocked(ctx, repoRoot, task.id, `Repair loop made no progress (last failing gate: ${failureReason}).`);
+      continue;
     }
     if (!latestGateResult.ok) {
       const failed = latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)";
@@ -502,7 +600,12 @@ export const runEngine = async (opts: {
         `Deterministic gate failed: ${failed}.`,
         `Auto-repair stopped across ${repairAttempts} attempt(s) (total repair turns: ${totalRepairAttempts}/${maxTotalRepairAttempts}; no-progress or time budget reached).`,
       ]);
-      break;
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        break;
+      }
+      await logTaskBlocked(ctx, repoRoot, task.id, `Deterministic gate failed: ${failed}.`);
+      continue;
     }
 
     if (uiVerifyEnabled && isWebApp && (prereqInstalling || !cliOk || !skillOk || !browserOk)) {
@@ -521,7 +624,9 @@ export const runEngine = async (opts: {
         [
           "Wait for prerequisite installation to finish, then rerun /mario-devx:run 1.",
         ],
+        "global",
       );
+      noteGlobalBlocker("UI verification prerequisites are missing or still installing.");
       break;
     }
 
@@ -531,7 +636,13 @@ export const runEngine = async (opts: {
         formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
         latestUiResult.note?.trim() || "UI verification failed.",
       ], buildUiVerifyFailedNextActions(latestUiResult.note, ui.failure));
-      break;
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        break;
+      }
+      const uiReason = latestUiResult.note?.trim() || "UI verification failed.";
+      await logTaskBlocked(ctx, repoRoot, task.id, uiReason);
+      continue;
     }
 
     const artifactCheck = await checkAcceptanceArtifacts(repoRoot, task.acceptance ?? []);
@@ -541,7 +652,12 @@ export const runEngine = async (opts: {
         ...(artifactCheck.missingFiles.length > 0 ? [`Missing expected files: ${artifactCheck.missingFiles.join(", ")}.`] : []),
         ...(artifactCheck.missingLabels.length > 0 ? [`Missing expected navigation labels in app shell: ${artifactCheck.missingLabels.join(", ")}.`] : []),
       ]);
-      break;
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        break;
+      }
+      await logTaskBlocked(ctx, repoRoot, task.id, "Acceptance artifacts missing.");
+      continue;
     }
 
     if (!verifyPhaseAnnounced) {
@@ -652,6 +768,13 @@ export const runEngine = async (opts: {
       const previousUi = ui;
       ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
 
+      if (!latestGateResult.ok && semanticGateRepair.stoppedForGlobalBlocker) {
+        blockedByVerifierFailure = true;
+        judge = null;
+        noteGlobalBlocker("Gate auto-repair after semantic regression was interrupted by an infrastructure failure (prompt/heartbeat/idle).");
+        break;
+      }
+
       if (!latestGateResult.ok && semanticGateRepair.stoppedForNoChanges) {
         await failEarly([
           formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
@@ -691,10 +814,24 @@ export const runEngine = async (opts: {
           ? ui.note.trim()
           : latestUiResult?.note?.trim() || "UI verification failed.",
       ], buildUiVerifyFailedNextActions(typeof ui.note === "string" ? ui.note : latestUiResult?.note, ui.failure));
-      break;
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        break;
+      }
+      await logTaskBlocked(ctx, repoRoot, task.id, latestBlockedReasonForTask());
+      continue;
     }
 
     if (blockedByVerifierFailure || !judge) {
+      if (taskFailureRecorded) {
+        await logTaskBlocked(ctx, repoRoot, task.id, latestBlockedReasonForTask());
+        if (!continueOnTaskFailure) {
+          noteTaskFailureStop();
+          break;
+        }
+        continue;
+      }
+      noteGlobalBlocker(`Global blocker while verifying ${task.id}.`);
       break;
     }
 
@@ -706,7 +843,7 @@ export const runEngine = async (opts: {
       judge,
     };
     await updateRunState(repoRoot, {
-      status: judge.status === "PASS" ? "DOING" : "BLOCKED",
+      status: judge.status === "PASS" || continueOnTaskFailure ? "DOING" : "BLOCKED",
       phase: "run",
       currentPI: task.id,
       ...(controlSessionId ? { controlSessionId } : {}),
@@ -724,7 +861,11 @@ export const runEngine = async (opts: {
     } else {
       const blockedReason = firstActionableJudgeReason(judge) ?? judge.reason?.[0] ?? "No reason provided";
       await logTaskBlocked(ctx, repoRoot, task.id, blockedReason);
-      break;
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        break;
+      }
+      continue;
     }
   }
 
@@ -742,6 +883,8 @@ export const runEngine = async (opts: {
     updateRunState,
     buildRunSummary,
     logRunEvent,
+    runNotes,
+    stopReason,
     readTasks: () => prd.tasks ?? [],
     finishedEvent: RUN_EVENT.FINISHED,
   });

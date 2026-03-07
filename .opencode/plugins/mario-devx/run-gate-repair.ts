@@ -69,6 +69,7 @@ export const runGateRepairLoop = async (opts: {
   repairAttempts: number;
   totalRepairAttempts: number;
   stoppedForNoChanges: boolean;
+  stoppedForGlobalBlocker: boolean;
   lastNoChangeGate: string | null;
   workIdleAnnounced: boolean;
 }> => {
@@ -107,6 +108,7 @@ export const runGateRepairLoop = async (opts: {
   let noProgressStreak = 0;
   let noChangeStreak = 0;
   let stoppedForNoChanges = false;
+  let stoppedForGlobalBlocker = false;
   let lastNoChangeGate: string | null = null;
   let lastGateFailureSig: string | null = null;
   let deterministicScaffoldTried = false;
@@ -174,16 +176,21 @@ export const runGateRepairLoop = async (opts: {
     const repairSnapshotBefore = await captureWorkspaceSnapshot(repoRoot);
     const repairPromptDispatch = await promptWorkSessionWithTimeout("repair", repairPrompt);
     if (!repairPromptDispatch.ok) {
+      stoppedForGlobalBlocker = true;
       break;
     }
 
     if (!(await heartbeatRunLock())) {
       await blockForHeartbeatFailure("during-auto-repair");
+      stoppedForGlobalBlocker = true;
       break;
     }
 
     const repairIdleOk = await waitForWorkIdleAfterPrompt(repairPromptDispatch, "repair");
-    if (!repairIdleOk) break;
+    if (!repairIdleOk) {
+      stoppedForGlobalBlocker = true;
+      break;
+    }
     if (!workIdleAnnounced) {
       workIdleAnnounced = true;
       await showToast(ctx, `Run: work phase idle for ${task.id}`, "success");
@@ -227,6 +234,7 @@ export const runGateRepairLoop = async (opts: {
     repairAttempts,
     totalRepairAttempts,
     stoppedForNoChanges,
+    stoppedForGlobalBlocker,
     lastNoChangeGate,
     workIdleAnnounced,
   };

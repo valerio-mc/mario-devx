@@ -94,7 +94,7 @@ export const runSemanticRepairLoop = async (opts: {
     skillOk: boolean;
     browserOk: boolean;
   }) => any;
-  failEarly: (reasonLines: string[], nextActions?: string[]) => Promise<void>;
+  failEarly: (reasonLines: string[], nextActions?: string[], scope?: "task" | "global") => Promise<void>;
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
 }): Promise<{
   blockedByVerifierFailure: boolean;
@@ -201,7 +201,7 @@ export const runSemanticRepairLoop = async (opts: {
     }
 
     if ("transportFailure" in verifierOutcome) {
-      await failEarly(verifierOutcome.transportFailure.reason, verifierOutcome.transportFailure.nextActions);
+      await failEarly(verifierOutcome.transportFailure.reason, verifierOutcome.transportFailure.nextActions, "global");
       blockedByVerifierFailure = true;
       break;
     }
