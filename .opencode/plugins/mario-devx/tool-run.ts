@@ -51,16 +51,6 @@ export type RunToolEngineDeps = {
     runStateStatus?: "DOING" | "BLOCKED";
     logAsRunBlocked?: boolean;
   }) => Promise<PrdJson>;
-  showToast: (ctx: PluginContext, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
-  logRunEvent: (
-    ctx: PluginContext,
-    repoRoot: string,
-    level: "info" | "warn" | "error",
-    event: string,
-    message: string,
-    extra?: Record<string, unknown>,
-    runCtx?: RunLogMeta,
-  ) => Promise<void>;
   runShellWithFailureLog: (
     ctx: PluginContext,
     repoRoot: string,
