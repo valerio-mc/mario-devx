@@ -1,6 +1,6 @@
 import path from "path";
 import { createHash } from "crypto";
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import { closeSync, openSync } from "fs";
 import { copyFile, mkdir, readFile, realpath, stat } from "fs/promises";
 import { runShellLogged } from "./shell";
@@ -96,6 +96,7 @@ type DevServerFailureAnalysis = {
   kind: "next-dev-lock" | "port-in-use" | "generic";
   subtype?: "NEXT_DEV_LOCK_HELD" | "EADDRINUSE";
   lockPathRel?: string;
+  pid?: number;
   portInUse?: number;
 };
 
@@ -142,6 +143,42 @@ const toRepoRelativePath = (repoRoot: string, absOrRelPath: string): string => {
   return absOrRelPath.replace(/\\/g, "/");
 };
 
+const findLockHolderPid = (lockPath: string): number | null => {
+  if (!lockPath || process.platform === "win32") {
+    return null;
+  }
+  try {
+    const result = spawnSync("lsof", ["-nP", lockPath, "-Fp"], {
+      encoding: "utf8",
+    });
+    const output = `${result.stdout ?? ""}`;
+    const pidLine = output.split(/\r?\n/).find((line) => /^p\d+$/.test(line.trim()));
+    if (!pidLine) return null;
+    const pid = Number.parseInt(pidLine.trim().slice(1), 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+};
+
+const findListeningPidForPort = (port: number): number | null => {
+  if (!Number.isFinite(port) || port <= 0 || process.platform === "win32") {
+    return null;
+  }
+  try {
+    const result = spawnSync("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-Fp"], {
+      encoding: "utf8",
+    });
+    const output = `${result.stdout ?? ""}`;
+    const pidLine = output.split(/\r?\n/).find((line) => /^p\d+$/.test(line.trim()));
+    if (!pidLine) return null;
+    const pid = Number.parseInt(pidLine.trim().slice(1), 10);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+};
+
 const stripAnsi = (text: string): string => {
   return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\u001b[@-_]/g, "");
 };
@@ -174,22 +211,36 @@ const analyzeDevServerFailure = async (opts: {
     const lockPath = parseNextDevLockPath(text);
     if (lockPath) {
       const lockPathRel = toRepoRelativePath(repoRoot, lockPath);
+      const pid = findLockHolderPid(lockPath);
       return {
-        note: appendLogTail(`UI dev server failed to start: Next dev lock is held at ${lockPathRel}. See ${logPathRel}.`, logTail),
+        note: appendLogTail(
+          pid
+            ? `UI dev server failed to start: Next dev lock is held at ${lockPathRel} by pid ${pid}. See ${logPathRel}.`
+            : `UI dev server failed to start: Next dev lock is held at ${lockPathRel}. See ${logPathRel}.`,
+          logTail,
+        ),
         knownIssue: true,
         kind: "next-dev-lock",
         subtype: "NEXT_DEV_LOCK_HELD",
         lockPathRel,
+        ...(typeof pid === "number" ? { pid } : {}),
       };
     }
 
     const port = parseAddressInUsePort(text);
     if (port) {
+      const pid = findListeningPidForPort(port);
       return {
-        note: appendLogTail(`UI dev server failed to start: port ${port} is already in use. See ${logPathRel}.`, logTail),
+        note: appendLogTail(
+          pid
+            ? `UI dev server failed to start: port ${port} is already in use by pid ${pid}. See ${logPathRel}.`
+            : `UI dev server failed to start: port ${port} is already in use. See ${logPathRel}.`,
+          logTail,
+        ),
         knownIssue: true,
         kind: "port-in-use",
         subtype: "EADDRINUSE",
+        ...(typeof pid === "number" ? { pid } : {}),
         portInUse: port,
       };
     }
@@ -220,6 +271,7 @@ const logKnownServerFailure = async (log: UiLog | undefined, analysis: DevServer
       reasonCode: "UI_VERIFY_STEP_FAILED",
       extra: {
         ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
+        ...(typeof analysis.pid === "number" ? { pid: analysis.pid } : {}),
       },
     });
     return;
@@ -231,6 +283,7 @@ const logKnownServerFailure = async (log: UiLog | undefined, analysis: DevServer
       message: "Dev server startup failed because listening port is already in use",
       reasonCode: "UI_VERIFY_STEP_FAILED",
       extra: {
+        ...(typeof analysis.pid === "number" ? { pid: analysis.pid } : {}),
         ...(typeof analysis.portInUse === "number" ? { port: analysis.portInUse } : {}),
       },
     });
@@ -483,6 +536,7 @@ export const runUiVerification = async (opts: {
           note: `${note}${transcriptSuffix()}`,
           failure: buildFailure({
             subtype: analysis.subtype ?? "UNKNOWN",
+            ...(typeof analysis.pid === "number" ? { pid: analysis.pid } : {}),
             ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
           }),
         };
@@ -512,6 +566,7 @@ export const runUiVerification = async (opts: {
           note: `${note}${transcriptSuffix()}`,
           failure: buildFailure({
             subtype: analysis.subtype ?? "UNKNOWN",
+            ...(typeof analysis.pid === "number" ? { pid: analysis.pid } : {}),
             ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
           }),
         };
@@ -611,6 +666,7 @@ export const runUiVerification = async (opts: {
           note: `${detailsWithSubtype}${transcriptSuffix()}`,
           failure: buildFailure({
             subtype: resolvedSubtype,
+            ...(typeof knownServerIssue?.pid === "number" ? { pid: knownServerIssue.pid } : {}),
             ...(knownServerIssue?.lockPathRel ? { lockPath: knownServerIssue.lockPathRel } : {}),
           }),
         };
