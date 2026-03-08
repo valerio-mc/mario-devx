@@ -82,6 +82,8 @@ The PRD wizard is LLM-driven and asks one high-leverage question at a time. You 
 - Verification pipeline is strict: deterministic gates -> UI verification (when enabled) -> LLM verifier.
 - When UI verification is enabled for a web app, mario-devx bootstraps missing `agent-browser` prerequisites first and keeps the run blocked until the installer finishes.
 - Repair prompts include a deterministic backpressure payload from `tasks[].lastAttempt.gates.failure` (command, exit code, fingerprint, clipped output) so the model gets concrete failure receipts, not just exit codes.
+- Semantic repair reads repo-local UI evidence paths from `tasks[].lastAttempt.ui.evidence` when UI verification failed, so the model can inspect artifacts directly instead of relying on clipped inline excerpts.
+- Repair idle waits persist factual blocker detail as `WORK_SESSION_IDLE_TIMEOUT` or `WORK_SESSION_IDLE_ABORTED` rather than collapsing into a generic infrastructure failure.
 - Tasks complete only on verifier `PASS`; otherwise they are blocked with concrete next actions instead of motivational poetry.
 - Progress streams back to your control session as throttled toasts (text + tool lifecycle + patch updates).
 - Toast streaming is on by default; set `STREAM_WORK=0` and/or `STREAM_VERIFY=0` in `.mario/AGENTS.md` to disable.
@@ -107,6 +109,7 @@ STREAM_VERIFY=1
 When the PRD wizard marks a project as frontend work, mario-devx syncs that UI verification choice into `.mario/AGENTS.md` (`UI_VERIFY=1` when the wizard says yes, otherwise `UI_VERIFY=0`), keeps `UI_VERIFY_REQUIRED` aligned when UI verification is enabled, and auto-installs missing `agent-browser` prerequisites in the background (non-interactive first). While that bootstrap is running, `/mario-devx:run` stays blocked and points you at the install log so UI verification starts from a known-good toolchain. It then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
 
 UI evidence includes accessibility snapshots, console/errors, and an optional screenshot. mario-devx persists all UI evidence as repo-local files under `.mario/state/ui-evidence/<taskId>/`, and `tasks[].lastAttempt.ui.evidence` stores only those repository-local paths.
+When UI startup fails, mario-devx keeps the recorded next actions subtype-aware (lock held, port conflict, unreachable URL) instead of prescribing one specific shell command.
 
 Verifier output is stored under `tasks[].lastAttempt.judge` as structured JSON (`status`, `reason`, `nextActions`).
 Deterministic gate failure receipts are stored under `tasks[].lastAttempt.gates.failure` (`command`, `exitCode`, `fingerprint`, `outputExcerpt`).
@@ -146,7 +149,9 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **Run blocked before coding starts** | Check `.mario/prd.json` for missing `tasks` or `qualityGates`, fix reality, then rerun `/mario-devx:run 1`. |
 | **Run says another run is in progress (`run.lock`)** | Run `/mario-devx:doctor` to auto-clear stale locks, then rerun `/mario-devx:run 1`. |
 | **Run blocked with `WORK_SESSION_NO_PROGRESS`** | The same gate failure repeated while tracked source/config files did not change. Read `tasks[].lastAttempt.gates.failure.outputExcerpt` in `.mario/prd.json` and `run.repair.backpressure` entries in `.mario/state/mario-devx.log`, then rerun `/mario-devx:run 1`. |
-| **UI verification fails to start** | Read `tasks[].lastAttempt.ui.note` and `.mario/state/ui-evidence/<taskId>/dev-server.log` for subtype/log-tail details. |
+| **Run blocked with `WORK_SESSION_IDLE_TIMEOUT` or `WORK_SESSION_IDLE_ABORTED`** | Read `tasks[].lastAttempt.judge.reason` for the factual idle-wait detail, then inspect `.mario/state/mario-devx.log` for work-session idle diagnostics before rerunning `/mario-devx:run 1`. |
+| **Run blocked with repeated verifier findings** | The verifier is surfacing the same actionable failure again. Read `tasks[].lastAttempt.judge.reason` and `tasks[].lastAttempt.judge.nextActions`, then make explicit edits that address that evidence instead of broad refinements. |
+| **UI verification fails to start** | Read `tasks[].lastAttempt.ui.note`, `tasks[].lastAttempt.judge.nextActions`, and `.mario/state/ui-evidence/<taskId>/dev-server.log` for subtype/log-tail details. |
 | **Anything weird / stuck / transport-y** | Run `/mario-devx:doctor` and attach `.mario/state/mario-devx.log`, `.mario/state/state.json`, `.mario/prd.json` so we debug facts, not folklore. |
 
 ## Acknowledgements
