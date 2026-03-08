@@ -106,7 +106,7 @@ STREAM_VERIFY=1
 
 When the PRD wizard marks a project as frontend work, mario-devx syncs that UI verification choice into `.mario/AGENTS.md` (`UI_VERIFY=1` when the wizard says yes, otherwise `UI_VERIFY=0`), keeps `UI_VERIFY_REQUIRED` aligned when UI verification is enabled, and auto-installs missing `agent-browser` prerequisites in the background (non-interactive first). While that bootstrap is running, `/mario-devx:run` stays blocked and points you at the install log so UI verification starts from a known-good toolchain. It then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
 
-UI evidence includes accessibility snapshots, console/errors, and an optional screenshot. Screenshots and dev-server logs are saved under `.mario/state/ui-evidence/<taskId>/` (repo-local, so the verifier can `Read` them without external directory permissions); snapshots/console/errors may stay inline in `tasks[].lastAttempt.ui.evidence` or be copied repo-local when agent-browser returns temp-file paths.
+UI evidence includes accessibility snapshots, console/errors, and an optional screenshot. mario-devx persists all UI evidence as repo-local files under `.mario/state/ui-evidence/<taskId>/`, and `tasks[].lastAttempt.ui.evidence` stores only those repository-local paths.
 
 Verifier output is stored under `tasks[].lastAttempt.judge` as structured JSON (`status`, `reason`, `nextActions`).
 Deterministic gate failure receipts are stored under `tasks[].lastAttempt.gates.failure` (`command`, `exitCode`, `fingerprint`, `outputExcerpt`).
@@ -122,7 +122,7 @@ In your project:
   state/state.json           # internal state (iteration + run status)
   state/run.lock             # active-run lock + heartbeat
   state/mario-devx.log       # centralized structured run/tool logs (auto-capped at 50MB)
-  state/ui-evidence/         # UI verification artifacts (per-task; snapshot/screenshot pointers live in prd.json)
+  state/ui-evidence/         # UI verification artifacts (per-task; prd.json stores repo-local evidence paths only)
 ```
 
 In this repo:
