@@ -49,7 +49,7 @@ Mario DevX forces the only kind of memory that actually helps:
 
 ```
 /mario-devx:new <idea>    # PRD wizard -> seeds .mario/prd.json (requirements + tasks)
-/mario-devx:run <N>       # run up to N iterations (continues across task failures; stops early only on global blockers/exhausted tasks)
+/mario-devx:run <N>       # run up to N iterations (for N > 1, continues across task failures; stops early only on global blockers/exhausted tasks)
 /mario-devx:add <feature> # add a new feature request and decompose into new tasks
 /mario-devx:replan        # regenerate open-task plan from backlog requests
 /mario-devx:status        # what's running + focus task + last verdict + next action
@@ -104,9 +104,9 @@ STREAM_VERIFY=1
 
 ## Frontend verification
 
-When `frontend: true`, mario-devx auto-syncs `.mario/AGENTS.md` to enable UI verification (`UI_VERIFY=1`) during `/mario-devx:run`, sets `UI_VERIFY_REQUIRED` from PRD policy, and auto-installs missing `agent-browser` prerequisites in the background (non-interactive first). While that bootstrap is running, `/mario-devx:run` stays blocked and points you at the install log so UI verification starts from a known-good toolchain. It then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
+When the PRD wizard marks a project as frontend work, mario-devx syncs that UI verification choice into `.mario/AGENTS.md` (`UI_VERIFY=1` when the wizard says yes, otherwise `UI_VERIFY=0`), keeps `UI_VERIFY_REQUIRED` aligned when UI verification is enabled, and auto-installs missing `agent-browser` prerequisites in the background (non-interactive first). While that bootstrap is running, `/mario-devx:run` stays blocked and points you at the install log so UI verification starts from a known-good toolchain. It then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
 
-UI evidence includes accessibility snapshots, console/errors, and an optional screenshot saved under `.mario/state/ui-evidence/<taskId>/` (repo-local, so the verifier can `Read` it without external directory permissions).
+UI evidence includes accessibility snapshots, console/errors, and an optional screenshot. Screenshots and dev-server logs are saved under `.mario/state/ui-evidence/<taskId>/` (repo-local, so the verifier can `Read` them without external directory permissions); snapshots/console/errors may stay inline in `tasks[].lastAttempt.ui.evidence` or be copied repo-local when agent-browser returns temp-file paths.
 
 Verifier output is stored under `tasks[].lastAttempt.judge` as structured JSON (`status`, `reason`, `nextActions`).
 Deterministic gate failure receipts are stored under `tasks[].lastAttempt.gates.failure` (`command`, `exitCode`, `fingerprint`, `outputExcerpt`).
