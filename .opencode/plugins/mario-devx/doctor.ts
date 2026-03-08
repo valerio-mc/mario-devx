@@ -23,7 +23,7 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
   const prdLoad = await tryLoadPrd(() => readPrdJsonIfExists(repoRoot));
   let prd = null;
   let prdReadBlocked = false;
-  if (!prdLoad.ok) {
+  if (prdLoad.ok === false) {
     prdReadBlocked = true;
     issues.push(prdLoad.message);
     fixes.push("After regenerating PRD, rerun /mario-devx:doctor.");

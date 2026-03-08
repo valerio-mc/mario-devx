@@ -86,7 +86,7 @@ export const createBacklogTools = (opts: {
       },
       async execute(args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
+        if (notInWork.ok === false) {
           await logToolEvent(ctx, repoRoot, "warn", "add.blocked.work-session", "Feature add blocked in work session");
           return notInWork.message;
         }
@@ -97,7 +97,7 @@ export const createBacklogTools = (opts: {
             await logToolEvent(ctx, repoRoot, "error", "add.prd.read-failed", "Feature add blocked: PRD read failed", getPrdReadErrorExtra(error));
           },
         );
-        if (!prdLoad.ok) {
+        if (prdLoad.ok === false) {
           return prdLoad.message;
         }
         let prd: PrdJson = prdLoad.value;
@@ -204,7 +204,7 @@ export const createBacklogTools = (opts: {
           };
 
           const parsedEnvelope = tryParseJson<typeof envelope>(featureJson);
-          if (!parsedEnvelope.ok) {
+          if (parsedEnvelope.ok === false) {
             await logToolEvent(ctx, repoRoot, "error", "add.parse.invalid-json", "Feature interview JSON parse failed", {
               error: parsedEnvelope.error,
               rawJson: redactForLog(featureJson),
@@ -313,7 +313,7 @@ export const createBacklogTools = (opts: {
       args: {},
       async execute(_args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
+        if (notInWork.ok === false) {
           await logToolEvent(ctx, repoRoot, "warn", "replan.blocked.work-session", "Replan blocked in work session");
           return notInWork.message;
         }
@@ -324,7 +324,7 @@ export const createBacklogTools = (opts: {
             await logToolEvent(ctx, repoRoot, "error", "replan.prd.read-failed", "Replan blocked: PRD read failed", getPrdReadErrorExtra(error));
           },
         );
-        if (!prdLoad.ok) {
+        if (prdLoad.ok === false) {
           return prdLoad.message;
         }
         let prd: PrdJson = prdLoad.value;
@@ -432,7 +432,7 @@ export const createBacklogTools = (opts: {
           if (replanJson) {
             try {
               const parsedResult = tryParseJson<{ breakdowns?: unknown }>(replanJson);
-              if (!parsedResult.ok) {
+              if (parsedResult.ok === false) {
                 throw new Error(parsedResult.error);
               }
               const parsed = parsedResult.value;

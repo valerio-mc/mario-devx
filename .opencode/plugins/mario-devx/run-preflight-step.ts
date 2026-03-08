@@ -107,7 +107,7 @@ export const runPreflightStep = async (opts: {
       await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_PRD_INCOMPLETE, "Run blocked: PRD read failed", getPrdReadErrorExtra(error), { runId, reasonCode: RUN_REASON.PRD_INCOMPLETE });
     },
   );
-  if (!prdLoad.ok) {
+  if (prdLoad.ok === false) {
     await showToast(ctx, "Run blocked: PRD load failed", "warning");
     return {
       blocked: true,
@@ -119,7 +119,7 @@ export const runPreflightStep = async (opts: {
   const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
   const workspaceAbs = workspaceRoot === "." ? repoRoot : `${repoRoot}/${workspaceRoot}`;
   const prerequisites = validateRunPrerequisites(prd);
-  if (!prerequisites.ok) {
+  if (prerequisites.ok === false) {
     const event = prerequisites.reasonCode === RUN_REASON.PRD_INCOMPLETE
       ? RUN_EVENT.BLOCKED_PRD_INCOMPLETE
       : prerequisites.reasonCode === RUN_REASON.NO_TASKS

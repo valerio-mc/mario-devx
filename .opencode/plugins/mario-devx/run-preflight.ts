@@ -19,12 +19,16 @@ export const parseMaxItems = (rawMax: string | undefined): number => {
   return Number.isFinite(parsed) ? Math.min(100, Math.max(1, parsed)) : 1;
 };
 
-export const validateRunPrerequisites = (prd: PrdJson): {
-  ok: boolean;
-  message?: string;
-  reasonCode?: RunReasonCode;
-  extra?: Record<string, unknown>;
-} => {
+export const validateRunPrerequisites = (prd: PrdJson):
+  | {
+    ok: true;
+  }
+  | {
+    ok: false;
+    message: string;
+    reasonCode: RunReasonCode;
+    extra?: Record<string, unknown>;
+  } => {
   if (prd.wizard.status !== "completed") {
     return {
       ok: false,

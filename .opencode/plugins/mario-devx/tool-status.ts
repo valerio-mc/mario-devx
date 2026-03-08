@@ -27,7 +27,7 @@ export const createStatusTool = (opts: {
             await logToolEvent(ctx, repoRoot, "error", "status.prd.read-failed", "Status blocked: PRD read failed", getPrdReadErrorExtra(error));
           },
         );
-        if (!prdLoad.ok) {
+        if (prdLoad.ok === false) {
           return prdLoad.message;
         }
         const prd = prdLoad.value;

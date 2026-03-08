@@ -127,7 +127,7 @@ export const createRunTool = (opts: {
       },
       async execute(args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
+        if (notInWork.ok === false) {
           return notInWork.message;
         }
 
@@ -173,7 +173,7 @@ export const createRunTool = (opts: {
             }, { runId, reasonCode: RUN_REASON.STALE_LOCK_REMOVED });
           }
         });
-        if (!lock.ok) {
+        if (lock.ok === false) {
           await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.LOCK_ACQUIRE_FAILED, "Run lock acquire failed", {
             lockMessage: lock.message,
           }, { runId, reasonCode: RUN_REASON.RUN_LOCK_HELD });
@@ -221,7 +221,7 @@ export const createRunTool = (opts: {
             logRunEvent,
             buildCapabilitySummary,
           });
-          if (preflight.blocked) {
+          if (preflight.blocked === true) {
             await writeRunState(repoRoot, {
               ...(await readRunState(repoRoot)),
               status: "BLOCKED",
@@ -232,6 +232,7 @@ export const createRunTool = (opts: {
             });
             return preflight.message;
           }
+          const readyPreflight = preflight;
 
           return await runEngine({
             runCtx: {
@@ -239,17 +240,17 @@ export const createRunTool = (opts: {
               repoRoot,
               runId,
               controlSessionId: context.sessionID,
-              workspaceRoot: preflight.workspaceRoot,
-              workspaceAbs: preflight.workspaceAbs,
-              sessionAgents: preflight.sessionAgents,
-              uiSetup: preflight.uiSetup,
-              agentBrowserCaps: preflight.agentBrowserCaps,
+              workspaceRoot: readyPreflight.workspaceRoot,
+              workspaceAbs: readyPreflight.workspaceAbs,
+              sessionAgents: readyPreflight.sessionAgents,
+              uiSetup: readyPreflight.uiSetup,
+              agentBrowserCaps: readyPreflight.agentBrowserCaps,
               nowIso,
-              runStartIteration: preflight.runStartIteration,
+              runStartIteration: readyPreflight.runStartIteration,
               abortSignal: context.abort,
             },
-            preflightPrd: preflight.prd,
-            maxItems: preflight.maxItems,
+            preflightPrd: readyPreflight.prd,
+            maxItems: readyPreflight.maxItems,
             collectCarryForwardIssues,
             formatReasonCode,
             firstActionableJudgeReason,

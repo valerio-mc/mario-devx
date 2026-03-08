@@ -49,7 +49,7 @@ export const createNewTool = (opts: {
       },
       async execute(args, context: ToolContext) {
         const notInWork = await ensureNotInWorkSession(repoRoot, context);
-        if (!notInWork.ok) {
+        if (notInWork.ok === false) {
           await logToolEvent(ctx, repoRoot, "warn", "new.blocked.work-session", "PRD interview blocked in work session");
           return notInWork.message;
         }
@@ -61,7 +61,7 @@ export const createNewTool = (opts: {
             await logToolEvent(ctx, repoRoot, "error", "new.prd.read-failed", "PRD interview blocked: PRD read failed", getPrdReadErrorExtra(error));
           },
         );
-        if (!prdLoad.ok) {
+        if (prdLoad.ok === false) {
           return prdLoad.message;
         }
         let prd: PrdJson = prdLoad.value;
