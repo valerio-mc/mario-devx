@@ -9,24 +9,13 @@
  * This is specifically for user-visible operational events.
  */
 
+import type { PluginInput } from "@opencode-ai/plugin";
 import { appendFile, stat, writeFile } from "fs/promises";
 import path from "path";
 import { ensureDir } from "./fs";
 import { marioStateDir } from "./paths";
-type LogContext = {
-  client?: {
-    app?: {
-      log?: (opts: {
-        body: {
-          service: string;
-          level: LogLevel;
-          message: string;
-          extra: Record<string, unknown>;
-        };
-      }) => Promise<void>;
-    };
-  };
-};
+
+type LogContext = Pick<PluginInput, "client">;
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -187,9 +176,7 @@ export const structuredLog = async (
   }
 
   try {
-    // @ts-expect-error - client.app.log may not be in all OpenCode versions
     if (ctx.client?.app?.log) {
-      // @ts-expect-error
       await ctx.client.app.log({
         body: {
           service: entry.service,

@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type { PluginInput } from "@opencode-ai/plugin";
 
 export type ToolContext = {
   sessionID?: string;
@@ -6,7 +6,7 @@ export type ToolContext = {
   abort?: AbortSignal;
 };
 
-export type PluginContext = Parameters<Plugin>[0];
+export type PluginContext = PluginInput;
 
 export type ToolEventLogger = (
   ctx: PluginContext,
