@@ -18,6 +18,7 @@ import { buildVerifierContextText } from "./run-verifier";
 import { runGateCommands } from "./gates";
 import { handleHeartbeatFailure, handlePromptDispatchFailure, persistTaskFailureAttempt } from "./run-failure-helpers";
 import { buildUiVerifyBlockedPayload, buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
+import { shouldBlockRunForUiPrereqs } from "./run-ui";
 
 export type RunContext = {
   ctx: any;
@@ -165,6 +166,14 @@ export const runEngine = async (opts: {
     prereqNote,
     shouldRunUiVerify,
   } = uiSetup;
+  const blockRunForUiPrereqs = shouldBlockRunForUiPrereqs({
+    uiVerifyEnabled,
+    isWebApp,
+    prereqInstalling,
+    cliOk,
+    skillOk,
+    browserOk,
+  });
 
   let prd = preflightPrd;
   let attempted = 0;
@@ -280,8 +289,6 @@ export const runEngine = async (opts: {
     const effectiveDoneWhen = resolveEffectiveDoneWhen(prd, task);
     const gateCommands = toGateCommands(effectiveDoneWhen);
 
-    prd = setPrdTaskStatus(prd, task.id, "in_progress");
-    await writePrdJson(repoRoot, prd);
     const state = await bumpIteration(repoRoot);
     const attemptAt = nowIso();
     const carryForwardIssues = collectCarryForwardIssues(task);
@@ -409,6 +416,9 @@ export const runEngine = async (opts: {
       streamVerifyEvents: sessionAgents.streamVerifyEvents,
       startedAt: nowIso(),
     });
+
+    prd = setPrdTaskStatus(prd, task.id, "in_progress");
+    await writePrdJson(repoRoot, prd);
 
     if (!workPhaseAnnounced) {
       workPhaseAnnounced = true;
@@ -608,7 +618,7 @@ export const runEngine = async (opts: {
       continue;
     }
 
-    if (uiVerifyEnabled && isWebApp && (prereqInstalling || !cliOk || !skillOk || !browserOk)) {
+    if (blockRunForUiPrereqs) {
       await failEarly(
         [
           formatReasonCode(RUN_REASON.UI_PREREQ_MISSING),

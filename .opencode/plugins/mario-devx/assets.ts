@@ -1,6 +1,6 @@
 import path from "path";
 import { ensureDir, fileExists, readText, writeText } from "./fs";
-import { assetsDir, marioRoot, marioStateDir } from "./paths";
+import { assetsDir, marioRoot, marioStateDir, resolvePathInside } from "./paths";
 
 type AssetCopy = {
   source: string;
@@ -11,6 +11,13 @@ const templateAssets: AssetCopy[] = [
   { source: "templates/prd.json", destination: "prd.json" },
   { source: "templates/AGENTS.md", destination: "AGENTS.md" },
 ];
+
+const PROMPT_TEMPLATE_BY_MODE = {
+  run_build: "prompts/PROMPT_run_build.md",
+  verify_llm: "prompts/PROMPT_verify_llm.md",
+} as const;
+
+export type PromptTemplateMode = keyof typeof PROMPT_TEMPLATE_BY_MODE;
 
 
 const copyAsset = async (
@@ -41,5 +48,9 @@ export const seedMarioAssets = async (
 };
 
 export const getPromptTemplatePath = (mode: string): string => {
-  return path.join(assetsDir(), `prompts/PROMPT_${mode}.md`);
+  if (!Object.prototype.hasOwnProperty.call(PROMPT_TEMPLATE_BY_MODE, mode)) {
+    throw new Error(`Unsupported prompt template mode: ${mode}`);
+  }
+  const selected = PROMPT_TEMPLATE_BY_MODE[mode as PromptTemplateMode];
+  return resolvePathInside(assetsDir(), selected);
 };

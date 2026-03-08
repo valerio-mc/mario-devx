@@ -74,7 +74,8 @@ export const syncFrontendAgentsConfig = async (opts: {
   const parsed = parseAgentsEnv(raw);
   const env = parsed.env;
   const uiRequired = prd.uiVerificationRequired === true;
-  if (env.UI_VERIFY !== "1") {
+  const hasUiVerifyKey = hasAgentsKey(raw, "UI_VERIFY");
+  if (!hasUiVerifyKey) {
     let next = raw;
     next = upsertAgentsKey(next, "UI_VERIFY", "1");
     next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
@@ -85,7 +86,7 @@ export const syncFrontendAgentsConfig = async (opts: {
     if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
     if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
     await writeTextAtomic(agentsPath, next);
-  } else if ((env.UI_VERIFY_REQUIRED === "1") !== uiRequired) {
+  } else if (env.UI_VERIFY === "1" && (env.UI_VERIFY_REQUIRED === "1") !== uiRequired) {
     let next = upsertAgentsKey(raw, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
     if ((workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev") || !hasAgentsKey(raw, "UI_VERIFY_CMD")) {
       next = upsertAgentsKey(next, "UI_VERIFY_CMD", workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
