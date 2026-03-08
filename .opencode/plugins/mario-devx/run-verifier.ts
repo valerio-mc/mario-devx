@@ -87,8 +87,8 @@ export const buildVerifierContextText = (opts: {
     ...(uiEvidenceLines.length > 0
       ? [
           "- UI verification evidence is already provided below; treat it as primary evidence.",
+          "- Evidence paths below are repository-local artifacts under .mario/state/ui-evidence/.",
           "- Do NOT run additional agent-browser commands unless this evidence is missing or clearly inconclusive.",
-          "- Do NOT read evidence from /tmp paths; use repository-local evidence paths only.",
           "- Prefer snapshot/console/errors. If still inconclusive and a Screenshot path is provided, you may Read that file.",
         ]
       : [
