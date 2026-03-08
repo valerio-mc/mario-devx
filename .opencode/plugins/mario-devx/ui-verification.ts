@@ -2,11 +2,10 @@ import path from "path";
 import { createHash } from "crypto";
 import { spawn } from "child_process";
 import { closeSync, openSync } from "fs";
-import { copyFile, mkdir, realpath, stat } from "fs/promises";
+import { copyFile, mkdir, readFile, realpath, stat } from "fs/promises";
 import { runShellLogged } from "./shell";
 import type { UiFailureSubtype, UiLog, UiVerificationEvidence, UiVerificationFailure, UiVerificationResult } from "./ui-types";
 import { isPathInside, resolvePathInside } from "./paths";
-import { analyzeDevServerFailure, logKnownServerFailure, type DevServerFailureAnalysis } from "./ui-server-diagnostics";
 
 const SAFE_EVIDENCE_TASK_ID = /^[A-Za-z0-9._-]{1,120}$/;
 const TMP_EVIDENCE_ALLOWLIST = ["/tmp", "/private/tmp"];
@@ -89,6 +88,153 @@ const waitForAnyUrlReady = async (urls: string[], timeoutMs: number): Promise<st
 const isConnectionRefusedOutput = (stderr: string, stdout: string): boolean => {
   const text = `${stderr}\n${stdout}`.toLowerCase();
   return text.includes("err_connection_refused") || text.includes("connection refused");
+};
+
+type DevServerFailureAnalysis = {
+  note: string;
+  knownIssue: boolean;
+  kind: "next-dev-lock" | "port-in-use" | "generic";
+  subtype?: "NEXT_DEV_LOCK_HELD" | "EADDRINUSE";
+  lockPathRel?: string;
+  portInUse?: number;
+};
+
+const parseNextDevLockPath = (text: string): string | null => {
+  const patterns = [
+    /Unable to acquire lock at\s+([^\s,]+)/i,
+    /lock at\s+([^\s,]+)\s*,\s*is another instance of next dev running/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+    return match[1].trim();
+  }
+  return null;
+};
+
+const parseAddressInUsePort = (text: string): number | null => {
+  const patterns = [
+    /EADDRINUSE[\s\S]*?:(\d{2,5})/i,
+    /address already in use[^\n]*:(\d{2,5})/i,
+    /port:\s*(\d{2,5})/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match?.[1]) continue;
+    const port = Number.parseInt(match[1], 10);
+    if (Number.isFinite(port) && port > 0) {
+      return port;
+    }
+  }
+  return null;
+};
+
+const toRepoRelativePath = (repoRoot: string, absOrRelPath: string): string => {
+  try {
+    const normalized = path.resolve(absOrRelPath);
+    const rel = path.relative(repoRoot, normalized).replace(/\\/g, "/");
+    if (!rel.startsWith("..")) {
+      return rel;
+    }
+  } catch {
+    // Ignore and fall through.
+  }
+  return absOrRelPath.replace(/\\/g, "/");
+};
+
+const stripAnsi = (text: string): string => {
+  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "").replace(/\u001b[@-_]/g, "");
+};
+
+const buildLogTailSnippet = (text: string): string => {
+  const lines = stripAnsi(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return "";
+  const tail = lines.slice(-24).join(" | ");
+  return tail.length > 1000 ? `${tail.slice(0, 1000)}...` : tail;
+};
+
+const appendLogTail = (note: string, logTail: string): string => {
+  if (!logTail) return note;
+  return `${note} Log tail: ${logTail}`;
+};
+
+const analyzeDevServerFailure = async (opts: {
+  repoRoot: string;
+  logPathAbs: string;
+  logPathRel: string;
+  fallback: string;
+}): Promise<DevServerFailureAnalysis> => {
+  const { repoRoot, logPathAbs, logPathRel, fallback } = opts;
+  try {
+    const text = await readFile(logPathAbs, "utf8");
+    const logTail = buildLogTailSnippet(text);
+    const lockPath = parseNextDevLockPath(text);
+    if (lockPath) {
+      const lockPathRel = toRepoRelativePath(repoRoot, lockPath);
+      return {
+        note: appendLogTail(`UI dev server failed to start: Next dev lock is held at ${lockPathRel}. See ${logPathRel}.`, logTail),
+        knownIssue: true,
+        kind: "next-dev-lock",
+        subtype: "NEXT_DEV_LOCK_HELD",
+        lockPathRel,
+      };
+    }
+
+    const port = parseAddressInUsePort(text);
+    if (port) {
+      return {
+        note: appendLogTail(`UI dev server failed to start: port ${port} is already in use. See ${logPathRel}.`, logTail),
+        knownIssue: true,
+        kind: "port-in-use",
+        subtype: "EADDRINUSE",
+        portInUse: port,
+      };
+    }
+
+    return {
+      note: appendLogTail(`${fallback} See ${logPathRel}.`, logTail),
+      knownIssue: false,
+      kind: "generic",
+    };
+  } catch {
+    return {
+      note: `${fallback} See ${logPathRel}.`,
+      knownIssue: false,
+      kind: "generic",
+    };
+  }
+};
+
+const logKnownServerFailure = async (log: UiLog | undefined, analysis: DevServerFailureAnalysis): Promise<void> => {
+  if (!log || !analysis.knownIssue) {
+    return;
+  }
+  if (analysis.kind === "next-dev-lock") {
+    await log({
+      level: "error",
+      event: "ui.verify.server.locked",
+      message: "Next dev lock contention detected during UI verification",
+      reasonCode: "UI_VERIFY_STEP_FAILED",
+      extra: {
+        ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
+      },
+    });
+    return;
+  }
+  if (analysis.kind === "port-in-use") {
+    await log({
+      level: "error",
+      event: "ui.verify.server.port-in-use",
+      message: "Dev server startup failed because listening port is already in use",
+      reasonCode: "UI_VERIFY_STEP_FAILED",
+      extra: {
+        ...(typeof analysis.portInUse === "number" ? { port: analysis.portInUse } : {}),
+      },
+    });
+  }
 };
 
 const withFailureSubtype = (note: string, subtype: string | null | undefined): string => {
@@ -332,15 +478,14 @@ export const runUiVerification = async (opts: {
         },
       });
       appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server exited early)`);
-      return {
-        ok: false,
-        note: `${note}${transcriptSuffix()}`,
-        failure: buildFailure({
-          subtype: analysis.subtype ?? "UNKNOWN",
-          ...(typeof analysis.lockPid === "number" ? { pid: analysis.lockPid } : {}),
-          ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
-        }),
-      };
+        return {
+          ok: false,
+          note: `${note}${transcriptSuffix()}`,
+          failure: buildFailure({
+            subtype: analysis.subtype ?? "UNKNOWN",
+            ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
+          }),
+        };
     }
 
     readyUrl = await waitForAnyUrlReady(urlCandidates, effectiveWait);
@@ -362,15 +507,14 @@ export const runUiVerification = async (opts: {
       });
       await server.stop();
       appendTranscript(`open(${urlCandidates[0] ?? url}): skipped (dev server not ready)`);
-      return {
-        ok: false,
-        note: `${note}${transcriptSuffix()}`,
-        failure: buildFailure({
-          subtype: analysis.subtype ?? "UNKNOWN",
-          ...(typeof analysis.lockPid === "number" ? { pid: analysis.lockPid } : {}),
-          ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
-        }),
-      };
+        return {
+          ok: false,
+          note: `${note}${transcriptSuffix()}`,
+          failure: buildFailure({
+            subtype: analysis.subtype ?? "UNKNOWN",
+            ...(analysis.lockPathRel ? { lockPath: analysis.lockPathRel } : {}),
+          }),
+        };
     }
   }
 
@@ -462,15 +606,14 @@ export const runUiVerification = async (opts: {
         },
       });
       const resolvedSubtype: UiFailureSubtype = (knownServerIssue?.subtype ?? fallbackSubtype ?? "UNKNOWN") as UiFailureSubtype;
-      return {
-        ok: false,
-        note: `${detailsWithSubtype}${transcriptSuffix()}`,
-        failure: buildFailure({
-          subtype: resolvedSubtype,
-          ...(typeof knownServerIssue?.lockPid === "number" ? { pid: knownServerIssue.lockPid } : {}),
-          ...(knownServerIssue?.lockPathRel ? { lockPath: knownServerIssue.lockPathRel } : {}),
-        }),
-      };
+        return {
+          ok: false,
+          note: `${detailsWithSubtype}${transcriptSuffix()}`,
+          failure: buildFailure({
+            subtype: resolvedSubtype,
+            ...(knownServerIssue?.lockPathRel ? { lockPath: knownServerIssue.lockPathRel } : {}),
+          }),
+        };
     }
 
     for (const step of steps) {
