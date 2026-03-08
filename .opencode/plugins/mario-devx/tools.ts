@@ -198,12 +198,12 @@ const applyRepeatedFailureBackpressure = (
   const overlap = curr.filter((c) => prev.includes(c));
   if (overlap.length === 0) return judge;
   const reason = [
-    formatReasonCode(RUN_REASON.REPEATED_UI_FINDINGS),
+    formatReasonCode(RUN_REASON.REPEATED_VERIFIER_FINDINGS),
     ...judge.reason,
   ];
   const nextActions = Array.from(new Set([
     ...(judge.nextActions ?? []),
-    "Previous UI findings are repeating; address these findings explicitly before new changes.",
+    "Previous verifier findings are repeating; address those findings explicitly before new changes.",
   ]));
   return { ...judge, reason, nextActions };
 };
