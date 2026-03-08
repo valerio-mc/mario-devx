@@ -216,7 +216,7 @@ export const createNewTool = (opts: {
             const text = await resolvePromptText(ctx, ws.sessionId, interviewResponse);
             let parsedInterview = parseInterviewTurn(text);
 
-            if (parsedInterview.error) {
+            if (parsedInterview.ok === false) {
               await logToolEvent(ctx, repoRoot, "error", "new.interview.parse-error", "Failed to parse interview turn", {
                 error: parsedInterview.error,
               });
@@ -230,7 +230,7 @@ export const createNewTool = (opts: {
               const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
               const repairedInterview = parseInterviewTurn(repairedText);
 
-              if (!repairedInterview.error) {
+              if (repairedInterview.ok === true) {
                 await logToolEvent(ctx, repoRoot, "info", "new.interview.recovered", "Recovered malformed interview response");
                 parsedInterview = repairedInterview;
               } else {
@@ -258,7 +258,7 @@ export const createNewTool = (opts: {
               });
               const compileText = await resolvePromptText(ctx, ws.sessionId, compileResponse);
               let compiled = parseCompileInterviewResponse(compileText);
-              if (compiled.error) {
+              if (compiled.ok === false) {
                 await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error", "Failed to parse compiled interview envelope", {
                   error: compiled.error,
                 });
@@ -270,18 +270,18 @@ export const createNewTool = (opts: {
                 });
                 const repairedText = await resolvePromptText(ctx, ws.sessionId, repairResponse);
                 compiled = parseCompileInterviewResponse(repairedText);
-                if (compiled.error) {
+                if (compiled.ok === false) {
                   await logToolEvent(ctx, repoRoot, "error", "new.compile.parse-error-retry", "Compile parse retry failed", {
                     error: compiled.error,
                   });
                 }
               }
 
-              if (compiled.envelope?.updates) {
+              if (compiled.ok === true && compiled.envelope.updates) {
                 prd = applyInterviewUpdates(prd, compiled.envelope.updates);
               }
               done = isPrdComplete(prd);
-              finalQuestion = (compiled.envelope?.next_question || "What should we clarify next to finish the PRD?").trim();
+              finalQuestion = ((compiled.ok === true ? compiled.envelope.next_question : null) || "What should we clarify next to finish the PRD?").trim();
             }
 
             if (
@@ -348,7 +348,7 @@ export const createNewTool = (opts: {
                 });
                 const repeatRepairText = await resolvePromptText(ctx, ws.sessionId, repeatRepairResponse);
                 const repeatRepairTurn = parseInterviewTurn(repeatRepairText);
-                if (!repeatRepairTurn.error && repeatRepairTurn.question) {
+                if (repeatRepairTurn.ok === true && repeatRepairTurn.question) {
                   finalQuestion = repeatRepairTurn.question;
                 }
               }

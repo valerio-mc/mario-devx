@@ -31,11 +31,23 @@ type InterviewUpdates = {
   constraints?: string[];
 };
 
-type InterviewTurn = {
-  done: boolean;
-  question: string | null;
-  error?: string;
-};
+type InterviewTurn =
+  | {
+    ok: true;
+    done: true;
+    question: null;
+  }
+  | {
+    ok: true;
+    done: false;
+    question: string;
+  }
+  | {
+    ok: false;
+    done: false;
+    question: string | null;
+    error: string;
+  };
 
 type CompileInterviewEnvelope = {
   updates?: InterviewUpdates;
@@ -186,7 +198,7 @@ export const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx
             notes?: unknown;
           }>;
         }>(taskJson);
-        if (parsedResult.ok) {
+        if (parsedResult.ok === true) {
           tasks = (parsedResult.value.tasks ?? [])
             .map((task, idx) => {
               const title = typeof task.title === "string" ? task.title.trim() : "";
@@ -278,11 +290,11 @@ export const parseInterviewTurn = (text: string): InterviewTurn => {
     .filter((line) => line.length > 0);
 
   if (lines.length === 0) {
-    return { done: false, question: null, error: "Empty interviewer response" };
+    return { ok: false, done: false, question: null, error: "Empty interviewer response" };
   }
 
   if (lines.some((line) => /^DONE$/i.test(line))) {
-    return { done: true, question: null };
+    return { ok: true, done: true, question: null };
   }
 
   const normalized = lines
@@ -294,10 +306,14 @@ export const parseInterviewTurn = (text: string): InterviewTurn => {
     ?? null;
 
   if (!questionLine) {
-    return { done: false, question: null, error: "No question found in interviewer response" };
+    return { ok: false, done: false, question: null, error: "No question found in interviewer response" };
   }
 
-  return { done: false, question: questionLine.endsWith("?") ? questionLine : `${questionLine}?` };
+  return {
+    ok: true,
+    done: false,
+    question: questionLine.endsWith("?") ? questionLine : `${questionLine}?`,
+  };
 };
 
 export const interviewTurnRepairPrompt = (invalidResponse: string): string => {
@@ -371,19 +387,21 @@ export const compileInterviewPrompt = (prd: PrdJson): string => {
   return buildCompileInterviewPrompt(prd, interviewTranscript(prd));
 };
 
-export const parseCompileInterviewResponse = (text: string): { envelope: CompileInterviewEnvelope | null; error?: string } => {
+export const parseCompileInterviewResponse = (text: string):
+  | { ok: true; envelope: CompileInterviewEnvelope }
+  | { ok: false; error: string } => {
   const jsonText = extractFirstJsonObject(text);
   if (!jsonText) {
-    return { envelope: null, error: "No JSON object found in compile response" };
+    return { ok: false, error: "No JSON object found in compile response" };
   }
   const parsedResult = tryParseJson<CompileInterviewEnvelope>(jsonText);
-  if (!parsedResult.ok) {
-    return { envelope: null, error: `Compile JSON parse error: ${parsedResult.error}` };
+  if (parsedResult.ok === false) {
+    return { ok: false, error: `Compile JSON parse error: ${parsedResult.error}` };
   }
   if (!parsedResult.value || typeof parsedResult.value !== "object") {
-    return { envelope: null, error: "Compile response is not an object" };
+    return { ok: false, error: "Compile response is not an object" };
   }
-  return { envelope: parsedResult.value };
+  return { ok: true, envelope: parsedResult.value };
 };
 
 export const compileRepairPrompt = (invalidResponse: string): string => {
