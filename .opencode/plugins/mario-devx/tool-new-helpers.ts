@@ -506,7 +506,7 @@ export const applyInterviewUpdates = (prd: PrdJson, updates: InterviewUpdates | 
   if (typeof next.uiVerificationRequired === "boolean") {
     next.verificationPolicy = {
       ...next.verificationPolicy,
-      uiPolicy: next.uiVerificationRequired ? "required" : "best_effort",
+      uiPolicy: next.uiVerificationRequired ? "required" : "off",
       globalGates: next.qualityGates,
     };
   }

@@ -63,6 +63,8 @@ const repairVerificationPolicy = (existing: PrdJson): PrdJson["verificationPolic
     ? "required"
     : existing.verificationPolicy?.uiPolicy === "off"
       ? "off"
+      : typeof existing.uiVerificationRequired === "boolean"
+        ? (existing.uiVerificationRequired ? "required" : "off")
       : "best_effort",
 });
 
