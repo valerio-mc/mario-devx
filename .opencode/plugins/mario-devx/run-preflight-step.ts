@@ -4,8 +4,8 @@ import { RUN_EVENT, RUN_REASON } from "./run-contracts";
 import { validateTaskGraph, setPrdTaskLastAttempt } from "./planner";
 import {
   defaultPrdJson,
-  formatPrdReadErrorMessage,
-  isPrdReadError,
+  getPrdReadErrorExtra,
+  tryLoadPrd,
   writePrdJson,
   type PrdGatesAttempt,
   type PrdJudgeAttempt,
@@ -15,6 +15,7 @@ import {
   type PrdUiAttempt,
 } from "./prd";
 import { resolveNodeWorkspaceRoot } from "./gates";
+import { createBlockedTaskAttempt, createFailedGatesAttempt, createFailureJudge, createUnranUiAttempt } from "./run-failure-helpers";
 import { validateRunPrerequisites, syncFrontendAgentsConfig, parseMaxItems, resolveSessionAgents } from "./run-preflight";
 import { resolveUiRunSetup, shouldBlockRunForUiPrereqs } from "./run-ui";
 import { bumpIteration, readRunState, writeRunState } from "./state";
@@ -100,26 +101,21 @@ export const runPreflightStep = async (opts: {
     logRunEvent,
   } = opts;
 
-  let prd: PrdJson;
-  try {
-    prd = await ensurePrd(repoRoot);
-  } catch (error) {
-    if (isPrdReadError(error)) {
-      await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_PRD_INCOMPLETE, "Run blocked: PRD read failed", {
-        code: error.code,
-        filePath: error.filePath,
-        ...(error.backupPath ? { backupPath: error.backupPath } : {}),
-        ...(Object.prototype.hasOwnProperty.call(error, "detectedVersion") ? { detectedVersion: error.detectedVersion } : {}),
-      }, { runId, reasonCode: RUN_REASON.PRD_INCOMPLETE });
-      await showToast(ctx, "Run blocked: PRD load failed", "warning");
-      return {
-        blocked: true,
-        prd: defaultPrdJson(),
-        message: formatPrdReadErrorMessage(error),
-      };
-    }
-    throw error;
+  const prdLoad = await tryLoadPrd(
+    () => ensurePrd(repoRoot),
+    async (error) => {
+      await logRunEvent(ctx, repoRoot, "error", RUN_EVENT.BLOCKED_PRD_INCOMPLETE, "Run blocked: PRD read failed", getPrdReadErrorExtra(error), { runId, reasonCode: RUN_REASON.PRD_INCOMPLETE });
+    },
+  );
+  if (!prdLoad.ok) {
+    await showToast(ctx, "Run blocked: PRD load failed", "warning");
+    return {
+      blocked: true,
+      prd: defaultPrdJson(),
+      message: prdLoad.message,
+    };
   }
+  let prd: PrdJson = prdLoad.value;
   const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
   const workspaceAbs = workspaceRoot === "." ? repoRoot : `${repoRoot}/${workspaceRoot}`;
   const prerequisites = validateRunPrerequisites(prd);
@@ -142,11 +138,9 @@ export const runPreflightStep = async (opts: {
     const ids = new Set(inProgress.map((t) => t.id));
     const state = await bumpIteration(repoRoot);
     const attemptAt = nowIso();
-    const gates: PrdGatesAttempt = { ok: false, commands: [] };
-    const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-    const judge: PrdJudgeAttempt = {
-      status: "FAIL",
-      exitSignal: false,
+    const gates = createFailedGatesAttempt();
+    const ui = createUnranUiAttempt();
+    const judge = createFailureJudge({
       reason: [
         `Invalid task state: multiple tasks are in_progress (${inProgress.map((t) => t.id).join(", ")}).`,
       ],
@@ -154,14 +148,8 @@ export const runPreflightStep = async (opts: {
         "Edit .mario/prd.json so at most one task is in_progress (set the others to open/blocked/cancelled).",
         "Then rerun /mario-devx:run 1.",
       ],
-    };
-    const lastAttempt: PrdTaskAttempt = {
-      at: attemptAt,
-      iteration: state.iteration,
-      gates,
-      ui,
-      judge,
-    };
+    });
+    const lastAttempt = createBlockedTaskAttempt({ at: attemptAt, iteration: state.iteration, gates, ui, judge });
     prd = {
       ...prd,
       tasks: (prd.tasks ?? []).map((t) => (ids.has(t.id) ? { ...t, status: "blocked" as const } : t)),
@@ -195,17 +183,15 @@ export const runPreflightStep = async (opts: {
     if (focusTask) {
       const state = await bumpIteration(repoRoot);
       const attemptAt = nowIso();
-      const gates: PrdGatesAttempt = { ok: false, commands: [] };
-      const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-      const judge: PrdJudgeAttempt = {
-        status: "FAIL",
-        exitSignal: false,
+      const gates = createFailedGatesAttempt();
+      const ui = createUnranUiAttempt();
+      const judge = createFailureJudge({
         reason: [
           formatReasonCode(taskGraphIssue.reasonCode),
           taskGraphIssue.message,
         ],
         nextActions: taskGraphIssue.nextActions,
-      };
+      });
       prd = await persistBlockedTaskAttempt({
         ctx,
         repoRoot,

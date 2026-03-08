@@ -16,7 +16,14 @@ import { runSemanticRepairLoop } from "./run-semantic-repair";
 import { finalizeRunSuccess } from "./run-finalize";
 import { buildVerifierContextText } from "./run-verifier";
 import { runGateCommands } from "./gates";
-import { handleHeartbeatFailure, handlePromptDispatchFailure, persistTaskFailureAttempt } from "./run-failure-helpers";
+import {
+  createFailedGatesAttempt,
+  createFailureJudge,
+  createUnranUiAttempt,
+  handleHeartbeatFailure,
+  handlePromptDispatchFailure,
+  persistTaskFailureAttempt,
+} from "./run-failure-helpers";
 import { buildUiVerifyBlockedPayload, buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
 import { shouldBlockRunForUiPrereqs } from "./run-ui";
 
@@ -249,21 +256,19 @@ export const runEngine = async (opts: {
       const missingDep = dependencyBlockers.missing[0] ?? "unknown";
       const state = await bumpIteration(repoRoot);
       const attemptAt = nowIso();
-      const gates: PrdGatesAttempt = { ok: false, commands: [] };
-      const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+      const gates = createFailedGatesAttempt();
+      const ui = createUnranUiAttempt();
       const detail = blockerTask
         ? `Cannot execute ${task.id} before dependency ${blockerTask.id} (${blockerTask.title}) is completed.`
         : `Cannot execute ${task.id} because dependency ${missingDep} is missing from .mario/prd.json.`;
-      const judge: PrdJudgeAttempt = {
-        status: "FAIL",
-        exitSignal: false,
+      const judge = createFailureJudge({
         reason: [formatReasonCode(RUN_REASON.PREREQ_TASK_PENDING), detail],
         nextActions: [
           blockerTask
             ? `Complete ${blockerTask.id} first, then rerun /mario-devx:run 1.`
             : `Fix missing dependency ${missingDep} in .mario/prd.json, then rerun /mario-devx:run 1.`,
         ],
-      };
+      });
       prd = await persistBlockedTaskAttempt({
         ctx,
         repoRoot,
@@ -448,11 +453,9 @@ export const runEngine = async (opts: {
       abortSignal,
     });
     if (!idle.ok) {
-      const gates: PrdGatesAttempt = { ok: false, commands: [] };
-      const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
-      const judge: PrdJudgeAttempt = {
-        status: "FAIL",
-        exitSignal: false,
+      const gates = createFailedGatesAttempt();
+      const ui = createUnranUiAttempt();
+      const judge = createFailureJudge({
         reason: [
           idle.reason === "aborted"
             ? "Run interrupted while waiting for work-session progress."
@@ -464,7 +467,7 @@ export const runEngine = async (opts: {
           "Rerun /mario-devx:run 1 from the control session.",
           "If it repeats, inspect the work session via /sessions.",
         ],
-      };
+      });
       prd = await persistBlockedTaskAttempt({ ctx, repoRoot, prd, task, attemptAt, iteration: state.iteration, gates, ui, judge, runId });
       noteGlobalBlocker(
         idle.reason === "aborted"

@@ -1,7 +1,7 @@
 import { tool } from "@opencode-ai/plugin";
 
 import { ensureMario, readRunState } from "./state";
-import { formatPrdReadErrorMessage, isPrdReadError, type PrdJson } from "./prd";
+import { getPrdReadErrorExtra, tryLoadPrd, type PrdJson } from "./prd";
 import { getNextPrdTask } from "./planner";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
 
@@ -21,21 +21,16 @@ export const createStatusTool = (opts: {
         await ensureMario(repoRoot, false);
         await logToolEvent(ctx, repoRoot, "info", "status.start", "Status requested");
         const run = await readRunState(repoRoot);
-        let prd: PrdJson;
-        try {
-          prd = await ensurePrd(repoRoot);
-        } catch (error) {
-          if (isPrdReadError(error)) {
-            await logToolEvent(ctx, repoRoot, "error", "status.prd.read-failed", "Status blocked: PRD read failed", {
-              code: error.code,
-              filePath: error.filePath,
-              ...(error.backupPath ? { backupPath: error.backupPath } : {}),
-              ...(Object.prototype.hasOwnProperty.call(error, "detectedVersion") ? { detectedVersion: error.detectedVersion } : {}),
-            });
-            return formatPrdReadErrorMessage(error);
-          }
-          throw error;
+        const prdLoad = await tryLoadPrd(
+          () => ensurePrd(repoRoot),
+          async (error) => {
+            await logToolEvent(ctx, repoRoot, "error", "status.prd.read-failed", "Status blocked: PRD read failed", getPrdReadErrorExtra(error));
+          },
+        );
+        if (!prdLoad.ok) {
+          return prdLoad.message;
         }
+        const prd = prdLoad.value;
         const nextTask = getNextPrdTask(prd);
         const currentTask = run.currentPI ? (prd.tasks ?? []).find((t) => t.id === run.currentPI) : null;
         const focusTask = currentTask ?? nextTask;

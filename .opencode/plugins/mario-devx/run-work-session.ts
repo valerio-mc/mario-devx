@@ -2,6 +2,7 @@ import { RUN_REASON } from "./run-contracts";
 import { TIMEOUTS } from "./config";
 import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
 import { countAssistantMessages } from "./session";
+import { createFailedGatesAttempt, createFailureJudge, createUnranUiAttempt } from "./run-failure-helpers";
 
 export type WorkSessionInfo = { sessionId: string; baselineMessageId: string };
 
@@ -65,13 +66,11 @@ export const resetWorkSessionWithTimeout = async (opts: {
       }, TIMEOUTS.WORK_SESSION_RESET_TIMEOUT_MS);
     }),
   ]).catch(async (error) => {
-    const gates: PrdGatesAttempt = { ok: false, commands: [] };
-    const ui: PrdUiAttempt = { ran: false, ok: null, note: "UI verification not run." };
+    const gates = createFailedGatesAttempt();
+    const ui = createUnranUiAttempt();
     const errorMessage = error instanceof Error ? error.message : String(error);
     const isTimeout = /timeout/i.test(errorMessage);
-    const judge: PrdJudgeAttempt = {
-      status: "FAIL",
-      exitSignal: false,
+    const judge = createFailureJudge({
       reason: [
         formatReasonCode(isTimeout ? RUN_REASON.WORK_SESSION_RESET_TIMEOUT : RUN_REASON.WORK_PROMPT_TRANSPORT_ERROR),
         isTimeout
@@ -83,7 +82,7 @@ export const resetWorkSessionWithTimeout = async (opts: {
         "Retry /mario-devx:run 1.",
         "If this repeats, restart OpenCode and rerun.",
       ],
-    };
+    });
     const nextPrd = await persistBlockedTaskAttempt({
       ctx,
       repoRoot,

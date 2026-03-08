@@ -4,7 +4,7 @@ import { readTextIfExists } from "./fs";
 import { assetsDir } from "./paths";
 import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { redactForLog } from "./logging";
-import { formatPrdReadErrorMessage, isPrdReadError, readPrdJsonIfExists } from "./prd";
+import { tryLoadPrd, readPrdJsonIfExists } from "./prd";
 import { readRunState, readUiVerifyState } from "./state";
 import { runLockPath } from "./run-lock";
 import { parseAgentsEnv } from "./agents-env";
@@ -20,18 +20,15 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
   const issues: string[] = [];
   const fixes: string[] = [];
 
+  const prdLoad = await tryLoadPrd(() => readPrdJsonIfExists(repoRoot));
   let prd = null;
   let prdReadBlocked = false;
-  try {
-    prd = await readPrdJsonIfExists(repoRoot);
-  } catch (error) {
-    if (isPrdReadError(error)) {
-      prdReadBlocked = true;
-      issues.push(formatPrdReadErrorMessage(error));
-      fixes.push("After regenerating PRD, rerun /mario-devx:doctor.");
-    } else {
-      throw error;
-    }
+  if (!prdLoad.ok) {
+    prdReadBlocked = true;
+    issues.push(prdLoad.message);
+    fixes.push("After regenerating PRD, rerun /mario-devx:doctor.");
+  } else {
+    prd = prdLoad.value;
   }
   if (!prd && !prdReadBlocked) {
     issues.push("Missing or invalid .mario/prd.json");

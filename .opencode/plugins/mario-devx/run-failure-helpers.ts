@@ -1,5 +1,46 @@
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
-import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
+import type { PrdGatesAttempt, PrdJudgeAttempt, PrdJson, PrdTask, PrdTaskAttempt, PrdUiAttempt } from "./prd";
+
+export const createFailedGatesAttempt = (): PrdGatesAttempt => ({
+  ok: false,
+  commands: [],
+});
+
+export const createUnranUiAttempt = (note = "UI verification not run."): PrdUiAttempt => ({
+  ran: false,
+  ok: null,
+  note,
+});
+
+export const createFailureJudge = (opts: {
+  reason: string[];
+  nextActions?: string[];
+}): PrdJudgeAttempt => {
+  const { reason, nextActions } = opts;
+  return {
+    status: "FAIL",
+    exitSignal: false,
+    reason,
+    nextActions: nextActions && nextActions.length > 0 ? nextActions : ["Fix the failing checks, then rerun /mario-devx:run 1."],
+  };
+};
+
+export const createBlockedTaskAttempt = (opts: {
+  at: string;
+  iteration: number;
+  judge: PrdJudgeAttempt;
+  gates?: PrdGatesAttempt;
+  ui?: PrdUiAttempt;
+}): PrdTaskAttempt => {
+  const { at, iteration, judge, gates, ui } = opts;
+  return {
+    at,
+    iteration,
+    gates: gates ?? createFailedGatesAttempt(),
+    ui: ui ?? createUnranUiAttempt(),
+    judge,
+  };
+};
 
 export const persistTaskFailureAttempt = async (opts: {
   ctx: any;
@@ -44,12 +85,10 @@ export const persistTaskFailureAttempt = async (opts: {
     keepRunActive,
     persistBlockedTaskAttempt,
   } = opts;
-  const judge: PrdJudgeAttempt = {
-    status: "FAIL",
-    exitSignal: false,
+  const judge = createFailureJudge({
     reason: reasonLines,
-    nextActions: nextActions && nextActions.length > 0 ? nextActions : ["Fix the failing checks, then rerun /mario-devx:run 1."],
-  };
+    nextActions,
+  });
   return persistBlockedTaskAttempt({
     ctx,
     repoRoot,
@@ -120,8 +159,8 @@ export const handleHeartbeatFailure = async (opts: {
     attemptAt,
     iteration,
     runId,
-    gates: { ok: false, commands: [] },
-    ui: { ran: false, ok: null, note: "UI verification not run." },
+    gates: createFailedGatesAttempt(),
+    ui: createUnranUiAttempt(),
     reasonLines: [`Failed to update run.lock heartbeat during ${phase} (${lockPath}).`],
     nextActions: ["Check disk space/permissions for .mario/state/run.lock, then rerun /mario-devx:run 1."],
     persistBlockedTaskAttempt,
@@ -205,8 +244,8 @@ export const handlePromptDispatchFailure = async (opts: {
     attemptAt,
     iteration,
     runId,
-    gates: { ok: false, commands: [] },
-    ui: { ran: false, ok: null, note: "UI verification not run." },
+    gates: createFailedGatesAttempt(),
+    ui: createUnranUiAttempt(),
     reasonLines: [
       formatReasonCode(reasonCode),
       isTimeout

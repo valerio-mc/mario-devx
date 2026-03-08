@@ -2,8 +2,8 @@ import { tool } from "@opencode-ai/plugin";
 
 import { compactIdea } from "./interview";
 import { decomposeFeatureRequestToTasks, makeTask, nextBacklogId, nextTaskOrdinal, normalizeTaskId } from "./planner";
-import { formatPrdReadErrorMessage, isPrdReadError, writePrdJson, type PrdJson, type PrdTask } from "./prd";
-import { deleteSessionBestEffort, ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
+import { getPrdReadErrorExtra, tryLoadPrd, writePrdJson, type PrdJson, type PrdTask } from "./prd";
+import { ensureNotInWorkSession, resolvePromptText, withTemporaryWorkSession } from "./runner";
 import { ensureMario, readRunState } from "./state";
 import { logReplanComplete, redactForLog } from "./logging";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
@@ -91,21 +91,16 @@ export const createBacklogTools = (opts: {
           return notInWork.message;
         }
         await ensureMario(repoRoot, false);
-        let prd: PrdJson;
-        try {
-          prd = await ensurePrd(repoRoot);
-        } catch (error) {
-          if (isPrdReadError(error)) {
-            await logToolEvent(ctx, repoRoot, "error", "add.prd.read-failed", "Feature add blocked: PRD read failed", {
-              code: error.code,
-              filePath: error.filePath,
-              ...(error.backupPath ? { backupPath: error.backupPath } : {}),
-              ...(Object.prototype.hasOwnProperty.call(error, "detectedVersion") ? { detectedVersion: error.detectedVersion } : {}),
-            });
-            return formatPrdReadErrorMessage(error);
-          }
-          throw error;
+        const prdLoad = await tryLoadPrd(
+          () => ensurePrd(repoRoot),
+          async (error) => {
+            await logToolEvent(ctx, repoRoot, "error", "add.prd.read-failed", "Feature add blocked: PRD read failed", getPrdReadErrorExtra(error));
+          },
+        );
+        if (!prdLoad.ok) {
+          return prdLoad.message;
         }
+        let prd: PrdJson = prdLoad.value;
         if (prd.wizard.status !== "completed") {
           await logToolEvent(ctx, repoRoot, "warn", "add.blocked.wizard-incomplete", "Feature add blocked: PRD wizard incomplete", {
             wizardStatus: prd.wizard.status,
@@ -134,11 +129,13 @@ export const createBacklogTools = (opts: {
           return "Feature request is empty. Provide a short description.";
         }
 
-        let wsSessionId: string | undefined;
-        try {
-          const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
-          wsSessionId = ws.sessionId;
-          const runState = await readRunState(repoRoot);
+        return withTemporaryWorkSession({
+          ctx,
+          repoRoot,
+          agent: context.agent,
+          controlSessionId: context.sessionID,
+          run: async (ws) => {
+            const runState = await readRunState(repoRoot);
 
           const featurePrompt = [
             "You are mario-devx's feature interviewer.",
@@ -300,17 +297,14 @@ export const createBacklogTools = (opts: {
             runIteration: runState.iteration,
           });
 
-          return [
-            `Feature added: ${backlogId}`,
-            `New tasks: ${newTasks.length}`,
-            `Task IDs: ${newTasks.map((t) => t.id).join(", ")}`,
-            `Next: /mario-devx:run 1`,
-          ].join("\n");
-        } finally {
-          if (wsSessionId) {
-            await deleteSessionBestEffort(ctx, wsSessionId, context.sessionID);
-          }
-        }
+            return [
+              `Feature added: ${backlogId}`,
+              `New tasks: ${newTasks.length}`,
+              `Task IDs: ${newTasks.map((t) => t.id).join(", ")}`,
+              `Next: /mario-devx:run 1`,
+            ].join("\n");
+          },
+        });
       },
     }),
 
@@ -324,21 +318,16 @@ export const createBacklogTools = (opts: {
           return notInWork.message;
         }
         await ensureMario(repoRoot, false);
-        let prd: PrdJson;
-        try {
-          prd = await ensurePrd(repoRoot);
-        } catch (error) {
-          if (isPrdReadError(error)) {
-            await logToolEvent(ctx, repoRoot, "error", "replan.prd.read-failed", "Replan blocked: PRD read failed", {
-              code: error.code,
-              filePath: error.filePath,
-              ...(error.backupPath ? { backupPath: error.backupPath } : {}),
-              ...(Object.prototype.hasOwnProperty.call(error, "detectedVersion") ? { detectedVersion: error.detectedVersion } : {}),
-            });
-            return formatPrdReadErrorMessage(error);
-          }
-          throw error;
+        const prdLoad = await tryLoadPrd(
+          () => ensurePrd(repoRoot),
+          async (error) => {
+            await logToolEvent(ctx, repoRoot, "error", "replan.prd.read-failed", "Replan blocked: PRD read failed", getPrdReadErrorExtra(error));
+          },
+        );
+        if (!prdLoad.ok) {
+          return prdLoad.message;
         }
+        let prd: PrdJson = prdLoad.value;
         const replanCandidates = prd.backlog.featureRequests.filter((f) => f.status === "open" || f.status === "planned");
         const taskById = new Map((prd.tasks ?? []).map((t) => [t.id, t] as const));
         const hasLockedTask = (featureId: string): boolean => {
@@ -364,13 +353,15 @@ export const createBacklogTools = (opts: {
           return "No replannable backlog items: all candidates already have active/completed tasks.";
         }
 
-        let wsSessionId: string | undefined;
-        try {
-          const ws = await ensureWorkSession(ctx, repoRoot, context.agent);
-          wsSessionId = ws.sessionId;
-          const gates = prd.verificationPolicy?.globalGates?.length
-            ? prd.verificationPolicy.globalGates
-            : prd.qualityGates;
+        return withTemporaryWorkSession({
+          ctx,
+          repoRoot,
+          agent: context.agent,
+          controlSessionId: context.sessionID,
+          run: async (ws) => {
+            const gates = prd.verificationPolicy?.globalGates?.length
+              ? prd.verificationPolicy.globalGates
+              : prd.qualityGates;
 
           await logToolEvent(ctx, repoRoot, "info", "replan.llm.start", "Replanning backlog items via LLM", {
             candidates: replanCandidates.length,
@@ -563,18 +554,15 @@ export const createBacklogTools = (opts: {
             generatedTasks: generated.length,
           });
 
-          return [
-            "Replan complete.",
-            `Backlog items replanned: ${candidatesToReplan.length}`,
-            `Backlog items skipped (locked): ${replanCandidates.length - candidatesToReplan.length}`,
-            `New tasks: ${generated.length}`,
-            "Next: /mario-devx:run 1",
-          ].join("\n");
-        } finally {
-          if (wsSessionId) {
-            await deleteSessionBestEffort(ctx, wsSessionId, context.sessionID);
-          }
-        }
+            return [
+              "Replan complete.",
+              `Backlog items replanned: ${candidatesToReplan.length}`,
+              `Backlog items skipped (locked): ${replanCandidates.length - candidatesToReplan.length}`,
+              `New tasks: ${generated.length}`,
+              "Next: /mario-devx:run 1",
+            ].join("\n");
+          },
+        });
       },
     }),
   };

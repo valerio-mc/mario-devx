@@ -175,6 +175,37 @@ export const isPrdReadError = (error: unknown): error is PrdReadError => {
   return error instanceof PrdReadError;
 };
 
+export const getPrdReadErrorExtra = (error: PrdReadError): Record<string, unknown> => {
+  return {
+    code: error.code,
+    filePath: error.filePath,
+    ...(error.backupPath ? { backupPath: error.backupPath } : {}),
+    ...(error.detectedVersion === undefined ? {} : { detectedVersion: error.detectedVersion }),
+  };
+};
+
+export const tryLoadPrd = async <T>(
+  load: () => Promise<T>,
+  onPrdReadError?: (error: PrdReadError) => void | Promise<void>,
+): Promise<
+  | { ok: true; value: T }
+  | { ok: false; error: PrdReadError; message: string }
+> => {
+  try {
+    return { ok: true, value: await load() };
+  } catch (error) {
+    if (!isPrdReadError(error)) {
+      throw error;
+    }
+    await onPrdReadError?.(error);
+    return {
+      ok: false,
+      error,
+      message: formatPrdReadErrorMessage(error),
+    };
+  }
+};
+
 export const formatPrdReadErrorMessage = (error: PrdReadError): string => {
   const lines: string[] = [];
   if (error.code === "PRD_UNSUPPORTED_VERSION") {

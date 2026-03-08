@@ -176,6 +176,22 @@ export const resetWorkSession = async (
   return ensureWorkSession(ctx, repoRoot, agent);
 };
 
+export const withTemporaryWorkSession = async <T>(opts: {
+  ctx: any;
+  repoRoot: string;
+  agent?: string;
+  controlSessionId?: string;
+  run: (session: { sessionId: string; baselineMessageId: string }) => Promise<T>;
+}): Promise<T> => {
+  const { ctx, repoRoot, agent, controlSessionId, run } = opts;
+  const session = await ensureWorkSession(ctx, repoRoot, agent);
+  try {
+    return await run(session);
+  } finally {
+    await deleteSessionBestEffort(ctx, session.sessionId, controlSessionId);
+  }
+};
+
 export const deleteSessionBestEffort = async (
   ctx: any,
   sessionId: string | undefined,

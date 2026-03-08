@@ -14,10 +14,9 @@ import {
   setPrdTaskStatus,
 } from "./planner";
 import {
-  deleteSessionBestEffort,
-  ensureWorkSession,
   resolvePromptText,
   updateRunState,
+  withTemporaryWorkSession,
 } from "./runner";
 import {
   buildCompileInterviewPrompt,
@@ -262,66 +261,63 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
    * - Appropriate task granularity
    * - Considers platform, framework, and complexity
    */
-  let wsSessionId: string | undefined;
-  try {
-    const ws = await ensureWorkSession(pluginCtx, repoRoot, undefined);
-    wsSessionId = ws.sessionId;
-    const taskGenPrompt = buildTaskGenerationPrompt(prd);
+  return withTemporaryWorkSession({
+    ctx: pluginCtx,
+    repoRoot,
+    run: async (ws) => {
+      const taskGenPrompt = buildTaskGenerationPrompt(prd);
 
-    await logEvent(pluginCtx, repoRoot, {
-      level: "info",
-      event: "task-generation.start",
-      message: "Generating tasks from PRD via LLM",
-    });
-    const taskResponse = await pluginCtx.client.session.prompt({
-      path: { id: ws.sessionId },
-      body: { parts: [{ type: "text", text: taskGenPrompt }] },
-    });
+      await logEvent(pluginCtx, repoRoot, {
+        level: "info",
+        event: "task-generation.start",
+        message: "Generating tasks from PRD via LLM",
+      });
+      const taskResponse = await pluginCtx.client.session.prompt({
+        path: { id: ws.sessionId },
+        body: { parts: [{ type: "text", text: taskGenPrompt }] },
+      });
 
-    const taskText = await resolvePromptText(pluginCtx, ws.sessionId, taskResponse);
-    const taskJson = extractTaggedBlock(taskText, "TASK_JSON");
+      const taskText = await resolvePromptText(pluginCtx, ws.sessionId, taskResponse);
+      const taskJson = extractTaggedBlock(taskText, "TASK_JSON");
 
-    let tasks: PrdTask[];
-    if (taskJson) {
-      try {
-        const parsed = JSON.parse(taskJson);
-        tasks = parsed.tasks?.map((t: any, idx: number) => makeTask({
-          id: t.id || normalizeTaskId(idx + 1),
-          title: t.title,
-          doneWhen: t.doneWhen || prd.qualityGates || [],
-          labels: t.labels || ["feature"],
-          acceptance: t.acceptance || [t.title],
-          dependsOn: t.dependsOn,
-          notes: t.notes,
-        })) || [];
-        await logEvent(pluginCtx, repoRoot, {
-          level: "info",
-          event: "task-generation.complete",
-          message: "Task generation completed",
-          extra: { tasks: tasks.length },
-        });
-      } catch (err) {
-        logError("task-generation", `Failed to parse LLM task generation, using fallback: ${err instanceof Error ? err.message : String(err)}`);
+      let tasks: PrdTask[];
+      if (taskJson) {
+        try {
+          const parsed = JSON.parse(taskJson);
+          tasks = parsed.tasks?.map((t: any, idx: number) => makeTask({
+            id: t.id || normalizeTaskId(idx + 1),
+            title: t.title,
+            doneWhen: t.doneWhen || prd.qualityGates || [],
+            labels: t.labels || ["feature"],
+            acceptance: t.acceptance || [t.title],
+            dependsOn: t.dependsOn,
+            notes: t.notes,
+          })) || [];
+          await logEvent(pluginCtx, repoRoot, {
+            level: "info",
+            event: "task-generation.complete",
+            message: "Task generation completed",
+            extra: { tasks: tasks.length },
+          });
+        } catch (err) {
+          logError("task-generation", `Failed to parse LLM task generation, using fallback: ${err instanceof Error ? err.message : String(err)}`);
+          tasks = generateFallbackTasks(prd);
+        }
+      } else {
+        logError("task-generation", "No <TASK_JSON> found in LLM response, using fallback");
         tasks = generateFallbackTasks(prd);
       }
-    } else {
-      logError("task-generation", "No <TASK_JSON> found in LLM response, using fallback");
-      tasks = generateFallbackTasks(prd);
-    }
 
-    return {
-      ...prd,
-      tasks,
-      verificationPolicy: {
-        ...prd.verificationPolicy,
-        globalGates: prd.qualityGates || [],
-      },
-    };
-  } finally {
-    if (wsSessionId) {
-      await deleteSessionBestEffort(pluginCtx, wsSessionId);
-    }
-  }
+      return {
+        ...prd,
+        tasks,
+        verificationPolicy: {
+          ...prd.verificationPolicy,
+          globalGates: prd.qualityGates || [],
+        },
+      };
+    },
+  });
 };
 
 /**
