@@ -122,8 +122,21 @@ export const extractUiFailurePid = (note: string | null | undefined, failure?: P
 export const buildUiVerifyFailedNextActions = (note: string | null | undefined, failure?: PrdUiAttempt["failure"]): string[] => {
   const actions: string[] = [];
   const pid = extractUiFailurePid(note, failure);
-  if (pid) {
-    actions.push(`kill ${pid}`);
+  const subtype = failure?.subtype ?? "UNKNOWN";
+  if (subtype === "NEXT_DEV_LOCK_HELD") {
+    actions.push(
+      pid
+        ? `Resolve the Next dev lock held by pid ${pid}, then retry UI verification.`
+        : "Resolve the Next dev lock described in the UI note, then retry UI verification.",
+    );
+  } else if (subtype === "EADDRINUSE") {
+    actions.push(
+      pid
+        ? `Resolve the port conflict with pid ${pid}, or switch UI verification to an open port.`
+        : "Resolve the port conflict described in the UI note, or switch UI verification to an open port.",
+    );
+  } else if (subtype === "OPEN_CONNECTION_REFUSED") {
+    actions.push("Make sure the configured UI verify URL is reachable before retrying UI verification.");
   } else {
     actions.push("Resolve the UI verifier environment issue described in the UI note.");
   }
