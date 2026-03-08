@@ -80,6 +80,7 @@ The PRD wizard is LLM-driven and asks one high-leverage question at a time. You 
 - For `run N` with `N > 1`, mario-devx executes up to N iterations and continues across per-task BLOCKED outcomes; it stops early only for global blockers or when no runnable tasks remain.
 - Batch-mode task selection priority is `blocked -> in_progress -> open` (while respecting task dependencies).
 - Verification pipeline is strict: deterministic gates -> UI verification (when enabled) -> LLM verifier.
+- When UI verification is enabled for a web app, mario-devx bootstraps missing `agent-browser` prerequisites first and keeps the run blocked until the installer finishes.
 - Repair prompts include a deterministic backpressure payload from `tasks[].lastAttempt.gates.failure` (command, exit code, fingerprint, clipped output) so the model gets concrete failure receipts, not just exit codes.
 - Tasks complete only on verifier `PASS`; otherwise they are blocked with concrete next actions instead of motivational poetry.
 - Progress streams back to your control session as throttled toasts (text + tool lifecycle + patch updates).
@@ -103,7 +104,7 @@ STREAM_VERIFY=1
 
 ## Frontend verification
 
-When `frontend: true`, mario-devx auto-syncs `.mario/AGENTS.md` to enable UI verification (`UI_VERIFY=1`) during `/mario-devx:run`, sets `UI_VERIFY_REQUIRED` from PRD policy, and auto-heals browser prerequisites (non-interactive first). It then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
+When `frontend: true`, mario-devx auto-syncs `.mario/AGENTS.md` to enable UI verification (`UI_VERIFY=1`) during `/mario-devx:run`, sets `UI_VERIFY_REQUIRED` from PRD policy, and auto-installs missing `agent-browser` prerequisites in the background (non-interactive first). While that bootstrap is running, `/mario-devx:run` stays blocked and points you at the install log so UI verification starts from a known-good toolchain. It then stores UI evidence under `tasks[].lastAttempt.ui` so "works on my machine" has receipts.
 
 UI evidence includes accessibility snapshots, console/errors, and an optional screenshot saved under `.mario/state/ui-evidence/<taskId>/` (repo-local, so the verifier can `Read` it without external directory permissions).
 
@@ -145,7 +146,7 @@ If you don't want internal state in git, add this to your repo `.gitignore`:
 | **Run blocked before coding starts** | Check `.mario/prd.json` for missing `tasks` or `qualityGates`, fix reality, then rerun `/mario-devx:run 1`. |
 | **Run says another run is in progress (`run.lock`)** | Run `/mario-devx:doctor` to auto-clear stale locks, then rerun `/mario-devx:run 1`. |
 | **Run blocked with `WORK_SESSION_NO_PROGRESS`** | The same gate failure repeated while tracked source/config files did not change. Read `tasks[].lastAttempt.gates.failure.outputExcerpt` in `.mario/prd.json` and `run.repair.backpressure` entries in `.mario/state/mario-devx.log`, then rerun `/mario-devx:run 1`. |
-| **UI verification fails to start** | Read `tasks[].lastAttempt.ui.note` and `.mario/state/ui-evidence/<taskId>/dev-server.log`. mario-devx now surfaces subtype/backpressure (for example lock-holder PID) and a direct `kill <pid>` next action when available. |
+| **UI verification fails to start** | Read `tasks[].lastAttempt.ui.note` and `.mario/state/ui-evidence/<taskId>/dev-server.log` for subtype/log-tail details. |
 | **Anything weird / stuck / transport-y** | Run `/mario-devx:doctor` and attach `.mario/state/mario-devx.log`, `.mario/state/state.json`, `.mario/prd.json` so we debug facts, not folklore. |
 
 ## Acknowledgements
