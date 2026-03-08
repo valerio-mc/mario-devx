@@ -4,6 +4,7 @@ import { createTools } from "./tools";
 import { markSessionIdle } from "./session-idle-signal";
 import { readRunState } from "./state";
 import { clearToastStreamChannel, flushToastStream, ingestToastStreamEvent } from "./toast-stream";
+import { getRepoRoot } from "./paths";
 
 const STREAM_TOAST_INTERVAL_MS = 3500;
 
@@ -61,7 +62,7 @@ const safeShowToast = async (
 
 export const marioDevxPlugin: Plugin = async (ctx) => {
   const { client, directory, worktree } = ctx;
-  const repoRoot = worktree ?? directory;
+  const repoRoot = getRepoRoot(ctx);
   const tools = createTools(ctx);
   const commands = createCommands();
 
