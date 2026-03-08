@@ -1,13 +1,65 @@
 import path from "path";
-import { readTextIfExists } from "./fs";
+import { spawn } from "child_process";
+import { closeSync, openSync } from "fs";
+import { ensureDir, readTextIfExists, writeTextAtomic } from "./fs";
+import { marioStateDir } from "./paths";
 import { runShellLogged } from "./shell";
 import type { AgentBrowserPrereqStatus, UiLog } from "./ui-types";
+import { pidLooksAlive } from "./process";
+
+type AgentBrowserPrereqJobStatus = "installing" | "ok" | "failed";
+
+type AgentBrowserPrereqJobState = {
+  status: AgentBrowserPrereqJobStatus;
+  pid?: number | null;
+  startedAt: string;
+  updatedAt: string;
+  attemptCount: number;
+  logPath: string;
+  commands: string[];
+  lastErrorSummary?: string;
+};
 
 const AGENT_BROWSER_RUNTIME_COMMANDS = [
   "CI=1 npm_config_yes=true npx --yes playwright install chromium",
   "CI=1 npm_config_yes=true npx --yes playwright install",
   "CI=1 npm_config_yes=true agent-browser install",
 ] as const;
+
+const uiPrereqDir = (repoRoot: string): string => path.join(marioStateDir(repoRoot), "ui-prereq");
+const agentBrowserPrereqStatePath = (repoRoot: string): string => path.join(uiPrereqDir(repoRoot), "agent-browser.json");
+const agentBrowserPrereqLogPath = (repoRoot: string): string => path.join(uiPrereqDir(repoRoot), "agent-browser.install.log");
+
+const readAgentBrowserPrereqJob = async (repoRoot: string): Promise<AgentBrowserPrereqJobState | null> => {
+  const raw = await readTextIfExists(agentBrowserPrereqStatePath(repoRoot));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<AgentBrowserPrereqJobState>;
+    if (!parsed || typeof parsed !== "object") return null;
+    const status = parsed.status;
+    if (status !== "installing" && status !== "ok" && status !== "failed") return null;
+    const startedAt = typeof parsed.startedAt === "string" ? parsed.startedAt : new Date().toISOString();
+    const updatedAt = typeof parsed.updatedAt === "string" ? parsed.updatedAt : startedAt;
+    const attemptCount = Number.isFinite(Number(parsed.attemptCount)) ? Math.max(0, Number(parsed.attemptCount)) : 0;
+    return {
+      status,
+      startedAt,
+      updatedAt,
+      attemptCount,
+      logPath: typeof parsed.logPath === "string" && parsed.logPath.trim().length > 0 ? parsed.logPath : agentBrowserPrereqLogPath(repoRoot),
+      commands: Array.isArray(parsed.commands) ? parsed.commands.filter((c) => typeof c === "string" && c.trim().length > 0) : [],
+      ...(typeof parsed.pid === "number" ? { pid: parsed.pid } : {}),
+      ...(typeof parsed.lastErrorSummary === "string" && parsed.lastErrorSummary.trim().length > 0 ? { lastErrorSummary: parsed.lastErrorSummary } : {}),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeAgentBrowserPrereqJob = async (repoRoot: string, state: AgentBrowserPrereqJobState): Promise<void> => {
+  await ensureDir(uiPrereqDir(repoRoot));
+  await writeTextAtomic(agentBrowserPrereqStatePath(repoRoot), `${JSON.stringify(state, null, 2)}\n`);
+};
 
 const getXdgConfigHome = (): string => process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || "", ".config");
 
@@ -88,70 +140,319 @@ export const hasAgentBrowserRuntime = async (
   return { ok: false, note: detail };
 };
 
+const startAgentBrowserPrereqInstallJob = async (opts: {
+  repoRoot: string;
+  needsCli: boolean;
+  needsBrowserRuntime: boolean;
+  needsSkill: boolean;
+  previousAttemptCount: number;
+}): Promise<{ pid: number; logPath: string; commands: string[] }> => {
+  const { repoRoot, needsCli, needsBrowserRuntime, needsSkill, previousAttemptCount } = opts;
+  const logPath = agentBrowserPrereqLogPath(repoRoot);
+  const statePath = agentBrowserPrereqStatePath(repoRoot);
+  const commands = buildAgentBrowserInstallPlan({ needsCli, needsBrowserRuntime, needsSkill });
+
+  const now = new Date().toISOString();
+  await writeAgentBrowserPrereqJob(repoRoot, {
+    status: "installing",
+    pid: null,
+    startedAt: now,
+    updatedAt: now,
+    attemptCount: Math.max(0, previousAttemptCount) + 1,
+    logPath,
+    commands,
+  });
+
+  const workerScript = String.raw`
+const { spawn } = require("child_process");
+const fs = require("fs");
+const path = require("path");
+
+const statePath = process.env.MARIO_UI_PREREQ_STATE_PATH;
+const repoRoot = process.env.MARIO_UI_PREREQ_REPO_ROOT || process.cwd();
+const needsCli = process.env.MARIO_UI_NEEDS_CLI === "1";
+const needsBrowserRuntime = process.env.MARIO_UI_NEEDS_BROWSER === "1";
+const needsSkill = process.env.MARIO_UI_NEEDS_SKILL === "1";
+
+const nowIso = () => new Date().toISOString();
+
+const readJson = (filePath) => {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return {};
+  }
+};
+
+const writeJson = (filePath, value) => {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + "\n", "utf8");
+};
+
+const updateJob = (patch) => {
+  const current = readJson(statePath);
+  writeJson(statePath, {
+    ...current,
+    ...patch,
+    updatedAt: nowIso(),
+  });
+};
+
+const runCommand = (command) => {
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      cwd: repoRoot,
+      shell: true,
+      stdio: "inherit",
+    });
+    child.on("close", (code) => resolve(typeof code === "number" ? code : 1));
+    child.on("error", () => resolve(1));
+  });
+};
+
+const fail = (summary) => {
+  updateJob({ status: "failed", pid: null, lastErrorSummary: summary });
+  process.exit(1);
+};
+
+(async () => {
+  if (needsCli) {
+    const code = await runCommand("npm install -g agent-browser");
+    if (code !== 0) {
+      fail("npm install -g agent-browser failed");
+      return;
+    }
+  }
+
+  if (needsBrowserRuntime) {
+    const browserInstallCommands = [
+      "CI=1 npm_config_yes=true npx --yes playwright install chromium",
+      "CI=1 npm_config_yes=true npx --yes playwright install",
+      "CI=1 npm_config_yes=true agent-browser install",
+    ];
+    let installed = false;
+    for (const command of browserInstallCommands) {
+      const code = await runCommand(command);
+      if (code === 0) {
+        installed = true;
+        break;
+      }
+    }
+    if (!installed) {
+      fail("browser runtime install failed");
+      return;
+    }
+  }
+
+  if (needsSkill) {
+    const code = await runCommand("npx skills add vercel-labs/agent-browser");
+    if (code !== 0) {
+      fail("npx skills add vercel-labs/agent-browser failed");
+      return;
+    }
+  }
+
+  updateJob({ status: "ok", pid: null, lastErrorSummary: "" });
+  process.exit(0);
+})().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  fail(message);
+});
+`;
+
+  const logFd = openSync(logPath, "a");
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(process.execPath, ["-e", workerScript], {
+      cwd: repoRoot,
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      env: {
+        ...process.env,
+        MARIO_UI_PREREQ_STATE_PATH: statePath,
+        MARIO_UI_PREREQ_REPO_ROOT: repoRoot,
+        MARIO_UI_NEEDS_CLI: needsCli ? "1" : "0",
+        MARIO_UI_NEEDS_BROWSER: needsBrowserRuntime ? "1" : "0",
+        MARIO_UI_NEEDS_SKILL: needsSkill ? "1" : "0",
+      },
+    });
+  } finally {
+    closeSync(logFd);
+  }
+  child.unref();
+
+  await writeAgentBrowserPrereqJob(repoRoot, {
+    status: "installing",
+    pid: child.pid ?? null,
+    startedAt: now,
+    updatedAt: new Date().toISOString(),
+    attemptCount: Math.max(0, previousAttemptCount) + 1,
+    logPath,
+    commands,
+  });
+
+  if (typeof child.pid !== "number" || child.pid <= 0) {
+    throw new Error("Failed to start agent-browser prerequisite installer process.");
+  }
+
+  return {
+    pid: child.pid,
+    logPath,
+    commands,
+  };
+};
+
 export const ensureAgentBrowserPrereqs = async (
   ctx: any,
   repoRoot: string,
   log?: UiLog,
 ): Promise<AgentBrowserPrereqStatus> => {
-  const skillOk = await hasAgentBrowserSkill(repoRoot);
+  const attempted: string[] = [];
+  const priorJob = await readAgentBrowserPrereqJob(repoRoot);
+
   if (!ctx.$) {
     return {
       cliOk: false,
-      skillOk,
+      skillOk: false,
       browserOk: false,
-      attempted: buildAgentBrowserInstallPlan({
-        needsCli: true,
-        needsBrowserRuntime: true,
-        needsSkill: !skillOk,
-      }),
-      note: "No shell available. Install agent-browser prerequisites manually and rerun.",
+      attempted,
+      installing: false,
+      note: "No shell available for auto-installing agent-browser prerequisites.",
     };
   }
 
   const cliOk = await hasAgentBrowserCli(ctx);
+  const skillOk = await hasAgentBrowserSkill(repoRoot);
   const runtime = cliOk
     ? await hasAgentBrowserRuntime(ctx)
     : { ok: false as const, note: "agent-browser CLI is not installed." };
   const browserOk = runtime.ok;
-  const attempted = buildAgentBrowserInstallPlan({
-    needsCli: !cliOk,
-    needsBrowserRuntime: !browserOk,
-    needsSkill: !skillOk,
-  });
 
-  if (cliOk && skillOk && browserOk) {
+  const allReady = cliOk && skillOk && browserOk;
+  if (allReady) {
+    if (priorJob && priorJob.status !== "ok") {
+      await writeAgentBrowserPrereqJob(repoRoot, {
+        ...priorJob,
+        status: "ok",
+        pid: null,
+        updatedAt: new Date().toISOString(),
+        lastErrorSummary: "",
+      });
+    }
     return {
       cliOk,
       skillOk,
       browserOk,
-      attempted: [],
+      attempted,
+      installing: false,
     };
   }
 
-  await log?.({
-    level: "warn",
-    event: "ui.prereq.missing",
-    message: "Agent-browser prerequisites missing",
-    reasonCode: "UI_PREREQ_MISSING",
-    extra: {
+  if (priorJob?.status === "ok" && !browserOk) {
+    await writeAgentBrowserPrereqJob(repoRoot, {
+      ...priorJob,
+      status: "failed",
+      pid: null,
+      updatedAt: new Date().toISOString(),
+      lastErrorSummary: runtime.note || "Browser runtime probe failed after install completed.",
+    });
+  }
+
+  if (priorJob?.status === "installing" && pidLooksAlive(priorJob.pid) === true) {
+    await log?.({
+      level: "info",
+      event: "ui.prereq.install-job.running",
+      message: "Agent-browser prerequisite installer is already running",
+      extra: {
+        pid: priorJob.pid,
+        logPath: priorJob.logPath,
+        attemptCount: priorJob.attemptCount,
+      },
+    });
+    return {
       cliOk,
       skillOk,
       browserOk,
-      commands: attempted,
-      runtimeNote: runtime.note ?? null,
-    },
+      attempted,
+      installing: true,
+      ...(typeof priorJob.pid === "number" ? { installPid: priorJob.pid } : {}),
+      ...(priorJob.logPath ? { installLogPath: priorJob.logPath } : {}),
+      note: `Installing agent-browser prerequisites (pid ${priorJob.pid ?? "unknown"}).`,
+    };
+  }
+
+  if (priorJob?.status === "installing" && pidLooksAlive(priorJob.pid) !== true) {
+    await writeAgentBrowserPrereqJob(repoRoot, {
+      ...priorJob,
+      status: "failed",
+      pid: null,
+      updatedAt: new Date().toISOString(),
+      lastErrorSummary: priorJob.lastErrorSummary || "Installer process exited before prerequisites were satisfied.",
+    });
+  }
+
+  const needsCli = !cliOk;
+  const needsBrowserRuntime = !browserOk;
+  const needsSkill = !skillOk;
+  const planCommands = buildAgentBrowserInstallPlan({
+    needsCli,
+    needsBrowserRuntime,
+    needsSkill,
   });
+  attempted.push(...planCommands);
 
-  const noteParts = [
-    runtime.note ?? "Agent-browser prerequisites are missing.",
-    attempted.length > 0 ? `Install manually: ${attempted.join(" ; ")}` : "",
-  ].filter((part) => part && part.trim().length > 0);
+  try {
+    const started = await startAgentBrowserPrereqInstallJob({
+      repoRoot,
+      needsCli,
+      needsBrowserRuntime,
+      needsSkill,
+      previousAttemptCount: priorJob?.attemptCount ?? 0,
+    });
 
-  return {
-    cliOk,
-    skillOk,
-    browserOk,
-    attempted,
-    note: noteParts.join(" "),
-  };
+    await log?.({
+      level: "info",
+      event: "ui.prereq.install-job.start",
+      message: "Started background installer for agent-browser prerequisites",
+      extra: {
+        pid: started.pid,
+        logPath: started.logPath,
+        commands: started.commands,
+      },
+    });
+
+    return {
+      cliOk,
+      skillOk,
+      browserOk,
+      attempted,
+      installing: true,
+      installPid: started.pid,
+      installLogPath: started.logPath,
+      note: `Installing agent-browser prerequisites in background (pid ${started.pid}).`,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await log?.({
+      level: "error",
+      event: "ui.prereq.install-job.failed-start",
+      message: "Failed to start background installer for agent-browser prerequisites",
+      reasonCode: "UI_PREREQ_INSTALL_START_FAILED",
+      extra: {
+        detail,
+        commands: planCommands,
+      },
+    });
+
+    return {
+      cliOk,
+      skillOk,
+      browserOk,
+      attempted,
+      installing: false,
+      note: runtime.note
+        ? `Failed to start background installer: ${detail}. Runtime detail: ${runtime.note}`
+        : `Failed to start background installer: ${detail}`,
+    };
+  }
 };

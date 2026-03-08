@@ -45,5 +45,8 @@ export type AgentBrowserPrereqStatus = {
   skillOk: boolean;
   browserOk: boolean;
   attempted: string[];
+  installing: boolean;
+  installPid?: number;
+  installLogPath?: string;
   note?: string;
 };
