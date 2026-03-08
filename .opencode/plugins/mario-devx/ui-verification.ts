@@ -2,7 +2,7 @@ import path from "path";
 import { createHash } from "crypto";
 import { spawn, spawnSync } from "child_process";
 import { closeSync, openSync } from "fs";
-import { mkdir, readFile, stat } from "fs/promises";
+import { mkdir, readFile, stat, writeFile } from "fs/promises";
 import { runShellLogged } from "./shell";
 import type { UiFailureSubtype, UiLog, UiVerificationEvidence, UiVerificationFailure, UiVerificationResult } from "./ui-types";
 import { resolvePathInside } from "./paths";
@@ -427,6 +427,21 @@ export const runUiVerification = async (opts: {
     return ` UI transcript: ${joined}.`;
   };
 
+  const writeTextEvidence = async (opts: {
+    stepName: "snapshot" | "snapshot-interactive" | "console" | "errors";
+    rawOutput: string;
+    emptyPlaceholder: string;
+  }): Promise<string> => {
+    const { stepName, rawOutput, emptyPlaceholder } = opts;
+    const targetName = `${stepName}.txt`;
+    const targetAbs = resolvePathInside(evidenceDirAbs, targetName);
+    const targetRel = path.relative(repoRoot, targetAbs).replace(/\\/g, "/");
+    const text = rawOutput.trim().length > 0 ? rawOutput : `${emptyPlaceholder}\n`;
+    await mkdir(evidenceDirAbs, { recursive: true });
+    await writeFile(targetAbs, text, "utf8");
+    return targetRel;
+  };
+
   const buildFailure = (opts: {
     subtype?: UiFailureSubtype;
     pid?: number;
@@ -702,16 +717,106 @@ export const runUiVerification = async (opts: {
             continue;
           }
         } catch {
-          // fall back to parsing stdout/stderr
+          // Screenshot evidence stays optional.
         }
+        await log?.({
+          level: "warn",
+          event: "ui.verify.screenshot.missing",
+          message: "Screenshot command succeeded but no repo-local screenshot file was produced",
+          extra: {
+            screenshotPath: screenshotRel,
+          },
+        });
+        continue;
       }
 
-      const out = summarize(result.stdout || result.stderr);
-      if (step.name === "snapshot" && out) evidence.snapshot = out;
-      if (step.name === "snapshot-interactive" && out) evidence.snapshotInteractive = out;
-      if (step.name === "screenshot" && out) evidence.screenshot = out;
-      if (step.name === "console" && out) evidence.console = out;
-      if (step.name === "errors" && out) evidence.errors = out;
+      const rawOutput = result.stdout || result.stderr;
+
+      if (step.name === "snapshot") {
+        if (rawOutput.trim().length === 0) {
+          const details = "agent-browser snapshot produced no usable evidence.";
+          await log?.({
+            level: "error",
+            event: "ui.verify.snapshot.empty",
+            message: "Snapshot step succeeded but produced no usable evidence",
+            reasonCode: "UI_VERIFY_STEP_FAILED",
+          });
+          return {
+            ok: false,
+            note: `${details}${transcriptSuffix()}`,
+            failure: buildFailure({ subtype: "UNKNOWN" }),
+          };
+        }
+        try {
+          evidence.snapshot = await writeTextEvidence({
+            stepName: "snapshot",
+            rawOutput,
+            emptyPlaceholder: "(no snapshot output)",
+          });
+        } catch (error) {
+          const details = error instanceof Error
+            ? `Failed to persist snapshot evidence: ${error.message}`
+            : "Failed to persist snapshot evidence.";
+          await log?.({
+            level: "error",
+            event: "ui.verify.snapshot.persist-failed",
+            message: "Failed to write repo-local snapshot evidence",
+            reasonCode: "UI_VERIFY_STEP_FAILED",
+            extra: { detail: details },
+          });
+          return {
+            ok: false,
+            note: `${details}${transcriptSuffix()}`,
+            failure: buildFailure({ subtype: "UNKNOWN" }),
+          };
+        }
+        continue;
+      }
+
+      if (step.name === "snapshot-interactive") {
+        try {
+          evidence.snapshotInteractive = await writeTextEvidence({
+            stepName: "snapshot-interactive",
+            rawOutput,
+            emptyPlaceholder: "(no interactive elements reported)",
+          });
+        } catch {
+          await log?.({
+            level: "warn",
+            event: "ui.verify.snapshot-interactive.persist-failed",
+            message: "Failed to write optional interactive snapshot evidence",
+          });
+        }
+        continue;
+      }
+
+      if (step.name === "console" || step.name === "errors") {
+        try {
+          const persisted = await writeTextEvidence({
+            stepName: step.name,
+            rawOutput,
+            emptyPlaceholder: step.name === "console" ? "(no console output)" : "(no page errors)",
+          });
+          if (step.name === "console") evidence.console = persisted;
+          if (step.name === "errors") evidence.errors = persisted;
+        } catch (error) {
+          const details = error instanceof Error
+            ? `Failed to persist ${step.name} evidence: ${error.message}`
+            : `Failed to persist ${step.name} evidence.`;
+          await log?.({
+            level: "error",
+            event: `ui.verify.${step.name}.persist-failed`,
+            message: "Failed to write repo-local UI evidence",
+            reasonCode: "UI_VERIFY_STEP_FAILED",
+            extra: { detail: details },
+          });
+          return {
+            ok: false,
+            note: `${details}${transcriptSuffix()}`,
+            failure: buildFailure({ subtype: "UNKNOWN" }),
+          };
+        }
+      }
     }
     await log?.({
       level: "info",
