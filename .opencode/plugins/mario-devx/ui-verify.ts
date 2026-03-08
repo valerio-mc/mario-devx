@@ -8,9 +8,11 @@ export type {
 } from "./ui-types";
 export {
   ensureAgentBrowserPrereqs,
+  isLikelyWebApp,
+} from "./ui-prereq";
+export {
   hasAgentBrowserCli,
   hasAgentBrowserRuntime,
   hasAgentBrowserSkill,
-  isLikelyWebApp,
-} from "./ui-prereq";
+} from "./ui-prereq-checks";
 export { runUiVerification } from "./ui-verification";

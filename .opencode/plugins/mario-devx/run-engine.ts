@@ -277,7 +277,9 @@ export const runEngine = async (opts: {
         ...(continueOnTaskFailure ? { runStateStatus: "DOING" as const, logAsRunBlocked: false } : {}),
       });
       await showToast(ctx, blockerTask ? `Run blocked: ${task.id} requires ${blockerTask.id}` : `Run blocked: ${task.id} has missing dependency ${missingDep}`, "warning");
-      if ((await stopOrContinueTaskFailure(detail)) === "break") {
+      await logTaskBlocked(ctx, repoRoot, task.id, detail);
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
         stopReason = "task_failure";
         break;
       }
