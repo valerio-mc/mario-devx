@@ -14,20 +14,22 @@ export type UiRunSetup = {
   skillOk: boolean;
   browserOk: boolean;
   autoInstallAttempted: string[];
+  prereqInstalling: boolean;
+  prereqInstallPid?: number;
+  prereqLogPath?: string;
   prereqNote?: string;
   shouldRunUiVerify: boolean;
 };
 
 export const shouldBlockRunForUiPrereqs = (opts: {
   uiVerifyEnabled: boolean;
-  uiVerifyRequired: boolean;
   isWebApp: boolean;
   cliOk: boolean;
   skillOk: boolean;
   browserOk: boolean;
 }): boolean => {
-  const { uiVerifyEnabled, uiVerifyRequired, isWebApp, cliOk, skillOk, browserOk } = opts;
-  return uiVerifyEnabled && uiVerifyRequired && isWebApp && (!cliOk || !skillOk || !browserOk);
+  const { uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk } = opts;
+  return uiVerifyEnabled && isWebApp && (!cliOk || !skillOk || !browserOk);
 };
 
 type ResolveUiRunSetupOptions = {
@@ -69,6 +71,9 @@ export const resolveUiRunSetup = async (opts: ResolveUiRunSetupOptions): Promise
   let skillOk = await hasAgentBrowserSkill(repoRoot);
   let browserOk = true;
   let autoInstallAttempted: string[] = [];
+  let prereqInstalling = false;
+  let prereqInstallPid: number | undefined;
+  let prereqLogPath: string | undefined;
   let prereqNote: string | undefined;
   if (uiVerifyEnabled && isWebApp) {
     const ensured = await ensureAgentBrowserPrereqs(ctx, repoRoot, onPrereqLog);
@@ -76,6 +81,9 @@ export const resolveUiRunSetup = async (opts: ResolveUiRunSetupOptions): Promise
     skillOk = ensured.skillOk;
     browserOk = ensured.browserOk;
     autoInstallAttempted = ensured.attempted;
+    prereqInstalling = ensured.installing;
+    prereqInstallPid = ensured.installPid;
+    prereqLogPath = ensured.installLogPath;
     prereqNote = ensured.note;
   }
 
@@ -90,6 +98,9 @@ export const resolveUiRunSetup = async (opts: ResolveUiRunSetupOptions): Promise
     skillOk,
     browserOk,
     autoInstallAttempted,
+    prereqInstalling,
+    ...(typeof prereqInstallPid === "number" ? { prereqInstallPid } : {}),
+    ...(prereqLogPath ? { prereqLogPath } : {}),
     ...(prereqNote ? { prereqNote } : {}),
     shouldRunUiVerify: uiVerifyEnabled && isWebApp && cliOk && skillOk && browserOk,
   };

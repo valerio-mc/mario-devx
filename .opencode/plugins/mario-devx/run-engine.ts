@@ -46,6 +46,9 @@ export type RunContext = {
     skillOk: boolean;
     browserOk: boolean;
     autoInstallAttempted: string[];
+    prereqInstalling: boolean;
+    prereqInstallPid?: number;
+    prereqLogPath?: string;
     prereqNote?: string;
     shouldRunUiVerify: boolean;
   };
@@ -164,12 +167,14 @@ export const runEngine = async (opts: {
     skillOk,
     browserOk,
     autoInstallAttempted,
+    prereqInstalling,
+    prereqInstallPid,
+    prereqLogPath,
     prereqNote,
     shouldRunUiVerify,
   } = uiSetup;
   const blockRunForUiPrereqs = shouldBlockRunForUiPrereqs({
     uiVerifyEnabled,
-    uiVerifyRequired,
     isWebApp,
     cliOk,
     skillOk,
@@ -638,17 +643,21 @@ export const runEngine = async (opts: {
       await failEarly(
         [
           formatReasonCode(RUN_REASON.UI_PREREQ_MISSING),
-          "UI verification is enabled but agent-browser prerequisites are missing.",
+          prereqInstalling
+            ? "UI verification prerequisites are currently installing in the background."
+            : "UI verification is enabled but agent-browser prerequisites are still missing.",
           ...(prereqNote ? [prereqNote] : []),
-          ...(autoInstallAttempted.length > 0 ? [`Install commands: ${autoInstallAttempted.join("; ")}`] : []),
+          ...(autoInstallAttempted.length > 0 ? [`Auto-install attempted: ${autoInstallAttempted.join("; ")}`] : []),
+          ...(typeof prereqInstallPid === "number" ? [`Installer PID: ${prereqInstallPid}`] : []),
+          ...(prereqLogPath ? [`Installer log: ${prereqLogPath}`] : []),
           `Repo: ${agentBrowserRepo}`,
         ],
         [
-          "Install the missing prerequisites, then rerun /mario-devx:run 1.",
+          "Wait for prerequisite installation to finish, then rerun /mario-devx:run 1.",
         ],
         "global",
       );
-      noteGlobalBlocker("UI verification prerequisites are missing.");
+      noteGlobalBlocker("UI verification prerequisites are missing or still installing.");
       break;
     }
 
