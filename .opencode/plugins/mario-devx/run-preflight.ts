@@ -13,6 +13,9 @@ export type SessionAgentConfig = {
   parseWarnings: number;
 };
 
+const DEFAULT_UI_VERIFY_URL = "http://localhost:3000";
+const DEFAULT_AGENT_BROWSER_REPO = "https://github.com/vercel-labs/agent-browser";
+
 export const parseMaxItems = (rawMax: string | undefined): number => {
   const raw = (rawMax ?? "").trim();
   const parsed = raw.length === 0 ? 1 : Number.parseInt(raw, 10);
@@ -68,8 +71,9 @@ export const syncFrontendAgentsConfig = async (opts: {
   repoRoot: string;
   workspaceRoot: string;
   prd: PrdJson;
+  forceUiVerifyFromPrd?: boolean;
 }): Promise<{ parseWarnings: number }> => {
-  const { repoRoot, workspaceRoot, prd } = opts;
+  const { repoRoot, workspaceRoot, prd, forceUiVerifyFromPrd = false } = opts;
   if (prd.frontend !== true) {
     return { parseWarnings: 0 };
   }
@@ -78,22 +82,35 @@ export const syncFrontendAgentsConfig = async (opts: {
   const parsed = parseAgentsEnv(raw);
   const env = parsed.env;
   const uiRequired = prd.uiVerificationRequired === true;
+  const desiredUiVerify = uiRequired ? "1" : "0";
   const hasUiVerifyKey = hasAgentsKey(raw, "UI_VERIFY");
-  if (!hasUiVerifyKey) {
+  const defaultUiCmd = workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev";
+  const uiVerifyRaw = (env.UI_VERIFY ?? "").trim();
+  const uiVerifyRequiredRaw = (env.UI_VERIFY_REQUIRED ?? "").trim();
+  const uiVerifyCmdRaw = (env.UI_VERIFY_CMD ?? "").trim();
+  const uiVerifyUrlRaw = (env.UI_VERIFY_URL ?? "").trim();
+  const agentBrowserRepoRaw = (env.AGENT_BROWSER_REPO ?? "").trim();
+  const hasUntouchedTemplateUiDefaults = hasUiVerifyKey
+    && uiVerifyRaw === "0"
+    && uiVerifyRequiredRaw === "0"
+    && (uiVerifyCmdRaw.length === 0 || uiVerifyCmdRaw === "npm run dev")
+    && (uiVerifyUrlRaw.length === 0 || uiVerifyUrlRaw === DEFAULT_UI_VERIFY_URL)
+    && (agentBrowserRepoRaw.length === 0 || agentBrowserRepoRaw === DEFAULT_AGENT_BROWSER_REPO);
+
+  if (forceUiVerifyFromPrd || !hasUiVerifyKey || (desiredUiVerify === "1" && hasUntouchedTemplateUiDefaults)) {
     let next = raw;
-    next = upsertAgentsKey(next, "UI_VERIFY", "1");
+    next = upsertAgentsKey(next, "UI_VERIFY", desiredUiVerify);
     next = upsertAgentsKey(next, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
-    const defaultUiCmd = workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev";
     if (!hasAgentsKey(next, "UI_VERIFY_CMD") || !env.UI_VERIFY_CMD || (workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev")) {
       next = upsertAgentsKey(next, "UI_VERIFY_CMD", defaultUiCmd);
     }
-    if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", "http://localhost:3000");
-    if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", "https://github.com/vercel-labs/agent-browser");
+    if (!env.UI_VERIFY_URL) next = upsertAgentsKey(next, "UI_VERIFY_URL", DEFAULT_UI_VERIFY_URL);
+    if (!env.AGENT_BROWSER_REPO) next = upsertAgentsKey(next, "AGENT_BROWSER_REPO", DEFAULT_AGENT_BROWSER_REPO);
     await writeTextAtomic(agentsPath, next);
   } else if (env.UI_VERIFY === "1" && (env.UI_VERIFY_REQUIRED === "1") !== uiRequired) {
     let next = upsertAgentsKey(raw, "UI_VERIFY_REQUIRED", uiRequired ? "1" : "0");
     if ((workspaceRoot === "app" && env.UI_VERIFY_CMD === "npm run dev") || !hasAgentsKey(raw, "UI_VERIFY_CMD")) {
-      next = upsertAgentsKey(next, "UI_VERIFY_CMD", workspaceRoot === "app" ? "npm --prefix app run dev" : "npm run dev");
+      next = upsertAgentsKey(next, "UI_VERIFY_CMD", defaultUiCmd);
     }
     await writeTextAtomic(agentsPath, next);
   }

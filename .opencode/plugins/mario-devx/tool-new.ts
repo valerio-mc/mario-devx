@@ -4,6 +4,8 @@ import { tool } from "@opencode-ai/plugin";
 import { extractStyleReferencesFromText, hasNonEmpty, normalizeTextArray, mergeStyleReferences, LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";
 import { WIZARD_REQUIREMENTS } from "./config";
 import { logPrdComplete } from "./logging";
+import { resolveNodeWorkspaceRoot } from "./gates";
+import { syncFrontendAgentsConfig } from "./run-preflight";
 import {
   INTERVIEW_ANSWER_PREFIX,
   QUALITY_GATES_STATE_KEY,
@@ -398,6 +400,18 @@ export const createNewTool = (opts: {
 
             prd = await seedTasksFromPrd(repoRoot, prd, ctx);
             await writePrdJson(repoRoot, prd);
+            const workspaceRoot = await resolveNodeWorkspaceRoot(repoRoot);
+            const frontendSync = await syncFrontendAgentsConfig({
+              repoRoot,
+              workspaceRoot,
+              prd,
+              forceUiVerifyFromPrd: true,
+            });
+            if (frontendSync.parseWarnings > 0) {
+              await logToolEvent(ctx, repoRoot, "warn", "new.frontend-sync.warnings", "AGENTS.md parse warnings while syncing frontend UI verify config", {
+                count: frontendSync.parseWarnings,
+              });
+            }
             await logPrdComplete(ctx, repoRoot, prd.tasks.length);
             await logToolEvent(ctx, repoRoot, "info", "new.complete", "PRD interview completed and tasks seeded", {
               tasks: prd.tasks.length,
