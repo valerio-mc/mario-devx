@@ -1,6 +1,8 @@
 import { RUN_REASON } from "./run-contracts";
 import type { PrdGateFailure, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
+import type { WorkIdleFailure } from "./run-gate-repair";
 import { buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
+import type { SessionProgressWaitResult } from "./runner";
 import type { UiVerificationFailure } from "./ui-types";
 
 type UiVerificationReceipt = {
@@ -76,7 +78,7 @@ export const runSemanticRepairLoop = async (opts: {
     uiEvidence?: PrdUiAttempt["evidence"] | null;
   }) => string;
   promptWorkSessionWithTimeout: (phase: "semantic-repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
-  waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "semantic-repair") => Promise<boolean>;
+  waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "semantic-repair") => Promise<SessionProgressWaitResult>;
   heartbeatRunLock: () => Promise<boolean>;
   blockForHeartbeatFailure: (phase: string) => Promise<void>;
   captureWorkspaceSnapshot: (repoRoot: string) => Promise<Map<string, string> | null>;
@@ -106,6 +108,7 @@ export const runSemanticRepairLoop = async (opts: {
   latestUiResult: UiVerificationReceipt | null;
   gates: any;
   ui: any;
+  idleFailure?: WorkIdleFailure;
 }> => {
   const {
     ctx,
@@ -164,6 +167,7 @@ export const runSemanticRepairLoop = async (opts: {
   let latestUiResult = opts.latestUiResult;
   let gates = toGatesAttempt(latestGateResult);
   let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi: task.lastAttempt?.ui, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
+  let idleFailure: WorkIdleFailure | undefined;
 
   while (true) {
     verifierPassAttempts += 1;
@@ -256,8 +260,27 @@ export const runSemanticRepairLoop = async (opts: {
       break;
     }
 
-    const semanticIdleOk = await waitForWorkIdleAfterPrompt(semanticPromptDispatch, "semantic-repair");
-    if (!semanticIdleOk) {
+    const semanticIdle = await waitForWorkIdleAfterPrompt(semanticPromptDispatch, "semantic-repair");
+    if (!semanticIdle.ok) {
+      idleFailure = semanticIdle.reason === "aborted"
+        ? {
+            reasonCode: RUN_REASON.WORK_SESSION_IDLE_ABORTED,
+            detail: "Run was interrupted while waiting for work-session progress after semantic repair prompt dispatch.",
+            blocker: "Run interrupted while waiting for work-session progress during semantic repair.",
+            nextActions: [
+              "Retry /mario-devx:run 1.",
+              "If it repeats, inspect .mario/state/mario-devx.log for work-session idle wait diagnostics.",
+            ],
+          }
+        : {
+            reasonCode: RUN_REASON.WORK_SESSION_IDLE_TIMEOUT,
+            detail: "Work session did not become idle before timeout after semantic repair prompt dispatch.",
+            blocker: "Work session did not become idle before timeout during semantic repair.",
+            nextActions: [
+              "Retry /mario-devx:run 1.",
+              "If it repeats, inspect .mario/state/mario-devx.log for work-session idle wait diagnostics.",
+            ],
+          };
       blockedByVerifierFailure = true;
       break;
     }
@@ -316,5 +339,6 @@ export const runSemanticRepairLoop = async (opts: {
     latestUiResult,
     gates,
     ui,
+    ...(idleFailure ? { idleFailure } : {}),
   };
 };

@@ -1,8 +1,10 @@
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
+import type { WorkIdleFailure } from "./run-gate-repair";
 import { RUN_PHASE, type RunPhaseName } from "./run-types";
 import { LIMITS, TIMEOUTS } from "./config";
 import { getNextPrdTask, getTaskDependencyBlockers, setPrdTaskLastAttempt, setPrdTaskStatus } from "./planner";
 import { bumpIteration } from "./state";
+import type { SessionProgressWaitResult } from "./runner";
 import { updateRunState, waitForSessionIdleOrAssistantQuiet, setWorkSessionTitle } from "./runner";
 import { writePrdJson, type PrdGatesAttempt, type PrdJudgeAttempt, type PrdJson, type PrdTask, type PrdTaskAttempt, type PrdUiAttempt } from "./prd";
 import { runUiVerifyForTask as runUiVerifyForTaskPhase, resolveEffectiveDoneWhen, toGateCommands, toGatesAttempt, toUiAttempt, logGateRunResults as logGateRunResultsPhase, captureWorkspaceSnapshot, summarizeWorkspaceDelta } from "./run-phase-helpers";
@@ -487,16 +489,22 @@ export const runEngine = async (opts: {
     const waitForWorkIdleAfterPrompt = async (
       dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number },
       phase: "repair" | "semantic-repair",
-    ): Promise<boolean> => {
-      if (!ws) return false;
+    ): Promise<SessionProgressWaitResult> => {
+      if (!ws) {
+        return {
+          ok: false,
+          reason: "timeout",
+          idleSequence: dispatch.idleSequenceBeforePrompt,
+          assistantCount: dispatch.baselineAssistantCount,
+        };
+      }
       const maxWaitMs = phase === "repair" ? REPAIR_WAIT_MAX_MS : SEMANTIC_WAIT_MAX_MS;
-      const nextIdle = await waitForSessionIdleOrAssistantQuiet(ctx, ws.sessionId, {
+      return waitForSessionIdleOrAssistantQuiet(ctx, ws.sessionId, {
         afterSequence: dispatch.idleSequenceBeforePrompt,
         baselineAssistantCount: dispatch.baselineAssistantCount,
         maxWaitMs,
         abortSignal,
       });
-      return nextIdle.ok;
     };
 
     const gateRepair = await runGateRepairLoop({
@@ -604,8 +612,24 @@ export const runEngine = async (opts: {
       );
     };
 
+    const persistIdleFailure = async (idleFailure: WorkIdleFailure): Promise<void> => {
+      await failEarly(
+        [
+          formatReasonCode(idleFailure.reasonCode),
+          idleFailure.detail,
+        ],
+        idleFailure.nextActions,
+        "global",
+      );
+    };
+
     if (!latestGateResult.ok && stoppedForGlobalBlocker) {
+      if (gateRepair.idleFailure) {
+        await persistIdleFailure(gateRepair.idleFailure);
+        noteGlobalBlocker(gateRepair.idleFailure.blocker);
+      } else {
       noteGlobalBlocker("Gate auto-repair was interrupted by an infrastructure failure (prompt/heartbeat/idle). See latest task.lastAttempt.");
+      }
       break;
     }
 
@@ -743,6 +767,14 @@ export const runEngine = async (opts: {
       gates = semanticResult.gates;
       ui = semanticResult.ui;
 
+      if (semanticResult.idleFailure) {
+        await persistIdleFailure(semanticResult.idleFailure);
+        blockedByVerifierFailure = true;
+        judge = null;
+        noteGlobalBlocker(semanticResult.idleFailure.blocker);
+        break;
+      }
+
       if (!(semanticResult.semanticGateRegression && !latestGateResult.ok)) {
         break;
       }
@@ -788,7 +820,12 @@ export const runEngine = async (opts: {
       if (!latestGateResult.ok && semanticGateRepair.stoppedForGlobalBlocker) {
         blockedByVerifierFailure = true;
         judge = null;
-        noteGlobalBlocker("Gate auto-repair after semantic regression was interrupted by an infrastructure failure (prompt/heartbeat/idle).");
+        if (semanticGateRepair.idleFailure) {
+          await persistIdleFailure(semanticGateRepair.idleFailure);
+          noteGlobalBlocker(semanticGateRepair.idleFailure.blocker);
+        } else {
+          noteGlobalBlocker("Gate auto-repair after semantic regression was interrupted by an infrastructure failure (prompt/heartbeat/idle).");
+        }
         break;
       }
 

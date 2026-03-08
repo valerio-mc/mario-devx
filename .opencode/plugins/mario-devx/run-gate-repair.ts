@@ -10,8 +10,16 @@ import {
 import { firstScaffoldHintFromNotes, isScaffoldMissingGateCommand } from "./planner";
 import type { PrdGateFailure, PrdTask } from "./prd";
 import { RUN_EVENT, RUN_REASON } from "./run-contracts";
+import type { SessionProgressWaitResult } from "./runner";
 
 type GateResult = Awaited<ReturnType<typeof runGateCommands>>;
+
+export type WorkIdleFailure = {
+  reasonCode: typeof RUN_REASON.WORK_SESSION_IDLE_TIMEOUT | typeof RUN_REASON.WORK_SESSION_IDLE_ABORTED;
+  detail: string;
+  blocker: string;
+  nextActions: string[];
+};
 
 export const runGateRepairLoop = async (opts: {
   ctx: any;
@@ -27,7 +35,7 @@ export const runGateRepairLoop = async (opts: {
   initialGateResult?: GateResult;
   initialWorkIdleAnnounced: boolean;
   promptWorkSessionWithTimeout: (phase: "repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
-  waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "repair") => Promise<boolean>;
+  waitForWorkIdleAfterPrompt: (dispatch: { idleSequenceBeforePrompt: number; baselineAssistantCount: number }, phase: "repair") => Promise<SessionProgressWaitResult>;
   heartbeatRunLock: () => Promise<boolean>;
   blockForHeartbeatFailure: (phase: string) => Promise<void>;
   showToast: (ctx: any, message: string, variant?: "info" | "success" | "warning" | "error") => Promise<void>;
@@ -71,6 +79,7 @@ export const runGateRepairLoop = async (opts: {
   stoppedForNoChanges: boolean;
   stoppedForGlobalBlocker: boolean;
   lastNoChangeGate: string | null;
+  idleFailure?: WorkIdleFailure;
   workIdleAnnounced: boolean;
 }> => {
   const {
@@ -112,6 +121,7 @@ export const runGateRepairLoop = async (opts: {
   let lastNoChangeGate: string | null = null;
   let lastGateFailureSig: string | null = null;
   let deterministicScaffoldTried = false;
+  let idleFailure: WorkIdleFailure | undefined;
 
   while (!gateResult.ok) {
     const currentSig = buildGateFailureFingerprint(findFailedGateRunItem(gateResult.results), { outputMaxChars: 300 }) ?? "unknown";
@@ -186,8 +196,27 @@ export const runGateRepairLoop = async (opts: {
       break;
     }
 
-    const repairIdleOk = await waitForWorkIdleAfterPrompt(repairPromptDispatch, "repair");
-    if (!repairIdleOk) {
+    const repairIdle = await waitForWorkIdleAfterPrompt(repairPromptDispatch, "repair");
+    if (!repairIdle.ok) {
+      idleFailure = repairIdle.reason === "aborted"
+        ? {
+            reasonCode: RUN_REASON.WORK_SESSION_IDLE_ABORTED,
+            detail: "Run was interrupted while waiting for work-session progress after repair prompt dispatch.",
+            blocker: "Run interrupted while waiting for work-session progress during auto-repair.",
+            nextActions: [
+              "Retry /mario-devx:run 1.",
+              "If it repeats, inspect .mario/state/mario-devx.log for work-session idle wait diagnostics.",
+            ],
+          }
+        : {
+            reasonCode: RUN_REASON.WORK_SESSION_IDLE_TIMEOUT,
+            detail: "Work session did not become idle before timeout after repair prompt dispatch.",
+            blocker: "Work session did not become idle before timeout during auto-repair.",
+            nextActions: [
+              "Retry /mario-devx:run 1.",
+              "If it repeats, inspect .mario/state/mario-devx.log for work-session idle wait diagnostics.",
+            ],
+          };
       stoppedForGlobalBlocker = true;
       break;
     }
@@ -236,6 +265,7 @@ export const runGateRepairLoop = async (opts: {
     stoppedForNoChanges,
     stoppedForGlobalBlocker,
     lastNoChangeGate,
+    ...(idleFailure ? { idleFailure } : {}),
     workIdleAnnounced,
   };
 };
