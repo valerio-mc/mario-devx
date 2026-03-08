@@ -270,6 +270,7 @@ export const runPreflightStep = async (opts: {
 
   const blockForUiPrereqs = shouldBlockRunForUiPrereqs({
     uiVerifyEnabled,
+    uiVerifyRequired,
     isWebApp,
     cliOk,
     skillOk,

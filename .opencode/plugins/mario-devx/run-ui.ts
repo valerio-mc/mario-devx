@@ -20,13 +20,14 @@ export type UiRunSetup = {
 
 export const shouldBlockRunForUiPrereqs = (opts: {
   uiVerifyEnabled: boolean;
+  uiVerifyRequired: boolean;
   isWebApp: boolean;
   cliOk: boolean;
   skillOk: boolean;
   browserOk: boolean;
 }): boolean => {
-  const { uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk } = opts;
-  return uiVerifyEnabled && isWebApp && (!cliOk || !skillOk || !browserOk);
+  const { uiVerifyEnabled, uiVerifyRequired, isWebApp, cliOk, skillOk, browserOk } = opts;
+  return uiVerifyEnabled && uiVerifyRequired && isWebApp && (!cliOk || !skillOk || !browserOk);
 };
 
 type ResolveUiRunSetupOptions = {

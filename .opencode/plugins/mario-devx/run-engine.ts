@@ -5,7 +5,7 @@ import { getNextPrdTask, getTaskDependencyBlockers, setPrdTaskLastAttempt, setPr
 import { bumpIteration } from "./state";
 import { updateRunState, waitForSessionIdleOrAssistantQuiet, setWorkSessionTitle } from "./runner";
 import { writePrdJson, type PrdGatesAttempt, type PrdJudgeAttempt, type PrdJson, type PrdTask, type PrdTaskAttempt, type PrdUiAttempt } from "./prd";
-import { runUiVerifyForTask as runUiVerifyForTaskPhase, checkAcceptanceArtifacts, resolveEffectiveDoneWhen, toGateCommands, toGatesAttempt, toUiAttempt, logGateRunResults as logGateRunResultsPhase, captureWorkspaceSnapshot, summarizeWorkspaceDelta } from "./run-phase-helpers";
+import { runUiVerifyForTask as runUiVerifyForTaskPhase, resolveEffectiveDoneWhen, toGateCommands, toGatesAttempt, toUiAttempt, logGateRunResults as logGateRunResultsPhase, captureWorkspaceSnapshot, summarizeWorkspaceDelta } from "./run-phase-helpers";
 import { buildIterationTaskPlan, buildGateRepairPrompt, buildSemanticRepairPrompt } from "./run-prompts";
 import { buildPrompt } from "./prompt";
 import { heartbeatRunLock, runLockPath } from "./run-lock";
@@ -169,6 +169,7 @@ export const runEngine = async (opts: {
   } = uiSetup;
   const blockRunForUiPrereqs = shouldBlockRunForUiPrereqs({
     uiVerifyEnabled,
+    uiVerifyRequired,
     isWebApp,
     cliOk,
     skillOk,
@@ -661,21 +662,6 @@ export const runEngine = async (opts: {
         ],
         blockedReason: uiReason,
         nextActions: buildUiVerifyFailedNextActions(latestUiResult.note, ui.failure),
-      })) === "break") {
-        break;
-      }
-      continue;
-    }
-
-    const artifactCheck = await checkAcceptanceArtifacts(repoRoot, task.acceptance ?? []);
-    if (artifactCheck.missingFiles.length > 0 || artifactCheck.missingLabels.length > 0) {
-      if ((await recordAndHandleTaskFailure({
-        reasonLines: [
-          formatReasonCode(RUN_REASON.ACCEPTANCE_ARTIFACTS_MISSING),
-          ...(artifactCheck.missingFiles.length > 0 ? [`Missing expected files: ${artifactCheck.missingFiles.join(", ")}.`] : []),
-          ...(artifactCheck.missingLabels.length > 0 ? [`Missing expected navigation labels in app shell: ${artifactCheck.missingLabels.join(", ")}.`] : []),
-        ],
-        blockedReason: "Acceptance artifacts missing.",
       })) === "break") {
         break;
       }

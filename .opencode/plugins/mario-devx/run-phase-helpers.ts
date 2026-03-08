@@ -1,4 +1,4 @@
-import { readFile, stat } from "fs/promises";
+import { stat } from "fs/promises";
 import { spawn } from "child_process";
 import path from "path";
 import { runUiVerification } from "./ui-verification";
@@ -342,101 +342,5 @@ export const summarizeWorkspaceDelta = (before: WorkspaceSnapshot, after: Worksp
     deleted,
     changed: added + modified + deleted,
     sample,
-  };
-};
-
-type AcceptanceArtifactCheck = {
-  missingFiles: string[];
-  missingLabels: string[];
-};
-
-const extractNavigationLabels = (acceptance: string[]): string[] => {
-  const labels: string[] = [];
-  for (const line of acceptance) {
-    if (!/nav|navigation/i.test(line)) continue;
-    const quoted = line.match(/"([^"]+)"/g) ?? [];
-    for (const chunk of quoted) {
-      const cleaned = chunk.replace(/"/g, "");
-      const parts = cleaned.split(",").map((x) => x.trim()).filter(Boolean);
-      for (const part of parts) {
-        if (part.length > 0) labels.push(part);
-      }
-    }
-  }
-  return Array.from(new Set(labels));
-};
-
-const slugifyLabel = (label: string): string => {
-  return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-};
-
-const readTextOrEmpty = async (filePath: string): Promise<string> => {
-  try {
-    return await readFile(filePath, "utf8");
-  } catch {
-    return "";
-  }
-};
-
-const resolveAppRouterRoots = async (repoRoot: string): Promise<string[]> => {
-  const candidates = ["src/app", "app"];
-  const found: string[] = [];
-  for (const rel of candidates) {
-    try {
-      const s = await stat(path.join(repoRoot, rel));
-      if (s.isDirectory()) {
-        found.push(rel);
-      }
-    } catch {
-      // Ignore missing candidates.
-    }
-  }
-  return found;
-};
-
-export const checkAcceptanceArtifacts = async (repoRoot: string, acceptance: string[]): Promise<AcceptanceArtifactCheck> => {
-  const labels = extractNavigationLabels(acceptance);
-  if (labels.length === 0) {
-    return { missingFiles: [], missingLabels: [] };
-  }
-
-  const appRoots = await resolveAppRouterRoots(repoRoot);
-  if (appRoots.length === 0) {
-    return { missingFiles: [], missingLabels: [] };
-  }
-
-  const missingFiles: string[] = [];
-  for (const label of labels) {
-    const slug = slugifyLabel(label);
-    if (!slug) continue;
-    const pageCandidates = appRoots.map((root) => `${root}/${slug}/page.tsx`);
-    let foundPage = false;
-    for (const rel of pageCandidates) {
-      try {
-        const s = await stat(path.join(repoRoot, rel));
-        if (s.isFile()) {
-          foundPage = true;
-          break;
-        }
-      } catch {
-        // Candidate does not exist.
-      }
-    }
-    if (!foundPage) {
-      missingFiles.push(pageCandidates[0]);
-    }
-  }
-
-  let combined = "";
-  for (const root of appRoots) {
-    const layoutText = await readTextOrEmpty(path.join(repoRoot, root, "layout.tsx"));
-    const homeText = await readTextOrEmpty(path.join(repoRoot, root, "page.tsx"));
-    combined = `${combined}\n${layoutText}\n${homeText}`;
-  }
-  const missingLabels = labels.filter((label) => !new RegExp(`\\b${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(combined));
-
-  return {
-    missingFiles: Array.from(new Set(missingFiles)),
-    missingLabels: Array.from(new Set(missingLabels)),
   };
 };
