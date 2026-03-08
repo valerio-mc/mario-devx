@@ -7,8 +7,6 @@ type ToastNotifier = (input: {
   variant: ToastVariant;
 }) => Promise<void>;
 
-type ToolCallMarker = "start" | "completed" | "error";
-
 type UnknownRecord = Record<string, unknown>;
 
 type PhaseBuffer = {
@@ -16,8 +14,7 @@ type PhaseBuffer = {
   taskId?: string;
   lastToastAt: number;
   lastToastText: string;
-  toolCalls: Map<string, ToolCallMarker>;
-  patchHashes: Set<string>;
+  seenEventKeys: Set<string>;
 };
 
 type ToastChannel = {
@@ -36,8 +33,7 @@ const createPhaseBuffer = (): PhaseBuffer => ({
   text: "",
   lastToastAt: 0,
   lastToastText: "",
-  toolCalls: new Map<string, ToolCallMarker>(),
-  patchHashes: new Set<string>(),
+  seenEventKeys: new Set<string>(),
 });
 
 const getOrCreateChannel = (controlSessionId: string): ToastChannel => {
@@ -93,14 +89,6 @@ const appendToastLine = (phaseBuffer: PhaseBuffer, text: string): boolean => {
   return true;
 };
 
-const pruneMapToSize = <T>(map: Map<string, T>, maxSize: number): void => {
-  while (map.size > maxSize) {
-    const first = map.keys().next();
-    if (first.done) return;
-    map.delete(first.value);
-  }
-};
-
 const pruneSetToSize = (set: Set<string>, maxSize: number): void => {
   while (set.size > maxSize) {
     const first = set.values().next();
@@ -126,35 +114,26 @@ const toolInputSummary = (toolName: string, input: unknown): string => {
   return "";
 };
 
-const toolMarkerForStatus = (status: string): ToolCallMarker | null => {
-  if (status === "pending" || status === "running") return "start";
-  if (status === "completed") return "completed";
-  if (status === "error") return "error";
-  return null;
-};
-
-const toolEventLine = (part: UnknownRecord): { key: string; marker: ToolCallMarker; line: string } | null => {
+const toolEventLine = (part: UnknownRecord): { key: string; line: string } | null => {
   const toolName = readString(part, "tool") || "tool";
   const callId = readString(part, "callID") || readString(part, "id");
   const state = asRecord(part.state);
   const status = readString(state, "status");
-  const marker = toolMarkerForStatus(status);
-  if (!marker) return null;
+  if (!["pending", "running", "completed", "error"].includes(status)) return null;
 
   const title = readString(state, "title");
   const detail = title || toolInputSummary(toolName, state?.input);
-  if (marker === "start") {
+  if (status === "pending" || status === "running") {
     const line = detail
       ? `tool ${toolName} started: ${clipText(normalizeToastText(detail), TOOL_DETAIL_CHARS)}`
       : `tool ${toolName} started`;
     return {
-      key: callId || `${toolName}:${status}`,
-      marker,
+      key: `${callId || toolName}:start`,
       line,
     };
   }
 
-  if (marker === "completed") {
+  if (status === "completed") {
     const metadata = asRecord(state?.metadata);
     const exitCode = readNumber(metadata, "exitCode");
     const withExit = toolName === "bash" && exitCode !== null
@@ -164,16 +143,14 @@ const toolEventLine = (part: UnknownRecord): { key: string; marker: ToolCallMark
       ? `${withExit}: ${clipText(normalizeToastText(detail), TOOL_DETAIL_CHARS)}`
       : withExit;
     return {
-      key: callId || `${toolName}:${status}`,
-      marker,
+      key: `${callId || toolName}:completed`,
       line,
     };
   }
 
   const err = clipText(normalizeToastText(readString(state, "error")), TOOL_DETAIL_CHARS);
   return {
-    key: callId || `${toolName}:${status}`,
-    marker,
+    key: `${callId || toolName}:error`,
     line: err ? `tool ${toolName} failed: ${err}` : `tool ${toolName} failed`,
   };
 };
@@ -238,40 +215,18 @@ const appendToastDelta = (opts: {
   return true;
 };
 
-const appendToolEvent = (opts: {
+const appendDedupedEvent = (opts: {
   controlSessionId: string;
   phase: StreamPhase;
   key: string;
-  marker: ToolCallMarker;
   line: string;
   taskId?: string;
 }): boolean => {
   const channel = getOrCreateChannel(opts.controlSessionId);
   const phaseBuffer = channel[opts.phase];
-  const previous = phaseBuffer.toolCalls.get(opts.key);
-  if (previous === opts.marker) return false;
-  if (previous === "completed" || previous === "error") return false;
-  phaseBuffer.toolCalls.set(opts.key, opts.marker);
-  pruneMapToSize(phaseBuffer.toolCalls, 300);
-  if (opts.taskId) {
-    phaseBuffer.taskId = opts.taskId;
-  }
-  return appendToastLine(phaseBuffer, opts.line);
-};
-
-const appendPatchEvent = (opts: {
-  controlSessionId: string;
-  phase: StreamPhase;
-  hash: string;
-  line: string;
-  taskId?: string;
-}): boolean => {
-  const channel = getOrCreateChannel(opts.controlSessionId);
-  const phaseBuffer = channel[opts.phase];
-  const dedupeHash = opts.hash || opts.line;
-  if (phaseBuffer.patchHashes.has(dedupeHash)) return false;
-  phaseBuffer.patchHashes.add(dedupeHash);
-  pruneSetToSize(phaseBuffer.patchHashes, 300);
+  if (phaseBuffer.seenEventKeys.has(opts.key)) return false;
+  phaseBuffer.seenEventKeys.add(opts.key);
+  pruneSetToSize(phaseBuffer.seenEventKeys, 300);
   if (opts.taskId) {
     phaseBuffer.taskId = opts.taskId;
   }
@@ -342,11 +297,10 @@ export const ingestToastStreamEvent = (opts: {
   if (partType === "tool") {
     const tool = toolEventLine(part);
     if (!tool) return { accepted: false };
-    const accepted = appendToolEvent({
+    const accepted = appendDedupedEvent({
       controlSessionId,
       phase,
       key: tool.key,
-      marker: tool.marker,
       line: tool.line,
       ...(taskId ? { taskId } : {}),
     });
@@ -362,10 +316,10 @@ export const ingestToastStreamEvent = (opts: {
   if (partType === "patch") {
     const patch = patchEventLine(part);
     if (!patch) return { accepted: false };
-    const accepted = appendPatchEvent({
+    const accepted = appendDedupedEvent({
       controlSessionId,
       phase,
-      hash: patch.hash,
+      key: patch.hash || patch.line,
       line: patch.line,
       ...(taskId ? { taskId } : {}),
     });
