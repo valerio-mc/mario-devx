@@ -1,4 +1,5 @@
 import type { PrdTask, PrdTaskAttempt } from "./prd";
+import { selectTopJudgeReason } from "./judge-utils";
 
 export type RunSummary = {
   result: string;
@@ -31,23 +32,7 @@ export const buildRunSummary = (opts: BuildRunSummaryOptions): RunSummary => {
   const uiSummary = latestAttempt?.ui
     ? (latestAttempt.ui.ran ? `UI verify: ${latestAttempt.ui.ok ? "PASS" : "FAIL"}${uiVerifyRequired ? " (required)" : " (optional)"}` : "UI verify: not run")
     : "UI verify: not available";
-  const selectTopReason = (attempt: PrdTaskAttempt | undefined): string => {
-    const reasons = (attempt?.judge.reason ?? []).map((x) => String(x).trim()).filter(Boolean);
-    if (reasons.length === 0) return "No judge reason recorded.";
-    const isPassEvidenceLine = (line: string): boolean => {
-      if (/^ui verification:\s*pass\b/i.test(line)) return true;
-      return /^[\w./:\-\s]+:\s*PASS\b/i.test(line);
-    };
-    if (attempt?.judge.status === "FAIL") {
-      const reasonCode = reasons.find((line) => /^ReasonCode:\s*[A-Z0-9_]+/i.test(line));
-      const actionable = reasons.find((line) => !/^ReasonCode:\s*[A-Z0-9_]+/i.test(line) && !isPassEvidenceLine(line));
-      if (actionable && reasonCode) return `${actionable} (${reasonCode})`;
-      if (actionable) return actionable;
-      if (reasonCode) return reasonCode;
-    }
-    return reasons[0];
-  };
-  const judgeTopReason = selectTopReason(latestAttempt);
+  const judgeTopReason = selectTopJudgeReason(latestAttempt);
 
   const note =
     stopReason === "max_items"

@@ -56,6 +56,8 @@ import { createBacklogTools } from "./tool-backlog";
 import { createNewTool } from "./tool-new";
 import { createRunTool } from "./tool-run";
 import type { PluginContext } from "./tool-common";
+import { extractFirstJsonObject, extractTaggedBlock, tryParseJson } from "./llm-json";
+import { firstActionableJudgeReason, isPassEvidenceLine } from "./judge-utils";
 
 const nowIso = (): string => new Date().toISOString();
 
@@ -265,24 +267,24 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
     const ws = await ensureWorkSession(pluginCtx, repoRoot, undefined);
     wsSessionId = ws.sessionId;
     const taskGenPrompt = buildTaskGenerationPrompt(prd);
-  
-  await logEvent(pluginCtx, repoRoot, {
-    level: "info",
-    event: "task-generation.start",
-    message: "Generating tasks from PRD via LLM",
-  });
+
+    await logEvent(pluginCtx, repoRoot, {
+      level: "info",
+      event: "task-generation.start",
+      message: "Generating tasks from PRD via LLM",
+    });
     const taskResponse = await pluginCtx.client.session.prompt({
       path: { id: ws.sessionId },
       body: { parts: [{ type: "text", text: taskGenPrompt }] },
     });
-  
+
     const taskText = await resolvePromptText(pluginCtx, ws.sessionId, taskResponse);
-    const taskMatch = taskText.match(/<TASK_JSON>([\s\S]*?)<\/TASK_JSON>/i);
-  
+    const taskJson = extractTaggedBlock(taskText, "TASK_JSON");
+
     let tasks: PrdTask[];
-    if (taskMatch) {
+    if (taskJson) {
       try {
-        const parsed = JSON.parse(taskMatch[1].trim());
+        const parsed = JSON.parse(taskJson);
         tasks = parsed.tasks?.map((t: any, idx: number) => makeTask({
           id: t.id || normalizeTaskId(idx + 1),
           title: t.title,
@@ -306,7 +308,7 @@ const seedTasksFromPrd = async (repoRoot: string, prd: PrdJson, pluginCtx: Plugi
       logError("task-generation", "No <TASK_JSON> found in LLM response, using fallback");
       tasks = generateFallbackTasks(prd);
     }
-  
+
     return {
       ...prd,
       tasks,
@@ -379,13 +381,6 @@ const isSystemReasonCode = (line: string): boolean => {
     || code.startsWith("MISSING_SCRIPT_");
 };
 
-const isPassEvidenceLine = (line: string): boolean => {
-  const trimmed = String(line ?? "").trim();
-  if (!trimmed) return false;
-  if (/^ui verification:\s*pass\b/i.test(trimmed)) return true;
-  return /^[\w./:\-\s]+:\s*PASS\b/i.test(trimmed);
-};
-
 const isMetaCarryForwardLine = (line: string): boolean => {
   const text = String(line ?? "").trim();
   if (!text) return true;
@@ -408,17 +403,6 @@ const normalizeIssueLine = (line: unknown): string => {
     .replace(/[.\s]+$/, "")
     .toLowerCase();
   return text;
-};
-
-const firstActionableJudgeReason = (judge: PrdJudgeAttempt | undefined): string | null => {
-  if (!judge) return null;
-  const reasons = (judge.reason ?? []).map((x) => String(x).trim()).filter(Boolean);
-  if (reasons.length === 0) return null;
-  const actionable = reasons.find((line) => {
-    if (/^ReasonCode:\s*[A-Z0-9_]+/i.test(line)) return false;
-    return !isPassEvidenceLine(line);
-  });
-  return actionable ?? reasons[0] ?? null;
 };
 
 const collectCarryForwardIssues = (task: PrdTask): string[] => {
@@ -556,10 +540,12 @@ const qualityGatePresetRepairPrompt = (invalidResponse: string): string => {
 };
 
 const parseQualityGatePresetResponse = (text: string): QualityGateSelectionState | null => {
-  const jsonText = extractJsonObject(text);
+  const jsonText = extractFirstJsonObject(text);
   if (!jsonText) return null;
+  const parsedResult = tryParseJson<{ question?: unknown; options?: Array<{ label?: unknown; commands?: unknown }> }>(jsonText);
+  if (!parsedResult.ok) return null;
   try {
-    const parsed = JSON.parse(jsonText) as { question?: unknown; options?: Array<{ label?: unknown; commands?: unknown }> };
+    const parsed = parsedResult.value;
     const question = typeof parsed.question === "string" ? parsed.question.trim() : "Which quality gate preset should we use?";
     const options = Array.isArray(parsed.options)
       ? parsed.options
@@ -597,50 +583,21 @@ const normalizeQuestionKey = (input: string): string => {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 };
 
-const extractJsonObject = (text: string): string | null => {
-  const start = text.indexOf("{");
-  if (start < 0) return null;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === "{") depth++;
-    if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        return text.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
-};
-
 const compileInterviewPrompt = (prd: PrdJson): string => {
   return buildCompileInterviewPrompt(prd, interviewTranscript(prd));
 };
 
 const parseCompileInterviewResponse = (text: string): { envelope: CompileInterviewEnvelope | null; error?: string } => {
-  const jsonText = extractJsonObject(text);
+  const jsonText = extractFirstJsonObject(text);
   if (!jsonText) {
     return { envelope: null, error: "No JSON object found in compile response" };
   }
+  const parsedResult = tryParseJson<CompileInterviewEnvelope>(jsonText);
+  if (!parsedResult.ok) {
+    return { envelope: null, error: `Compile JSON parse error: ${parsedResult.error}` };
+  }
   try {
-    const parsed = JSON.parse(jsonText) as CompileInterviewEnvelope;
+    const parsed = parsedResult.value;
     if (!parsed || typeof parsed !== "object") {
       return { envelope: null, error: "Compile response is not an object" };
     }

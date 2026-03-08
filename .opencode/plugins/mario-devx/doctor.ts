@@ -4,7 +4,7 @@ import { readTextIfExists } from "./fs";
 import { assetsDir } from "./paths";
 import { discoverAgentBrowserCapabilities } from "./agent-browser-capabilities";
 import { redactForLog } from "./logging";
-import { readPrdJsonIfExists } from "./prd";
+import { formatPrdReadErrorMessage, isPrdReadError, readPrdJsonIfExists } from "./prd";
 import { readRunState, readUiVerifyState } from "./state";
 import { runLockPath } from "./run-lock";
 import { parseAgentsEnv } from "./agents-env";
@@ -20,8 +20,20 @@ export const runDoctor = async (ctx: any, repoRoot: string): Promise<string> => 
   const issues: string[] = [];
   const fixes: string[] = [];
 
-  const prd = await readPrdJsonIfExists(repoRoot);
-  if (!prd) {
+  let prd = null;
+  let prdReadBlocked = false;
+  try {
+    prd = await readPrdJsonIfExists(repoRoot);
+  } catch (error) {
+    if (isPrdReadError(error)) {
+      prdReadBlocked = true;
+      issues.push(formatPrdReadErrorMessage(error));
+      fixes.push("After regenerating PRD, rerun /mario-devx:doctor.");
+    } else {
+      throw error;
+    }
+  }
+  if (!prd && !prdReadBlocked) {
     issues.push("Missing or invalid .mario/prd.json");
     fixes.push("Run /mario-devx:new <idea>");
   } else {

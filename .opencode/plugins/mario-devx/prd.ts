@@ -145,6 +145,64 @@ export type PrdJson = {
 
 export const prdJsonPath = (repoRoot: string): string => path.join(repoRoot, ".mario", "prd.json");
 
+export type PrdReadErrorCode = "PRD_CORRUPT_JSON" | "PRD_INVALID_SCHEMA" | "PRD_UNSUPPORTED_VERSION";
+
+export class PrdReadError extends Error {
+  code: PrdReadErrorCode;
+  filePath: string;
+  backupPath?: string;
+  detectedVersion?: unknown;
+
+  constructor(opts: {
+    code: PrdReadErrorCode;
+    message: string;
+    filePath: string;
+    backupPath?: string;
+    detectedVersion?: unknown;
+  }) {
+    super(opts.message);
+    this.name = "PrdReadError";
+    this.code = opts.code;
+    this.filePath = opts.filePath;
+    if (opts.backupPath) this.backupPath = opts.backupPath;
+    if (Object.prototype.hasOwnProperty.call(opts, "detectedVersion")) {
+      this.detectedVersion = opts.detectedVersion;
+    }
+  }
+}
+
+export const isPrdReadError = (error: unknown): error is PrdReadError => {
+  return error instanceof PrdReadError;
+};
+
+export const formatPrdReadErrorMessage = (error: PrdReadError): string => {
+  const lines: string[] = [];
+  if (error.code === "PRD_UNSUPPORTED_VERSION") {
+    lines.push(`PRD load blocked: unsupported .mario/prd.json version (${String(error.detectedVersion)}).`);
+  } else if (error.code === "PRD_CORRUPT_JSON") {
+    lines.push("PRD load blocked: .mario/prd.json is corrupt JSON.");
+  } else {
+    lines.push("PRD load blocked: .mario/prd.json has an invalid schema.");
+  }
+  if (error.backupPath) {
+    lines.push(`Backup saved to: ${error.backupPath}`);
+  }
+  lines.push("Hard cutover policy: regenerate PRD with /mario-devx:new and re-enter requirements.");
+  return lines.join("\n");
+};
+
+const backupPrdContents = async (repoRoot: string, suffix: string, raw: string): Promise<string | null> => {
+  const rand = Math.random().toString(16).slice(2, 8);
+  const backupPath = `${prdJsonPath(repoRoot)}.${suffix}-${new Date().toISOString().replace(/[:.]/g, "")}-${rand}`;
+  try {
+    await ensureDir(path.dirname(prdJsonPath(repoRoot)));
+    await writeText(backupPath, raw);
+    return backupPath;
+  } catch {
+    return null;
+  }
+};
+
 const defaultWizard = (): PrdWizard => ({
   status: "in_progress",
   step: 0,
@@ -216,35 +274,59 @@ export const defaultPrdJson = (): PrdJson => {
 };
 
 export const readPrdJsonIfExists = async (repoRoot: string): Promise<PrdJson | null> => {
+  const filePath = prdJsonPath(repoRoot);
   const raw = await readTextIfExists(prdJsonPath(repoRoot));
   if (!raw) {
     return null;
   }
+
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    const v = (parsed as { version?: unknown }).version;
-    if (v !== 4) {
-      return null;
-    }
-    const prd = parsed as PrdJson;
-    if (!Array.isArray(prd.tasks)) {
-      return null;
-    }
-    return prd;
+    parsed = JSON.parse(raw) as unknown;
   } catch {
-    const rand = Math.random().toString(16).slice(2, 8);
-    const backupPath = `${prdJsonPath(repoRoot)}.corrupt-${new Date().toISOString().replace(/[:.]/g, "")}-${rand}`;
-    try {
-      await ensureDir(path.dirname(prdJsonPath(repoRoot)));
-      await writeText(backupPath, raw);
-    } catch {
-      // Best-effort only.
-    }
-    return null;
+    const backupPath = await backupPrdContents(repoRoot, "corrupt", raw);
+    throw new PrdReadError({
+      code: "PRD_CORRUPT_JSON",
+      message: `PRD file is corrupt JSON: ${filePath}`,
+      filePath,
+      ...(backupPath ? { backupPath } : {}),
+    });
   }
+
+  if (!parsed || typeof parsed !== "object") {
+    const backupPath = await backupPrdContents(repoRoot, "invalid-schema", raw);
+    throw new PrdReadError({
+      code: "PRD_INVALID_SCHEMA",
+      message: `PRD file is not a valid object schema: ${filePath}`,
+      filePath,
+      ...(backupPath ? { backupPath } : {}),
+    });
+  }
+
+  const v = (parsed as { version?: unknown }).version;
+  if (v !== 4) {
+    const backupPath = await backupPrdContents(repoRoot, "unsupported-version", raw);
+    throw new PrdReadError({
+      code: "PRD_UNSUPPORTED_VERSION",
+      message: `PRD version is unsupported (expected v4, got ${String(v)}): ${filePath}`,
+      filePath,
+      ...(backupPath ? { backupPath } : {}),
+      detectedVersion: v,
+    });
+  }
+
+  const prd = parsed as PrdJson;
+  if (!Array.isArray(prd.tasks)) {
+    const backupPath = await backupPrdContents(repoRoot, "invalid-schema", raw);
+    throw new PrdReadError({
+      code: "PRD_INVALID_SCHEMA",
+      message: `PRD tasks field is not an array: ${filePath}`,
+      filePath,
+      ...(backupPath ? { backupPath } : {}),
+    });
+  }
+
+  return prd;
 };
 
 export const writePrdJson = async (repoRoot: string, prd: PrdJson): Promise<void> => {

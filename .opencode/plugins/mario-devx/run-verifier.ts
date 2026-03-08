@@ -1,6 +1,7 @@
 import path from "path";
 import type { AgentBrowserCapabilities } from "./agent-browser-capabilities";
 import type { PrdGateAttempt, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
+import { isPassEvidenceLine } from "./judge-utils";
 
 const sanitizeForPrompt = (text: string): string => {
   return text
@@ -103,13 +104,6 @@ export const buildVerifierContextText = (opts: {
 };
 
 export const enforceJudgeOutputQuality = (judge: PrdJudgeAttempt): PrdJudgeAttempt => {
-  const isPassEvidenceLine = (line: string): boolean => {
-    const trimmed = String(line ?? "").trim();
-    if (!trimmed) return false;
-    if (/^ui verification:\s*pass\b/i.test(trimmed)) return true;
-    return /^[\w./:\-\s]+:\s*PASS\b/i.test(trimmed);
-  };
-
   if (judge.status === "FAIL") {
     const reasons = (judge.reason ?? []).map((x) => String(x).trim()).filter(Boolean);
     if (reasons.length > 1) {

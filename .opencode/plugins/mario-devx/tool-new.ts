@@ -2,7 +2,7 @@ import path from "path";
 import { tool } from "@opencode-ai/plugin";
 
 import { ensureMario } from "./state";
-import { writePrdJson } from "./prd";
+import { formatPrdReadErrorMessage, isPrdReadError, writePrdJson } from "./prd";
 import { deleteSessionBestEffort, ensureNotInWorkSession, ensureWorkSession, resolvePromptText } from "./runner";
 import { WIZARD_REQUIREMENTS } from "./config";
 import { LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";
@@ -94,7 +94,21 @@ export const createNewTool = (opts: {
         }
 
         await ensureMario(repoRoot, false);
-        let prd = await ensurePrd(repoRoot);
+        let prd: PrdLike;
+        try {
+          prd = await ensurePrd(repoRoot);
+        } catch (error) {
+          if (isPrdReadError(error)) {
+            await logToolEvent(ctx, repoRoot, "error", "new.prd.read-failed", "PRD interview blocked: PRD read failed", {
+              code: error.code,
+              filePath: error.filePath,
+              ...(error.backupPath ? { backupPath: error.backupPath } : {}),
+              ...(Object.prototype.hasOwnProperty.call(error, "detectedVersion") ? { detectedVersion: error.detectedVersion } : {}),
+            });
+            return formatPrdReadErrorMessage(error);
+          }
+          throw error;
+        }
         const rawInput = (args.idea ?? "").trim();
         await logToolEvent(ctx, repoRoot, "info", "new.start", "PRD interview step started", {
           wizardStatus: prd.wizard.status,
