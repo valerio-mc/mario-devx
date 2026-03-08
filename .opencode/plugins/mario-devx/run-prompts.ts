@@ -1,6 +1,6 @@
 import type { PrdGateFailure, PrdJson, PrdJudgeAttempt, PrdTask, PrdUiAttempt } from "./prd";
 
-const clipPromptEvidence = (value: string, maxChars: number): string => {
+const clipPromptText = (value: string, maxChars: number): string => {
   const normalized = value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
   if (!normalized) return "";
   if (normalized.length <= maxChars) return normalized;
@@ -21,18 +21,20 @@ export const formatGateFailureBackpressure = (failure: PrdGateFailure | null | u
 
 export const formatUiEvidenceBackpressure = (opts: {
   uiUrl?: string | null;
+  uiNote?: string | null;
   uiEvidence?: PrdUiAttempt["evidence"] | null;
 }): string => {
-  const { uiUrl, uiEvidence } = opts;
+  const { uiUrl, uiNote, uiEvidence } = opts;
   if (!uiUrl && !uiEvidence) return "";
 
   const lines: string[] = ["Backpressure payload (latest UI verification evidence):"];
   if (uiUrl) lines.push(`- uiUrl: ${uiUrl}`);
-  if (uiEvidence?.snapshot) lines.push(`- snapshot (clipped):\n${clipPromptEvidence(uiEvidence.snapshot, 1400)}`);
-  if (uiEvidence?.snapshotInteractive) lines.push(`- snapshotInteractive (clipped):\n${clipPromptEvidence(uiEvidence.snapshotInteractive, 1200)}`);
-  if (uiEvidence?.screenshot) lines.push(`- screenshot: ${uiEvidence.screenshot}`);
-  if (uiEvidence?.console) lines.push(`- console (clipped):\n${clipPromptEvidence(uiEvidence.console, 1000)}`);
-  if (uiEvidence?.errors) lines.push(`- errors (clipped):\n${clipPromptEvidence(uiEvidence.errors, 1000)}`);
+  if (uiNote) lines.push(`- latestUiNote: ${clipPromptText(uiNote, 900)}`);
+  if (uiEvidence?.snapshot) lines.push(`- snapshot path: ${uiEvidence.snapshot}`);
+  if (uiEvidence?.snapshotInteractive) lines.push(`- snapshotInteractive path: ${uiEvidence.snapshotInteractive}`);
+  if (uiEvidence?.screenshot) lines.push(`- screenshot path: ${uiEvidence.screenshot}`);
+  if (uiEvidence?.console) lines.push(`- console path: ${uiEvidence.console}`);
+  if (uiEvidence?.errors) lines.push(`- errors path: ${uiEvidence.errors}`);
   return lines.join("\n");
 };
 
@@ -120,11 +122,12 @@ export const buildSemanticRepairPrompt = (opts: {
   strictChecklist: string;
   gateFailure?: PrdGateFailure | null;
   uiUrl?: string | null;
+  uiNote?: string | null;
   uiEvidence?: PrdUiAttempt["evidence"] | null;
 }): string => {
-  const { taskId, acceptance, actionableReason, judge, carryForwardIssues, strictChecklist, gateFailure, uiUrl, uiEvidence } = opts;
+  const { taskId, acceptance, actionableReason, judge, carryForwardIssues, strictChecklist, gateFailure, uiUrl, uiNote, uiEvidence } = opts;
   const gateBackpressure = formatGateFailureBackpressure(gateFailure);
-  const uiBackpressure = formatUiEvidenceBackpressure({ uiUrl, uiEvidence });
+  const uiBackpressure = formatUiEvidenceBackpressure({ uiUrl, uiNote, uiEvidence });
   return [
     `Verifier failed for ${taskId}. Apply a focused semantic repair and stop when acceptance is clearly satisfied.`,
     acceptance.length > 0
@@ -134,7 +137,7 @@ export const buildSemanticRepairPrompt = (opts: {
     gateBackpressure,
     uiBackpressure,
     uiBackpressure
-      ? "Use the UI evidence block above as source-of-truth for unmet acceptance and implement the missing behavior in repository code."
+      ? "Use the repo-local UI evidence files listed above as source-of-truth. Read them if you need the actual UI contents before editing code."
       : "",
     judge.reason && judge.reason.length > 0
       ? `Verifier reasons:\n${judge.reason.map((r) => `- ${r}`).join("\n")}`

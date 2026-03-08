@@ -72,6 +72,7 @@ export const runSemanticRepairLoop = async (opts: {
     strictChecklist: string;
     gateFailure?: PrdGateFailure | null;
     uiUrl?: string | null;
+    uiNote?: string | null;
     uiEvidence?: PrdUiAttempt["evidence"] | null;
   }) => string;
   promptWorkSessionWithTimeout: (phase: "semantic-repair", text: string) => Promise<{ ok: true; idleSequenceBeforePrompt: number; baselineAssistantCount: number } | { ok: false }>;
@@ -233,6 +234,7 @@ export const runSemanticRepairLoop = async (opts: {
       strictChecklist,
       gateFailure: task.lastAttempt?.gates?.failure ?? null,
       uiUrl: uiVerifyUrl,
+      uiNote: latestUiResult?.note ?? task.lastAttempt?.ui?.note ?? null,
       uiEvidence: latestUiResult?.evidence ?? task.lastAttempt?.ui?.evidence ?? null,
     });
 
