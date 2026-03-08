@@ -1,7 +1,7 @@
 import path from "path";
 import { readTextIfExists } from "./fs";
 import { parseAgentsEnv } from "./agents-env";
-import { ensureAgentBrowserPrereqs, hasAgentBrowserCli, hasAgentBrowserSkill, isLikelyWebApp } from "./ui-verify";
+import { ensureAgentBrowserPrereqs, hasAgentBrowserCli, hasAgentBrowserSkill, isLikelyWebApp } from "./ui-prereq";
 
 export type UiRunSetup = {
   uiVerifyEnabled: boolean;

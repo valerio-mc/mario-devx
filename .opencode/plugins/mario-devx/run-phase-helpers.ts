@@ -1,12 +1,13 @@
 import { readFile, stat } from "fs/promises";
 import { spawn } from "child_process";
 import path from "path";
-import { runUiVerification, type UiVerificationResult } from "./ui-verify";
+import { runUiVerification } from "./ui-verification";
 import { buildPrdGateFailure, findFailedGateRunItem, type GateRunItem } from "./gates";
 import type { PrdGatesAttempt, PrdJson, PrdTask, PrdUiAttempt } from "./prd";
 import type { RunExecutionContext, RunLogMeta, RunPhaseName } from "./run-types";
 import { RUN_EVENT } from "./run-contracts";
 import { compactUiFailureForAttempt } from "./run-ui-failure-actions";
+import type { UiVerificationResult } from "./ui-types";
 
 export const resolveEffectiveDoneWhen = (prd: PrdJson, task: PrdTask): string[] => {
   const taskPolicyGates = prd.verificationPolicy?.taskGates?.[task.id] ?? [];

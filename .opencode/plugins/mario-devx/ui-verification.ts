@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { spawn } from "child_process";
 import { closeSync, openSync } from "fs";
 import { copyFile, mkdir, realpath, stat } from "fs/promises";
-import { runShellLogged } from "./ui-shell";
+import { runShellLogged } from "./shell";
 import type { UiFailureSubtype, UiLog, UiVerificationEvidence, UiVerificationFailure, UiVerificationResult } from "./ui-types";
 import { isPathInside, resolvePathInside } from "./paths";
 import { analyzeDevServerFailure, logKnownServerFailure, type DevServerFailureAnalysis } from "./ui-server-diagnostics";
