@@ -1,4 +1,5 @@
 import path from "path";
+import { fileURLToPath } from "url";
 
 export const getRepoRoot = (ctx: { directory?: string; worktree?: string }): string => {
   return path.resolve(ctx.worktree ?? ctx.directory ?? process.cwd());
@@ -28,5 +29,5 @@ export const marioStateDir = (repoRoot: string): string => {
 };
 
 export const assetsDir = (): string => {
-  return path.join(import.meta.dir, "assets");
+  return fileURLToPath(new URL("./assets", import.meta.url));
 };

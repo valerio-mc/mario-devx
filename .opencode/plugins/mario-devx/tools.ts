@@ -52,7 +52,7 @@ const repairPlanning = (existing: PrdJson) => ({
     : ["All must-have features are mapped to tasks.", "All tasks have deterministic verification."],
 });
 
-const repairVerificationPolicy = (existing: PrdJson) => ({
+const repairVerificationPolicy = (existing: PrdJson): PrdJson["verificationPolicy"] => ({
   globalGates: Array.isArray(existing.verificationPolicy?.globalGates)
     ? existing.verificationPolicy!.globalGates
     : (Array.isArray(existing.qualityGates) ? existing.qualityGates : []),
@@ -66,7 +66,7 @@ const repairVerificationPolicy = (existing: PrdJson) => ({
       : "best_effort",
 });
 
-const repairUi = (existing: PrdJson) => ({
+const repairUi = (existing: PrdJson): PrdJson["ui"] => ({
   designSystem: existing.ui?.designSystem ?? null,
   styleReferenceMode: existing.ui?.styleReferenceMode === "url"
     ? "url"
