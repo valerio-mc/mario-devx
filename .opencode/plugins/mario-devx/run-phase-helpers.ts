@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 import { spawn } from "child_process";
 import path from "path";
 import { runUiVerification, type UiVerificationResult } from "./ui-verify";
@@ -158,19 +158,6 @@ export const runUiVerifyForTask = async (opts: {
   });
 };
 
-const SNAPSHOT_EXCLUDED_DIRS = new Set([
-  ".git",
-  "node_modules",
-  ".next",
-  ".mario",
-  ".opencode",
-  "dist",
-  "build",
-  "coverage",
-  ".turbo",
-  ".cache",
-]);
-
 const SNAPSHOT_EXCLUDED_PREFIXES = [
   ".git/",
   "node_modules/",
@@ -219,7 +206,7 @@ const shouldTrackSnapshotPath = (relativePath: string): boolean => {
   return true;
 };
 
-export type WorkspaceSnapshot = Map<string, string>;
+export type WorkspaceSnapshot = Map<string, string> | null;
 
 const runCommandCapture = async (opts: {
   cwd: string;
@@ -304,40 +291,7 @@ const captureGitWorkspaceSnapshot = async (repoRoot: string): Promise<WorkspaceS
 
 export const captureWorkspaceSnapshot = async (repoRoot: string): Promise<WorkspaceSnapshot> => {
   const gitSnapshot = await captureGitWorkspaceSnapshot(repoRoot);
-  if (gitSnapshot) {
-    return gitSnapshot;
-  }
-
-  const snapshot: WorkspaceSnapshot = new Map();
-
-  const walk = async (dirAbs: string): Promise<void> => {
-    let entries: Awaited<ReturnType<typeof readdir>>;
-    try {
-      entries = await readdir(dirAbs, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      const abs = path.join(dirAbs, entry.name);
-      const rel = path.relative(repoRoot, abs).replace(/\\/g, "/");
-      if (entry.isDirectory()) {
-        if (SNAPSHOT_EXCLUDED_DIRS.has(entry.name)) continue;
-        await walk(abs);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (!shouldTrackSnapshotPath(rel)) continue;
-      try {
-        const s = await stat(abs);
-        snapshot.set(rel, `${s.size}:${Math.round(s.mtimeMs)}`);
-      } catch {
-        // Best-effort snapshot.
-      }
-    }
-  };
-
-  await walk(repoRoot);
-  return snapshot;
+  return gitSnapshot;
 };
 
 export const summarizeWorkspaceDelta = (before: WorkspaceSnapshot, after: WorkspaceSnapshot): {
@@ -351,6 +305,16 @@ export const summarizeWorkspaceDelta = (before: WorkspaceSnapshot, after: Worksp
   let modified = 0;
   let deleted = 0;
   const sample: string[] = [];
+
+  if (!before || !after) {
+    return {
+      added: 0,
+      modified: 0,
+      deleted: 0,
+      changed: Number.POSITIVE_INFINITY,
+      sample,
+    };
+  }
 
   for (const [file, sig] of after.entries()) {
     const prev = before.get(file);

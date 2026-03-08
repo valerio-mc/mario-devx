@@ -46,8 +46,8 @@ export const runGateRepairLoop = async (opts: {
     scaffoldHint: string | null;
     scaffoldGateFailure: boolean;
   }) => string;
-  captureWorkspaceSnapshot: (repoRoot: string) => Promise<Map<string, string>>;
-  summarizeWorkspaceDelta: (before: Map<string, string>, after: Map<string, string>) => { changed: number };
+  captureWorkspaceSnapshot: (repoRoot: string) => Promise<Map<string, string> | null>;
+  summarizeWorkspaceDelta: (before: Map<string, string> | null, after: Map<string, string> | null) => { changed: number };
   logGateRunResults: (phase: "repair", taskId: string, gateResults: GateRunItem[]) => Promise<void>;
   runShellWithFailureLog: (
     ctx: any,
