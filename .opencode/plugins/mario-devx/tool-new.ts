@@ -1,84 +1,45 @@
 import path from "path";
 import { tool } from "@opencode-ai/plugin";
 
-import { ensureMario } from "./state";
-import { getPrdReadErrorExtra, tryLoadPrd, writePrdJson } from "./prd";
-import { ensureNotInWorkSession, resolvePromptText, withTemporaryWorkSession } from "./runner";
+import { extractStyleReferencesFromText, hasNonEmpty, normalizeTextArray, mergeStyleReferences, LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";
 import { WIZARD_REQUIREMENTS } from "./config";
-import { LAST_QUESTION_KEY, hasMeaningfulList, isPrdComplete } from "./interview";
+import { logPrdComplete } from "./logging";
+import {
+  INTERVIEW_ANSWER_PREFIX,
+  QUALITY_GATES_STATE_KEY,
+  STYLE_REFS_ACK_KEY,
+  STYLE_REFS_REQUIRED_QUESTION,
+  applyInterviewUpdates,
+  compileInterviewPrompt,
+  compileRepairPrompt,
+  formatQualityGateSelectionQuestion,
+  interviewPrompt,
+  interviewTurnRepairPrompt,
+  isNoneLikeAnswer,
+  normalizeQuestionKey,
+  parseCompileInterviewResponse,
+  parseInterviewTurn,
+  parseQualityGatePresetResponse,
+  parseQualityGateSelectionState,
+  qualityGatePresetPrompt,
+  qualityGatePresetRepairPrompt,
+  repeatedQuestionRepairPrompt,
+  resolveQualityGatePresetChoice,
+  seedTasksFromPrd,
+  writeQualityGateSelectionState,
+} from "./tool-new-helpers";
+import { ensureMario } from "./state";
+import { getPrdReadErrorExtra, tryLoadPrd, writePrdJson, type PrdJson } from "./prd";
+import { ensureNotInWorkSession, resolvePromptText, withTemporaryWorkSession } from "./runner";
 import type { PluginContext, ToolContext, ToolEventLogger } from "./tool-common";
-
-type PrdLike = any;
-
-export type NewToolDeps = {
-  ensurePrd: (repoRoot: string) => Promise<PrdLike>;
-  logToolEvent: ToolEventLogger;
-  hasNonEmpty: (value: string | null | undefined) => boolean;
-  extractStyleReferencesFromText: (text: string) => string[];
-  mergeStyleReferences: (existing: string[] | undefined, next: string[]) => string[];
-  parseQualityGateSelectionState: (raw: string | undefined) => any;
-  writeQualityGateSelectionState: (prd: PrdLike, state: any | null) => PrdLike;
-  resolveQualityGatePresetChoice: (answer: string, state: any) => any;
-  applyInterviewUpdates: (prd: PrdLike, updates: Record<string, unknown>) => PrdLike;
-  normalizeTextArray: (value: string[]) => string[];
-  normalizeQuestionKey: (value: string) => string;
-  isNoneLikeAnswer: (value: string) => boolean;
-  interviewPrompt: (prd: PrdLike, input: string) => string;
-  parseInterviewTurn: (text: string) => { done: boolean; question: string | null; error?: string };
-  interviewTurnRepairPrompt: (invalidOutput: string) => string;
-  parseCompileInterviewResponse: (text: string) => { envelope: { updates?: Record<string, unknown>; next_question?: string } | null; error?: string };
-  compileInterviewPrompt: (prd: PrdLike) => string;
-  compileRepairPrompt: (invalidOutput: string) => string;
-  qualityGatePresetPrompt: (prd: PrdLike) => string;
-  parseQualityGatePresetResponse: (text: string) => any;
-  qualityGatePresetRepairPrompt: (invalidResponse: string) => string;
-  formatQualityGateSelectionQuestion: (state: any) => string;
-  repeatedQuestionRepairPrompt: (previousQuestion: string, latestAnswer: string) => string;
-  seedTasksFromPrd: (repoRoot: string, prd: PrdLike, ctx: PluginContext) => Promise<PrdLike>;
-  logPrdComplete: (ctx: PluginContext, repoRoot: string, taskCount: number) => Promise<void>;
-  STYLE_REFS_ACK_KEY: string;
-  INTERVIEW_ANSWER_PREFIX: string;
-  QUALITY_GATES_STATE_KEY: string;
-  STYLE_REFS_REQUIRED_QUESTION: string;
-};
 
 export const createNewTool = (opts: {
   ctx: PluginContext;
   repoRoot: string;
-  deps: NewToolDeps;
+  ensurePrd: (repoRoot: string) => Promise<PrdJson>;
+  logToolEvent: ToolEventLogger;
 }) => {
-  const { ctx, repoRoot, deps } = opts;
-  const {
-    ensurePrd,
-    logToolEvent,
-    hasNonEmpty,
-    extractStyleReferencesFromText,
-    mergeStyleReferences,
-    parseQualityGateSelectionState,
-    writeQualityGateSelectionState,
-    resolveQualityGatePresetChoice,
-    applyInterviewUpdates,
-    normalizeTextArray,
-    normalizeQuestionKey,
-    isNoneLikeAnswer,
-    interviewPrompt,
-    parseInterviewTurn,
-    interviewTurnRepairPrompt,
-    parseCompileInterviewResponse,
-    compileInterviewPrompt,
-    compileRepairPrompt,
-    qualityGatePresetPrompt,
-    parseQualityGatePresetResponse,
-    qualityGatePresetRepairPrompt,
-    formatQualityGateSelectionQuestion,
-    repeatedQuestionRepairPrompt,
-    seedTasksFromPrd,
-    logPrdComplete,
-    STYLE_REFS_ACK_KEY,
-    INTERVIEW_ANSWER_PREFIX,
-    QUALITY_GATES_STATE_KEY,
-    STYLE_REFS_REQUIRED_QUESTION,
-  } = deps;
+  const { ctx, repoRoot, ensurePrd, logToolEvent } = opts;
 
   return {
     mario_devx_new: tool({
@@ -103,7 +64,7 @@ export const createNewTool = (opts: {
         if (!prdLoad.ok) {
           return prdLoad.message;
         }
-        let prd: PrdLike = prdLoad.value;
+        let prd: PrdJson = prdLoad.value;
         const rawInput = (args.idea ?? "").trim();
         await logToolEvent(ctx, repoRoot, "info", "new.start", "PRD interview step started", {
           wizardStatus: prd.wizard.status,
