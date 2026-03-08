@@ -283,8 +283,7 @@ export const runEngine = async (opts: {
         ...(continueOnTaskFailure ? { runStateStatus: "DOING" as const, logAsRunBlocked: false } : {}),
       });
       await showToast(ctx, blockerTask ? `Run blocked: ${task.id} requires ${blockerTask.id}` : `Run blocked: ${task.id} has missing dependency ${missingDep}`, "warning");
-      await logTaskBlocked(ctx, repoRoot, task.id, detail);
-      if (!continueOnTaskFailure) {
+      if ((await stopOrContinueTaskFailure(detail)) === "break") {
         stopReason = "task_failure";
         break;
       }
@@ -565,6 +564,24 @@ export const runEngine = async (opts: {
       });
     };
 
+    const stopOrContinueTaskFailure = async (blockedReason: string): Promise<"break" | "continue"> => {
+      await logTaskBlocked(ctx, repoRoot, task.id, blockedReason);
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        return "break";
+      }
+      return "continue";
+    };
+
+    const recordAndHandleTaskFailure = async (opts: {
+      reasonLines: string[];
+      blockedReason: string;
+      nextActions?: string[];
+    }): Promise<"break" | "continue"> => {
+      await failEarly(opts.reasonLines, opts.nextActions);
+      return stopOrContinueTaskFailure(opts.blockedReason);
+    };
+
     const latestBlockedReasonForTask = (): string => {
       const latestTask = (prd.tasks ?? []).find((candidate) => candidate.id === task.id);
       return firstActionableJudgeReason(latestTask?.lastAttempt?.judge)
@@ -592,32 +609,32 @@ export const runEngine = async (opts: {
     }
 
     if (!latestGateResult.ok && stoppedForNoChanges) {
-      await failEarly([
-        formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
-        `Repair loop produced no source-file changes across consecutive attempts (last failing gate: ${lastNoChangeGate ?? "unknown"}).`,
-      ]);
-      if (!continueOnTaskFailure) {
-        noteTaskFailureStop();
-        break;
-      }
       const failureReason = latestGateResult.failed
         ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})`
         : "unknown gate";
-      await logTaskBlocked(ctx, repoRoot, task.id, `Repair loop made no progress (last failing gate: ${failureReason}).`);
+      if ((await recordAndHandleTaskFailure({
+        reasonLines: [
+          formatReasonCode(RUN_REASON.WORK_SESSION_NO_PROGRESS),
+          `Repair loop produced no source-file changes across consecutive attempts (last failing gate: ${lastNoChangeGate ?? "unknown"}).`,
+        ],
+        blockedReason: `Repair loop made no progress (last failing gate: ${failureReason}).`,
+      })) === "break") {
+        break;
+      }
       continue;
     }
     if (!latestGateResult.ok) {
       const failed = latestGateResult.failed ? `${latestGateResult.failed.command} (exit ${latestGateResult.failed.exitCode})` : "(unknown command)";
-      await failEarly([
-        formatReasonCode(RUN_REASON.TASK_FAIL_EARLY),
-        `Deterministic gate failed: ${failed}.`,
-        `Auto-repair stopped across ${repairAttempts} attempt(s) (total repair turns: ${totalRepairAttempts}/${maxTotalRepairAttempts}; no-progress or time budget reached).`,
-      ]);
-      if (!continueOnTaskFailure) {
-        noteTaskFailureStop();
+      if ((await recordAndHandleTaskFailure({
+        reasonLines: [
+          formatReasonCode(RUN_REASON.TASK_FAIL_EARLY),
+          `Deterministic gate failed: ${failed}.`,
+          `Auto-repair stopped across ${repairAttempts} attempt(s) (total repair turns: ${totalRepairAttempts}/${maxTotalRepairAttempts}; no-progress or time budget reached).`,
+        ],
+        blockedReason: `Deterministic gate failed: ${failed}.`,
+      })) === "break") {
         break;
       }
-      await logTaskBlocked(ctx, repoRoot, task.id, `Deterministic gate failed: ${failed}.`);
       continue;
     }
 
@@ -645,31 +662,32 @@ export const runEngine = async (opts: {
 
     if (uiVerifyEnabled && isWebApp && uiVerifyRequired && latestUiResult && !latestUiResult.ok) {
       await logUiVerifyBlocked("post-gates");
-      await failEarly([
-        formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
-        latestUiResult.note?.trim() || "UI verification failed.",
-      ], buildUiVerifyFailedNextActions(latestUiResult.note, ui.failure));
-      if (!continueOnTaskFailure) {
-        noteTaskFailureStop();
+      const uiReason = latestUiResult.note?.trim() || "UI verification failed.";
+      if ((await recordAndHandleTaskFailure({
+        reasonLines: [
+          formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
+          uiReason,
+        ],
+        blockedReason: uiReason,
+        nextActions: buildUiVerifyFailedNextActions(latestUiResult.note, ui.failure),
+      })) === "break") {
         break;
       }
-      const uiReason = latestUiResult.note?.trim() || "UI verification failed.";
-      await logTaskBlocked(ctx, repoRoot, task.id, uiReason);
       continue;
     }
 
     const artifactCheck = await checkAcceptanceArtifacts(repoRoot, task.acceptance ?? []);
     if (artifactCheck.missingFiles.length > 0 || artifactCheck.missingLabels.length > 0) {
-      await failEarly([
-        formatReasonCode(RUN_REASON.ACCEPTANCE_ARTIFACTS_MISSING),
-        ...(artifactCheck.missingFiles.length > 0 ? [`Missing expected files: ${artifactCheck.missingFiles.join(", ")}.`] : []),
-        ...(artifactCheck.missingLabels.length > 0 ? [`Missing expected navigation labels in app shell: ${artifactCheck.missingLabels.join(", ")}.`] : []),
-      ]);
-      if (!continueOnTaskFailure) {
-        noteTaskFailureStop();
+      if ((await recordAndHandleTaskFailure({
+        reasonLines: [
+          formatReasonCode(RUN_REASON.ACCEPTANCE_ARTIFACTS_MISSING),
+          ...(artifactCheck.missingFiles.length > 0 ? [`Missing expected files: ${artifactCheck.missingFiles.join(", ")}.`] : []),
+          ...(artifactCheck.missingLabels.length > 0 ? [`Missing expected navigation labels in app shell: ${artifactCheck.missingLabels.join(", ")}.`] : []),
+        ],
+        blockedReason: "Acceptance artifacts missing.",
+      })) === "break") {
         break;
       }
-      await logTaskBlocked(ctx, repoRoot, task.id, "Acceptance artifacts missing.");
       continue;
     }
 
@@ -821,25 +839,24 @@ export const runEngine = async (opts: {
 
     if (latestGateResult.ok && uiVerifyEnabled && isWebApp && uiVerifyRequired && ui.ok !== true) {
       await logUiVerifyBlocked("post-verifier");
-      await failEarly([
-        formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
-        typeof ui.note === "string" && ui.note.trim().length > 0
-          ? ui.note.trim()
-          : latestUiResult?.note?.trim() || "UI verification failed.",
-      ], buildUiVerifyFailedNextActions(typeof ui.note === "string" ? ui.note : latestUiResult?.note, ui.failure));
-      if (!continueOnTaskFailure) {
-        noteTaskFailureStop();
+      if ((await recordAndHandleTaskFailure({
+        reasonLines: [
+          formatReasonCode(RUN_REASON.UI_VERIFY_FAILED),
+          typeof ui.note === "string" && ui.note.trim().length > 0
+            ? ui.note.trim()
+            : latestUiResult?.note?.trim() || "UI verification failed.",
+        ],
+        blockedReason: latestBlockedReasonForTask(),
+        nextActions: buildUiVerifyFailedNextActions(typeof ui.note === "string" ? ui.note : latestUiResult?.note, ui.failure),
+      })) === "break") {
         break;
       }
-      await logTaskBlocked(ctx, repoRoot, task.id, latestBlockedReasonForTask());
       continue;
     }
 
     if (blockedByVerifierFailure || !judge) {
       if (taskFailureRecorded) {
-        await logTaskBlocked(ctx, repoRoot, task.id, latestBlockedReasonForTask());
-        if (!continueOnTaskFailure) {
-          noteTaskFailureStop();
+        if ((await stopOrContinueTaskFailure(latestBlockedReasonForTask())) === "break") {
           break;
         }
         continue;
@@ -873,9 +890,7 @@ export const runEngine = async (opts: {
       await showToast(ctx, `Run: completed ${task.id} (${completed}/${maxItems})`, "success");
     } else {
       const blockedReason = firstActionableJudgeReason(judge) ?? judge.reason?.[0] ?? "No reason provided";
-      await logTaskBlocked(ctx, repoRoot, task.id, blockedReason);
-      if (!continueOnTaskFailure) {
-        noteTaskFailureStop();
+      if ((await stopOrContinueTaskFailure(blockedReason)) === "break") {
         break;
       }
       continue;
