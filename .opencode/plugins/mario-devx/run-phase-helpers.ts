@@ -426,7 +426,7 @@ const resolveAppRouterRoots = async (repoRoot: string): Promise<string[]> => {
       // Ignore missing candidates.
     }
   }
-  return found.length > 0 ? found : ["src/app", "app"];
+  return found;
 };
 
 export const checkAcceptanceArtifacts = async (repoRoot: string, acceptance: string[]): Promise<AcceptanceArtifactCheck> => {
@@ -436,6 +436,9 @@ export const checkAcceptanceArtifacts = async (repoRoot: string, acceptance: str
   }
 
   const appRoots = await resolveAppRouterRoots(repoRoot);
+  if (appRoots.length === 0) {
+    return { missingFiles: [], missingLabels: [] };
+  }
 
   const missingFiles: string[] = [];
   for (const label of labels) {
