@@ -24,9 +24,8 @@ import {
   handlePromptDispatchFailure,
   persistTaskFailureAttempt,
 } from "./run-failure-helpers";
-import { buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
+import { buildUiVerifyBlockedPayload, buildUiVerifyFailedNextActions } from "./run-ui-failure-actions";
 import { shouldBlockRunForUiPrereqs } from "./run-ui";
-import { createTaskFailureHandlers } from "./run-task-failure";
 
 export type RunContext = {
   ctx: any;
@@ -532,34 +531,72 @@ export const runEngine = async (opts: {
     let latestUiResult = latestGateResult.ok ? await runUiVerifyForTask(task.id) : null;
     let gates = toGatesAttempt(latestGateResult);
     let ui = toUiAttempt({ gateOk: latestGateResult.ok, uiResult: latestUiResult, previousUi: task.lastAttempt?.ui, uiVerifyEnabled, isWebApp, cliOk, skillOk, browserOk });
-    const {
-      failEarly,
-      stopOrContinueTaskFailure,
-      recordAndHandleTaskFailure,
-      latestBlockedReasonForTask,
-      logUiVerifyBlocked,
-      wasTaskFailureRecorded,
-    } = createTaskFailureHandlers({
-      ctx,
-      repoRoot,
-      runId,
-      task,
-      attemptAt,
-      iteration: state.iteration,
-      continueOnTaskFailure,
-      getPrd: () => prd,
-      setPrd: (next) => {
-        prd = next;
-      },
-      getGates: () => gates,
-      getUi: () => ui,
-      firstActionableJudgeReason,
-      persistTaskFailureAttempt,
-      persistBlockedTaskAttempt,
-      logTaskBlocked,
-      noteTaskFailureStop,
-      runLog,
-    });
+    let uiVerifyBlockedLogged = false;
+    let taskFailureRecorded = false;
+
+    const failEarly = async (
+      reasonLines: string[],
+      nextActions?: string[],
+      scope: "task" | "global" = "task",
+    ): Promise<void> => {
+      if (scope === "task") {
+        taskFailureRecorded = true;
+      }
+      prd = await persistTaskFailureAttempt({
+        ctx,
+        repoRoot,
+        prd,
+        task,
+        attemptAt,
+        iteration: state.iteration,
+        runId,
+        gates,
+        ui,
+        reasonLines,
+        nextActions,
+        keepRunActive: scope === "task" && continueOnTaskFailure,
+        persistBlockedTaskAttempt,
+      });
+    };
+
+    const stopOrContinueTaskFailure = async (blockedReason: string): Promise<"break" | "continue"> => {
+      await logTaskBlocked(ctx, repoRoot, task.id, blockedReason);
+      if (!continueOnTaskFailure) {
+        noteTaskFailureStop();
+        return "break";
+      }
+      return "continue";
+    };
+
+    const recordAndHandleTaskFailure = async (opts: {
+      reasonLines: string[];
+      blockedReason: string;
+      nextActions?: string[];
+    }): Promise<"break" | "continue"> => {
+      await failEarly(opts.reasonLines, opts.nextActions);
+      return stopOrContinueTaskFailure(opts.blockedReason);
+    };
+
+    const latestBlockedReasonForTask = (): string => {
+      const latestTask = (prd.tasks ?? []).find((candidate) => candidate.id === task.id);
+      return firstActionableJudgeReason(latestTask?.lastAttempt?.judge)
+        ?? latestTask?.lastAttempt?.judge?.reason?.[0]
+        ?? "No reason provided";
+    };
+
+    const logUiVerifyBlocked = async (phase: string): Promise<void> => {
+      if (uiVerifyBlockedLogged) {
+        return;
+      }
+      uiVerifyBlockedLogged = true;
+      await runLog(
+        "error",
+        RUN_EVENT.UI_VERIFY_BLOCKED,
+        `Run blocked: required UI verification failed during ${phase}`,
+        buildUiVerifyBlockedPayload(ui, phase),
+        { runId, taskId: task.id, reasonCode: RUN_REASON.UI_VERIFY_FAILED },
+      );
+    };
 
     if (!latestGateResult.ok && stoppedForGlobalBlocker) {
       noteGlobalBlocker("Gate auto-repair was interrupted by an infrastructure failure (prompt/heartbeat/idle). See latest task.lastAttempt.");
@@ -809,7 +846,7 @@ export const runEngine = async (opts: {
     }
 
     if (blockedByVerifierFailure || !judge) {
-      if (wasTaskFailureRecorded()) {
+      if (taskFailureRecorded) {
         if ((await stopOrContinueTaskFailure(latestBlockedReasonForTask())) === "break") {
           break;
         }
