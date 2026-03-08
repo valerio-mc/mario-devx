@@ -239,10 +239,8 @@ export const runPreflightStep = async (opts: {
       await showToast(ctx, `Run warning: AGENTS.md parse warnings (${count})`, "warning");
     },
     onPrereqLog: async (entry) => {
-      if (entry.event === "ui.prereq.browser-install.start") {
-        await showToast(ctx, "Run: installing browser runtime for UI verification (may take a few minutes)", "info");
-      } else if (entry.event === "ui.prereq.install-job.start") {
-        await showToast(ctx, "Run: started background install for UI verification prerequisites", "info");
+      if (entry.event === "ui.prereq.missing") {
+        await showToast(ctx, "Run blocked: UI verification prerequisites missing", "warning");
       }
       await logRunEvent(
         ctx,
@@ -266,9 +264,6 @@ export const runPreflightStep = async (opts: {
     skillOk,
     browserOk,
     autoInstallAttempted,
-    prereqInstalling,
-    prereqInstallPid,
-    prereqLogPath,
     prereqNote,
     isWebApp,
   } = uiSetup;
@@ -276,36 +271,10 @@ export const runPreflightStep = async (opts: {
   const blockForUiPrereqs = shouldBlockRunForUiPrereqs({
     uiVerifyEnabled,
     isWebApp,
-    prereqInstalling,
     cliOk,
     skillOk,
     browserOk,
   });
-
-  if (blockForUiPrereqs && prereqInstalling) {
-    await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.BLOCKED_UI_PREREQ, "Run blocked while UI prerequisites are installing", {
-      uiVerifyEnabled,
-      uiVerifyRequired,
-      shouldRunUiVerify,
-      prereqInstalling,
-      prereqInstallPid: prereqInstallPid ?? null,
-      prereqLogPath: prereqLogPath ?? null,
-      autoInstallAttempted,
-    }, { runId, reasonCode: RUN_REASON.UI_PREREQ_MISSING });
-    await showToast(ctx, "Run blocked: installing UI verification prerequisites", "info");
-    return {
-      blocked: true,
-      prd,
-      message: [
-        formatReasonCode(RUN_REASON.UI_PREREQ_MISSING),
-        prereqNote || "Installing UI verification prerequisites in background.",
-        `UI verify command: ${uiVerifyCmd}`,
-        `UI verify URL: ${uiVerifyUrl}`,
-        ...(prereqLogPath ? [`Install log: ${prereqLogPath}`] : []),
-        "Rerun /mario-devx:run 1 after installation completes.",
-      ].join("\n"),
-    };
-  }
 
   if (blockForUiPrereqs && (!cliOk || !skillOk || !browserOk)) {
     await logRunEvent(ctx, repoRoot, "warn", RUN_EVENT.BLOCKED_UI_PREREQ, "Run blocked: UI prerequisites missing", {
@@ -316,21 +285,17 @@ export const runPreflightStep = async (opts: {
       skillOk,
       browserOk,
       autoInstallAttempted,
-      prereqInstallPid: prereqInstallPid ?? null,
-      prereqLogPath: prereqLogPath ?? null,
     }, { runId, reasonCode: RUN_REASON.UI_PREREQ_MISSING });
-    await showToast(ctx, "Run blocked: UI verification prerequisites missing", "warning");
     return {
       blocked: true,
       prd,
       message: [
         formatReasonCode(RUN_REASON.UI_PREREQ_MISSING),
-        "UI verification prerequisites are missing and installation has not completed yet.",
+        prereqNote || "UI verification prerequisites are missing.",
         `UI verify command: ${uiVerifyCmd}`,
         `UI verify URL: ${uiVerifyUrl}`,
-        ...(autoInstallAttempted.length > 0 ? [`Auto-install commands: ${autoInstallAttempted.join("; ")}`] : []),
-        ...(prereqLogPath ? [`Install log: ${prereqLogPath}`] : []),
-        "Rerun /mario-devx:run 1 to continue once prerequisites are available.",
+        ...(autoInstallAttempted.length > 0 ? [`Install commands: ${autoInstallAttempted.join("; ")}`] : []),
+        "Install the missing prerequisites, then rerun /mario-devx:run 1.",
       ].join("\n"),
     };
   }

@@ -46,9 +46,6 @@ export type RunContext = {
     skillOk: boolean;
     browserOk: boolean;
     autoInstallAttempted: string[];
-    prereqInstalling: boolean;
-    prereqInstallPid?: number;
-    prereqLogPath?: string;
     prereqNote?: string;
     shouldRunUiVerify: boolean;
   };
@@ -167,16 +164,12 @@ export const runEngine = async (opts: {
     skillOk,
     browserOk,
     autoInstallAttempted,
-    prereqInstalling,
-    prereqInstallPid,
-    prereqLogPath,
     prereqNote,
     shouldRunUiVerify,
   } = uiSetup;
   const blockRunForUiPrereqs = shouldBlockRunForUiPrereqs({
     uiVerifyEnabled,
     isWebApp,
-    prereqInstalling,
     cliOk,
     skillOk,
     browserOk,
@@ -642,21 +635,17 @@ export const runEngine = async (opts: {
       await failEarly(
         [
           formatReasonCode(RUN_REASON.UI_PREREQ_MISSING),
-          prereqInstalling
-            ? "UI verification prerequisites are currently installing in the background."
-            : "UI verification is enabled but agent-browser prerequisites are still missing.",
+          "UI verification is enabled but agent-browser prerequisites are missing.",
           ...(prereqNote ? [prereqNote] : []),
-          ...(autoInstallAttempted.length > 0 ? [`Auto-install attempted: ${autoInstallAttempted.join("; ")}`] : []),
-          ...(typeof prereqInstallPid === "number" ? [`Installer PID: ${prereqInstallPid}`] : []),
-          ...(prereqLogPath ? [`Installer log: ${prereqLogPath}`] : []),
+          ...(autoInstallAttempted.length > 0 ? [`Install commands: ${autoInstallAttempted.join("; ")}`] : []),
           `Repo: ${agentBrowserRepo}`,
         ],
         [
-          "Wait for prerequisite installation to finish, then rerun /mario-devx:run 1.",
+          "Install the missing prerequisites, then rerun /mario-devx:run 1.",
         ],
         "global",
       );
-      noteGlobalBlocker("UI verification prerequisites are missing or still installing.");
+      noteGlobalBlocker("UI verification prerequisites are missing.");
       break;
     }
 
